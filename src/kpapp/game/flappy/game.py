@@ -65,18 +65,21 @@ class Rules:
     terminal_velocity: float = 540.0
     # Nose angle (degrees, + is nose down) follows vertical speed: pitched up
     # while climbing, diving once the bird falls faster than `dive_after`.
-    nose_up: float = -24.0
-    nose_down: float = 75.0  # not the original's 90: a bird pointing straight down reads as dead
+    # The hero is a front-facing raccoon, not a side-on bird: tipped 75 degrees
+    # its face just looks sideways, so the tilt only hints at climb and dive.
+    nose_up: float = -15.0
+    nose_down: float = 30.0
     dive_after: float = 180.0  # px/s of fall before the nose starts to drop
     nose_drop_rate: float = 320.0  # deg/s; the nose snaps up on a flap, sinks smoothly
     # Fraction of width: ~970 px of look-ahead (4.8 s at the start). Also keeps
     # the bird, once it has fallen dead to the ground, clear of the arcade's
     # PLAY AGAIN button, which starts at 28% of the width.
     bird_x: float = 0.24
-    # The generated bird is 72x56; at 1.25x (90x70, hit radius 19) it still
-    # reads from two metres back. The hit circle scales with it and stays
-    # well inside the sprite, so grazes forgive.
-    bird_scale: float = 1.25
+    # The flying raccoon is 128x112 with its wings spread; at 0.9x its head is
+    # ~52 px across, about the old bird's body, and still reads from two metres
+    # back. The hit circle (24 px native -> ~22) scales with it and covers the
+    # head and body, so ears, wing tips and tail can graze a pipe and forgive.
+    bird_scale: float = 0.9
 
     # --- the pipes ---
     # The gap starts at 230 px (32% of 720) and loses 2 px a point down to
@@ -186,7 +189,9 @@ POPUP_SECONDS = 0.8
 FEATHER_SECONDS = 0.75
 # BGR, the bird's own colours: white, pink, coral. Cream and gold vanished
 # against the clouds and the sun.
-FEATHER_TINTS = ((255, 255, 255), (150, 110, 255), (80, 95, 240))
+# Flap burst in the raccoon's purples (BGR). White and lavender were tried and
+# vanished against the pale sky and clouds; saturated purples hold contrast.
+FEATHER_TINTS = ((155, 63, 104), (210, 110, 150), (235, 150, 205))
 
 
 @dataclass
@@ -210,8 +215,8 @@ def _circle_hits_rect(cx: float, cy: float, r: float,
 
 class FlappyGame(Game):
     name = "flappy"
-    title = "FLAPPY BIRD"
-    blurb = "Flap your arms to fly. Don't touch the pipes."
+    title = "FLAPPY RACCOON"
+    blurb = "Flap your arms to fly the raccoon. Don't touch the pipes."
 
     # Session best. The arcade builds a fresh game for every PLAY AGAIN, so a
     # best kept on the instance would be forgotten on every restart; on the

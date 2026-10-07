@@ -21,8 +21,28 @@ DT = 1 / 60
 GROUND = 96
 
 
+def _shipped_bird() -> tuple[int, tuple[int, int]]:
+    """Hit radius and sprite size of the art that actually ships.
+
+    Read from the generated manifest rather than hard-coded, so the fairness
+    proof below always flies the real collision circle: when the bird became a
+    raccoon, a hard-coded radius silently kept testing the old, smaller one.
+    """
+    import json
+    from pathlib import Path
+
+    gen = Path(__file__).resolve().parents[1] / "assets" / "flappy" / "generated"
+    radius = json.loads((gen / "manifest.json").read_text())["bird_hit_radius"]
+    import cv2
+    h, w = cv2.imread(str(gen / "bird_0.png"), cv2.IMREAD_UNCHANGED).shape[:2]
+    return int(radius), (h, w)
+
+
+SHIPPED_RADIUS, SHIPPED_SIZE = _shipped_bird()
+
+
 def stub_art() -> FlappyArt:
-    """Shapes and sizes match the generated art, so fairness results carry over."""
+    """Bird size and hit radius come from the shipped art, so fairness carries over."""
     def sprite(h, w, bgr=(200, 200, 200)):
         s = np.zeros((h, w, 4), np.uint8)
         s[:, :, :3] = bgr
@@ -33,8 +53,8 @@ def stub_art() -> FlappyArt:
     skyline[:120, :, 3] = 0  # transparent sky above the rooftops
     skyline[120:130, :, 3] = 128
     return FlappyArt(
-        bird_frames=[sprite(56, 72, (40, 200, 250)) for _ in range(3)],
-        bird_hit_radius=15,
+        bird_frames=[sprite(*SHIPPED_SIZE, (40, 200, 250)) for _ in range(3)],
+        bird_hit_radius=SHIPPED_RADIUS,
         pipe_body=sprite(64, 110, (60, 180, 60)),
         pipe_cap=sprite(44, 130, (50, 200, 50)),
         sky=np.full((H, W, 3), (230, 200, 140), np.uint8),
@@ -188,7 +208,8 @@ def test_nose_follows_vertical_speed():
     assert game.bird.angle < 0, "nose up while climbing"
     game.pipes = [Pipe(x=1e6, gap_y=300, gap=230)]
     idle(game, 0.9)
-    assert game.bird.angle > 30, "nose down in a dive"
+    assert game.bird.angle >= game.rules.nose_down - 0.5, "nose down in a dive"
+    assert game.bird.angle <= game.rules.nose_down + 1e-6, "but no further than the cap"
 
 
 def test_stall_does_not_teleport_the_bird():
@@ -646,3 +667,11 @@ def test_framing_is_left_alone_without_shoulders():
     game, _ = new_game()
     game.update(ControlState(present=False, pose=None), 1 / 60)
     assert not game.too_close
+
+
+
+def test_fairness_flies_the_shipped_collision_circle():
+    """Guard for the proof above: it must use the real raccoon's radius."""
+    game, _ = new_game()
+    assert game.hit_radius == pytest.approx(SHIPPED_RADIUS * game.rules.bird_scale)
+    assert game.hit_radius > 20, "the raccoon's circle is ~22 px at play size"

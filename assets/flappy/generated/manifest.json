@@ -1,5 +1,5 @@
 {
   "bird_frames": 3,
-  "bird_hit_radius": 15,
+  "bird_hit_radius": 24,
   "ground_height": 96
 }

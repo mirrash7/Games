@@ -77,7 +77,7 @@ src/kpapp/
     __init__.py    REGISTRY (name -> class) - register games here
     template/      Touch Targets: the reference game to copy (tested, off-menu)
     fruitninja/    Snack Attack: a raccoon on the palm eats snacks, avoids trash (Fruit Ninja rules; Blade swept-segment cuts)
-    flappy/        arm flaps: FlapDetector (gesture.py), physics, picture-in-picture camera
+    flappy/        Flappy Raccoon: FlapDetector (gesture.py), physics, picture-in-picture camera
     holeinwall/    full-body pose matching (off the menu, still runnable)
     demo.py        "catch": the first control-path demo
 tools/generate_<game>_*.py   procedural, deterministic asset generators
@@ -290,7 +290,7 @@ re-run the model on offline. Analyse these before tuning anything.
 
 - **On the welcome screen:** Snack Attack (`fruitninja`: Fruit Ninja re-themed with
   a purple raccoon cursor, cotton candy and other snacks, and trash bags for
-  bombs) and Flappy Bird. Flappy lives in
+  bombs) and Flappy Raccoon (`flappy`: the same raccoon with wings). Flappy lives in
   `game/flappy/`: original art from `tools/generate_flappy_assets.py`,
   `FlapDetector` in `gesture.py`, and the game in `game.py`/`render.py`. Its
   physics are tuned so a bot with 150 ms input lag passes every generated course.

@@ -339,7 +339,7 @@ uv run python tools/generate_fruitninja_snacks.py
 uv run python tools/generate_fruitninja_scene.py
 ```
 
-### Flappy Bird
+### Flappy Raccoon (Flappy Bird rules)
 
 Flap your arms like wings: raise both arms, then beat them down. Each flap is
 one hop. The first flap starts the round. A camera window in the corner shows
@@ -353,8 +353,12 @@ gaps start at 230 px, and the scroll speed starts slow and ramps gently. Gap
 placement limits how far one gap can be from the next. A test flies a bot with
 150 ms of input lag through many random courses and requires it to finish every
 one. The arm-flap detector fires once per downstroke, ignores slow arm lowering
-and jitter, and works with one arm if only one is visible. The art (a pink
-songbird called Pip) is original and procedural:
+and jitter, and works with one arm if only one is visible. The hero is the
+Snack Attack raccoon with feathered wings and a ringed tail. Its head is drawn by
+the Snack Attack generator, so both games share one character. It only tilts
+gently (-15 to +30 degrees), because a front-facing face tipped further just looks
+sideways. The fairness proof flies the shipped collision circle, read from the
+art manifest. All art is original and procedural:
 `uv run python tools/generate_flappy_assets.py`.
 
 ### Hole in the Wall (off the menu)

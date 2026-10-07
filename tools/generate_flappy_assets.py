@@ -61,8 +61,10 @@ GROUND_H = 96
 SKYLINE_H = 240
 PIPE_W = 110
 CAP_W, CAP_H = 130, 44
-BIRD_W, BIRD_H = 72, 56
-BIRD_HIT_RADIUS = 15  # visible body is ~19x17 + 2.4px ink; 15 is forgiving
+# Collision radius at native size, centred on the sprite. The raccoon's head
+# is ~29 px in radius; 24 lets ears, wing tips and tail graze a pipe without a
+# crash, in keeping with the game's latency-forgiving tuning.
+BIRD_HIT_RADIUS = 24
 
 
 def rgb(r: float, g: float, b: float) -> tuple[float, float, float]:
@@ -76,20 +78,6 @@ def rgb(r: float, g: float, b: float) -> tuple[float, float, float]:
 
 # bird ("Pip")
 INK = rgb(46, 22, 44)  # plum-black outline shared by the characters
-PIP_BASE = rgb(238, 70, 102)
-PIP_LIGHT = rgb(255, 122, 140)
-PIP_GLOSS = rgb(255, 196, 202)
-PIP_SHADE = rgb(190, 40, 82)
-PIP_WING = rgb(255, 160, 64)
-PIP_WING_LT = rgb(255, 206, 110)
-PIP_WING_DK = rgb(222, 102, 40)
-PIP_BELLY = rgb(255, 236, 200)
-PIP_BELLY_SH = rgb(246, 200, 168)
-PIP_BEAK = rgb(255, 204, 40)
-PIP_BEAK_DK = rgb(238, 140, 24)
-PIP_CHEEK = rgb(255, 128, 150)
-EYE_WHITE = rgb(255, 255, 255)
-EYE_PUPIL = rgb(34, 20, 40)
 
 # pipes
 PIPE_INK = rgb(22, 52, 30)
@@ -384,109 +372,123 @@ class Canvas:
 
 
 # ---------------------------------------------------------------------------
-# bird
+# the flying raccoon
 # ---------------------------------------------------------------------------
 
-# Everything is laid out so the sprite fits the circle of radius 28 inscribed
-# in the 72x56 canvas around its centre (36, 28): the game can rotate it any
-# amount, in place, without clipping.
-BIRD_ORIGIN = (1.0, 0.5)  # nudge so the sprite's bounding circle is centred
-BODY = (35.0, 29.0, 19.0, 17.0)
-SHOULDER = (27.0, 29.0)
-WING_ANGLES = (244.0, 190.0, 136.0)  # up, mid, down (degrees, screen space)
-T_MAIN = 2.4  # outline width, final px
-T_FINE = 1.6
+# The hero is the same raccoon as Snack Attack (its head is drawn by
+# tools/generate_fruitninja_scene.py, imported below), given a small tucked
+# body, a ringed tail and feathered wings. Front-facing like a mascot, so the
+# game only tilts it gently. Kept compact - big head, small body - so one
+# collision circle can fit it fairly; wings and tail tips are not solid.
+
+RACCOON_DEEP = rgb(104, 63, 155)  # mask purple, shared with Snack Attack
+RACCOON_LAV = rgb(185, 165, 215)  # cheek-fluff lavender
+RACCOON_LAV_DK = rgb(150, 125, 196)
+RACCOON_WHITE = rgb(250, 248, 255)
+WING_SHADE = rgb(212, 198, 240)
+WING_TIP = rgb(150, 110, 210)
+
+FLYER_W, FLYER_H = 128, 112
+HEAD_SIZE = 66  # raccoon head canvas, px
+HEAD_C = (64.0, 44.0)
+BODY_C, BODY_R = (64.0, 76.0), (15.0, 13.0)
+SHOULDERS = ((52.0, 70.0), (76.0, 70.0))  # left, right
+# Right-wing angle per frame (degrees, screen space: 0 = right, - = up).
+WING_ANGLES = (-46.0, -12.0, 22.0)  # up, mid, down (leading feather)
+T_MAIN = 2.4
 
 
-def _wing(c: Canvas, ang: float):
-    """Teardrop wing; feather lines are drawn inside it by the caller.
+def _head(size: int = HEAD_SIZE) -> np.ndarray:
+    """The Snack Attack raccoon head, rendered by its own generator."""
+    import importlib.util
 
-    Returns (wing mask, unit direction, leading-edge normal).
-    """
-    length, hw = 17.6, 6.0
-    t = np.deg2rad(ang)
-    ux, uy = float(np.cos(t)), float(np.sin(t))
-    nx, ny = -uy, ux  # toward the leading edge
-    sx, sy = SHOULDER
-    half = length * 0.5
-    cx, cy = sx + ux * half, sy + uy * half
-    wing = c.ellipse(cx, cy, half, hw, ang)
-    # Fat rounded root so it reads as attached to the body.
-    wing = np.maximum(wing, c.ellipse(sx + ux * 4.0 + nx * 0.6, sy + uy * 4.0 + ny * 0.6, 5.6, 5.4, ang))
-    return wing, (ux, uy), (nx, ny)
+    path = ROOT / "tools" / "generate_fruitninja_scene.py"
+    spec = importlib.util.spec_from_file_location("_fn_scene", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.make_raccoon(size=size, chomp=False)
 
 
-def make_bird(frame: int) -> np.ndarray:
-    c = Canvas(BIRD_W, BIRD_H, origin=BIRD_ORIGIN)
-    bx, by, brx, bry = BODY
+def _dir(ang: float, mirror: bool) -> tuple[float, float]:
+    t = np.deg2rad(180.0 - ang if mirror else ang)
+    return float(np.cos(t)), float(np.sin(t))
 
-    # Tail: two stubby feathers poking out behind.
-    for (tx, ty, rx, ry, ang) in ((17.5, 24.5, 7.0, 3.3, -28.0), (16.8, 30.5, 6.4, 3.0, 8.0)):
-        f = c.ellipse(tx, ty, rx, ry, ang)
-        c.inked(f, PIP_WING_DK, INK, T_MAIN)
-        c.paint(c.edge_band(f, 0, 1.4) * f, PIP_WING, 1.0)
 
-    # Crest: three-feather tuft fanning backwards off the crown.
-    for (fx, fy, rx, ry, ang) in ((31.5, 13.0, 2.6, 6.0, -38.0),
-                                  (36.0, 11.0, 2.8, 6.6, -14.0),
-                                  (40.5, 12.0, 2.4, 5.2, 12.0)):
-        f = c.ellipse(fx, fy, rx, ry, ang)
-        c.inked(f, PIP_BASE, INK, T_MAIN)
-        c.paint(c.edge_band(f, 1.2, 0) * f, PIP_LIGHT)
+def _draw_wing(c: "Canvas", shoulder, ang: float, mirror: bool) -> None:
+    """A cartoon wing: four long primary feathers fanned out behind a rounded
+    covert. Each feather is outlined on its own, so the gaps between them read
+    as feathers rather than one blob."""
+    sx, sy = shoulder
+    lengths = (42.0, 39.0, 34.0, 28.0)  # leading edge -> trailing edge
+    # Back to front, so the leading feather overlaps the ones behind it.
+    for i in reversed(range(4)):
+        fa = ang + 13.0 * i  # fan toward the trailing edge (down/back)
+        ux, uy = _dir(fa, mirror)
+        half = lengths[i] / 2.0
+        cx, cy = sx + ux * (half + 3.0), sy + uy * (half + 3.0)
+        feather = c.ellipse(cx, cy, half, 4.6, float(np.rad2deg(np.arctan2(uy, ux))))
+        c.inked(feather, RACCOON_WHITE, INK, 1.9)
+        # Lavender toward the tip, purple at the very end.
+        tip1 = c.circle(sx + ux * lengths[i] * 0.86, sy + uy * lengths[i] * 0.86, lengths[i] * 0.34)
+        c.paint(feather * tip1, WING_SHADE)
+        tip2 = c.circle(sx + ux * (lengths[i] + 2.0), sy + uy * (lengths[i] + 2.0), 6.5)
+        c.paint(feather * tip2, WING_TIP, 0.9)
+    ux, uy = _dir(ang + 14.0, mirror)
+    covert = c.ellipse(sx + ux * 9.0, sy + uy * 9.0, 12.0, 8.5,
+                       float(np.rad2deg(np.arctan2(uy, ux))))
+    c.inked(covert, RACCOON_WHITE, INK, T_MAIN)
+    c.paint(covert * (1.0 - c.shift(covert, 0.0, -2.2)), WING_SHADE)
 
-    # Body.
-    body = c.ellipse(bx, by, brx, bry)
-    c.inked(body, PIP_BASE, INK, T_MAIN)
-    # Hard-edged shading bands: shadow crescent bottom-right, light top-left.
-    lit = c.ellipse(bx - 2.6, by - 3.0, brx - 1.0, bry - 1.2)
-    c.paint(body * (1.0 - lit), PIP_SHADE)
-    c.paint(body * c.ellipse(bx - 6.5, by - 8.0, 8.5, 5.0, -28.0), PIP_LIGHT)
-    c.paint(body * c.ellipse(bx - 9.0, by - 10.0, 3.6, 2.0, -32.0), PIP_GLOSS)
 
-    # Belly patch.
-    belly = body * c.ellipse(bx + 5.0, by + 7.5, 12.5, 9.0, -10.0)
-    c.paint(belly, PIP_BELLY)
-    c.paint(belly * (1.0 - lit), PIP_BELLY_SH)
+def _tail(c: "Canvas") -> tuple[np.ndarray, np.ndarray]:
+    """Fluffy ringed tail trailing behind (to the left) and down."""
+    p0, p1, p2 = np.array([52.0, 80.0]), np.array([36.0, 84.0]), np.array([20.0, 100.0])
+    tail, rings = c.zeros(), c.zeros()
+    n = 7
+    for i in range(n):
+        t = i / (n - 1)
+        q = (1 - t) ** 2 * p0 + 2 * (1 - t) * t * p1 + t * t * p2
+        r = 7.6 - 2.6 * t
+        seg = c.ellipse(float(q[0]), float(q[1]), r, r * 0.92)
+        tail = np.maximum(tail, seg)
+        if i % 2 == 1 or i == n - 1:
+            rings = np.maximum(rings, seg)
+    return tail, rings
 
-    # Beak: pointed, two-tone, slightly open-smile shape.
-    upper = c.poly([(49.5, 23.0), (60.0, 28.6), (49.5, 30.0)])
-    lower = c.poly([(49.5, 29.6), (57.6, 30.4), (49.5, 34.0)])
-    beak = np.maximum(upper, lower)
-    c.paint(c.grow(beak, T_MAIN), INK)
-    c.paint(lower, PIP_BEAK_DK)
-    c.paint(upper, PIP_BEAK)
-    c.paint(upper * c.ellipse(52.5, 25.3, 3.0, 1.2, 25.0), rgb(255, 240, 160))
 
-    # Cheek blush.
-    c.paint(c.ellipse(46.0, 33.0, 3.6, 2.2), PIP_CHEEK, 0.9)
+def make_raccoon_flyer(frame: int) -> np.ndarray:
+    c = Canvas(FLYER_W, FLYER_H)
+    ang = WING_ANGLES[frame]
 
-    # Eye: big and bright, pupil looking ahead.
-    eye = c.ellipse(43.5, 22.0, 6.8, 7.8)
-    c.inked(eye, EYE_WHITE, INK, T_FINE)
-    pupil = eye * c.ellipse(45.6, 23.0, 3.4, 4.6)
-    c.paint(pupil, EYE_PUPIL)
-    c.paint(c.circle(46.9, 20.9, 1.55), EYE_WHITE)
-    c.paint(c.circle(44.6, 25.6, 0.75), EYE_WHITE, 0.85)
+    # Wings behind everything, the only part that changes between frames.
+    for k, shoulder in enumerate(SHOULDERS):
+        _draw_wing(c, shoulder, ang, mirror=(k == 0))
 
-    # Wing on top, the only part that changes between frames.
-    wing, (ux, uy), (nx, ny) = _wing(c, WING_ANGLES[frame])
-    c.inked(wing, PIP_WING, INK, T_MAIN)
-    # Light band along the leading edge, warm shade along the trailing edge.
-    c.paint(wing * (1.0 - c.shift(wing, -nx * 2.2, -ny * 2.2)), PIP_WING_LT)
-    c.paint(wing * (1.0 - c.shift(wing, nx * 2.0, ny * 2.0)), PIP_WING_DK)
-    # Two feather lines running in from the trailing edge.
-    sx, sy = SHOULDER
-    lines = c.zeros()
-    for k, ln in ((0.56, 4.2), (0.78, 3.4)):
-        px, py = sx + ux * 17.6 * k - nx * 6.5, sy + uy * 17.6 * k - ny * 6.5
-        qx, qy = px + nx * ln - ux * 1.2, py + ny * ln - uy * 1.2
-        ox, oy = ux * 0.55, uy * 0.55
-        lines = np.maximum(lines, c.poly([(px - ox, py - oy), (qx - ox, qy - oy),
-                                          (qx + ox, qy + oy), (px + ox, py + oy)]))
-    c.paint(lines * wing, INK, 0.85)
+    tail, rings = _tail(c)
+    c.inked(tail, RACCOON_LAV, INK, T_MAIN)
+    c.paint(tail * rings, RACCOON_DEEP)
 
-    return c.to_bgra(f"bird{frame}")
+    bx, by = BODY_C
+    body = c.ellipse(bx, by, *BODY_R)
+    c.inked(body, RACCOON_LAV, INK, T_MAIN)
+    c.paint(body * c.ellipse(bx, by + 3.5, 8.5, 8.0), RACCOON_WHITE)  # belly
+    c.paint(body * (1.0 - c.ellipse(bx - 2.0, by - 2.5, 14.0, 12.0)), RACCOON_LAV_DK)
+    for px in (bx - 7.0, bx + 7.0):  # tucked paws
+        c.inked(c.ellipse(px, by + 12.0, 4.6, 3.6), RACCOON_DEEP, INK, 1.8)
 
+    out = c.to_bgra(f"flyer{frame}")
+
+    # The head goes on top, straight-alpha "over".
+    head = _head()
+    hh, hw = head.shape[:2]
+    x0, y0 = int(round(HEAD_C[0] - hw / 2)), int(round(HEAD_C[1] - hh / 2))
+    roi = out[y0:y0 + hh, x0:x0 + hw].astype(np.float32)
+    src = head.astype(np.float32)
+    sa, da = src[..., 3:4] / 255.0, roi[..., 3:4] / 255.0
+    oa = sa + da * (1.0 - sa)
+    rgb_ = np.where(oa > 1e-6, (src[..., :3] * sa + roi[..., :3] * da * (1.0 - sa)) / np.maximum(oa, 1e-6), 0.0)
+    out[y0:y0 + hh, x0:x0 + hw] = np.concatenate([rgb_, oa * 255.0], axis=2).round().clip(0, 255).astype(np.uint8)
+    return out
 
 # ---------------------------------------------------------------------------
 # pipes
@@ -851,7 +853,7 @@ def make_panel(w: int = 520, h: int = 300) -> np.ndarray:
 def build() -> dict[str, np.ndarray]:
     assets: dict[str, np.ndarray] = {}
     for i in range(3):
-        assets[f"bird_{i}.png"] = make_bird(i)
+        assets[f"bird_{i}.png"] = make_raccoon_flyer(i)
     assets["pipe_body.png"] = make_pipe_body()
     assets["pipe_cap.png"] = make_pipe_cap()
     assets["sky.png"] = make_sky()
