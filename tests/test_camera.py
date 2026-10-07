@@ -281,3 +281,27 @@ def test_camera_by_name_or_number():
     assert resolve_camera("iphone", cams).explicit
     with pytest.raises(ValueError, match="no camera matches"):
         resolve_camera("webcam", cams)
+
+
+
+def _fake_pmset(monkeypatch, batt: str, settings: str):
+    import subprocess
+
+    def run(cmd, **kw):
+        out = batt if cmd[-1] == "batt" else settings
+        return SimpleNamespace(stdout=out)
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+def test_power_tip_flags_low_power_mode(monkeypatch):
+    """Low Power Mode costs ~30 ms of pose lag; only the player can fix it."""
+    import sys
+    from kpapp.app import _power_tip
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _fake_pmset(monkeypatch, "Now drawing from 'Battery Power'", " powermode            1\n")
+    assert "Low Power Mode" in _power_tip()
+    _fake_pmset(monkeypatch, "Now drawing from 'Battery Power'", " powermode            0\n")
+    assert "battery" in _power_tip().lower()
+    _fake_pmset(monkeypatch, "Now drawing from 'AC Power'", " powermode            0\n")
+    assert _power_tip() is None

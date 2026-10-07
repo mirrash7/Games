@@ -382,17 +382,26 @@ def test_every_game_is_different_but_a_seed_reproduces():
 # --- difficulty curve ---
 
 
-def test_difficulty_starts_generous_and_ramps_to_a_floor():
+def test_difficulty_starts_generous_and_keeps_rising():
+    """Easy to get going, then harder for as long as the player survives.
+
+    The old linear ramps stopped changing at score ~30; the exponential ones
+    keep tightening (ever more gently) and never flatten.
+    """
     game, _ = new_game()
-    assert game.gap_size(0) == pytest.approx(230)
-    assert game.gap_size(0) / game.ground_y > 0.32  # of the play height
-    assert game.gap_size(100) == pytest.approx(175)
+    assert game.gap_size(0) == pytest.approx(300)
+    assert game.gap_size(0) / game.ground_y > 0.45, "first gaps are generous"
     assert game.pipe_speed(0) == pytest.approx(200)
-    assert game.pipe_speed(100) == pytest.approx(260)
-    assert game.pipe_interval(0) >= 1.6
-    assert game.pipe_interval(100) >= 1.6
-    gaps = [game.gap_size(s) for s in range(60)]
-    assert all(a >= b for a, b in zip(gaps, gaps[1:])), "never gets easier"
+    assert game.pipe_interval(0) == pytest.approx(2.0)
+    scores = range(0, 150)
+    gaps = [game.gap_size(s) for s in scores]
+    speeds = [game.pipe_speed(s) for s in scores]
+    intervals = [game.pipe_interval(s) for s in scores]
+    assert all(a > b for a, b in zip(gaps, gaps[1:])), "gap shrinks at every score"
+    assert all(a < b for a, b in zip(speeds, speeds[1:])), "speed rises at every score"
+    assert all(a > b for a, b in zip(intervals, intervals[1:])), "pipes come sooner at every score"
+    assert min(gaps) > game.rules.gap_min, "the floor is approached, never undercut"
+    assert max(speeds) < game.rules.speed_max
 
 
 def test_gaps_stay_in_bounds_and_reachable():
@@ -675,3 +684,18 @@ def test_fairness_flies_the_shipped_collision_circle():
     game, _ = new_game()
     assert game.hit_radius == pytest.approx(SHIPPED_RADIUS * game.rules.bird_scale)
     assert game.hit_radius > 20, "the raccoon's circle is ~22 px at play size"
+
+
+
+def test_hardest_difficulty_is_still_flyable_with_lag():
+    """Difficulty never stops rising, so prove the far end too.
+
+    120 pipes reaches gap ~175, speed ~269, interval ~1.55 s - the limits the
+    curves approach - with the lagged bot at 150 ms.
+    """
+    failures = []
+    for seed in range(8):
+        score, phase = fly(seed, 0.150, 0.0, pipes=120)
+        if score < 120:
+            failures.append((seed, score, phase))
+    assert not failures, f"bot crashed (seed, score, phase): {failures[:5]}"

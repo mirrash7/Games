@@ -170,7 +170,7 @@ uv run kp game --synthetic --headless --duration 12
 ### Useful flags
 
 `--resolution 504` (multiples of 24 only) · `--threshold 0.5` ·
-`--device mps|cpu` · `--no-compile` · `--max-people 3` · `--smoothing 0.5` ·
+`--device mps|cpu` · `--no-compile` · `--max-people 3` · `--smoothing 0.3` (extra keypoint smoothing, off by default) ·
 `--extrapolation 0` (disable velocity projection) ·
 `--infer-every 3` (cap model rate; only bites below ~22 FPS) · `--camera 1` · `--no-mirror`
 
@@ -349,10 +349,13 @@ you to: when you're close, your wrists leave the frame on every downstroke,
 and flaps get missed.
 
 The physics are made for webcam latency. Gravity is about half the original's,
-gaps start at 230 px, and the scroll speed starts slow and ramps gently. Gap
+and difficulty eases in, then keeps rising. Gaps start at 300 px (48% of the
+play area), 247 px by score 10 and 216 px by 20, approaching 175 px without
+ever flattening out. Scroll speed rises from 200 toward 270 px/s, and the time
+between pipes falls from 2.0 toward 1.55 s, on the same kind of curve. Gap
 placement limits how far one gap can be from the next. A test flies a bot with
 150 ms of input lag through many random courses and requires it to finish every
-one. The arm-flap detector fires once per downstroke, ignores slow arm lowering
+one, including 120-pipe runs that reach the hardest settings. The arm-flap detector fires once per downstroke, ignores slow arm lowering
 and jitter, and works with one arm if only one is visible. The hero is the
 Snack Attack raccoon with feathered wings and a ringed tail. Its head is drawn by
 the Snack Attack generator, so both games share one character. It only tilts
@@ -398,7 +401,7 @@ anti-aliased glow rim.
 
 ```
 camera.py     capture thread, always hands back the newest frame
-inference.py  RF-DETR wrapper -> Pose records; EMA smoothing; extrapolation
+inference.py  RF-DETR wrapper -> Pose records; optional EMA; extrapolation
 pipeline.py   inference worker thread + rate meters
 controls.py   Pose -> ControlState (steer/throttle/gestures/raw pose)
 overlay.py    skeleton and HUD drawing

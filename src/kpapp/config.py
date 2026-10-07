@@ -28,7 +28,14 @@ class Config:
 
     # --- pipeline ---
     infer_every: int = 1  # run inference on at most every Nth captured frame
-    smoothing: float = 0.5  # EMA factor on keypoints, 0 = off, ->1 = heavy
+    # EMA on every keypoint before any game sees it (0 = off, ->1 = heavy).
+    # Off by default: simulated through the real pipeline, 0.5 added ~36 ms of
+    # lag on battery (~28 ms plugged in) - the single biggest software delay -
+    # while every consumer already filters its own input (HandTracker's One
+    # Euro filter, FlapDetector's time window). Raw poses wobble ~4-5 px when
+    # held still instead of ~2 px. Raise it only for a game reading raw
+    # keypoints directly that needs them steadier.
+    smoothing: float = 0.0
     # Velocity projection toward render time. 0 disables; ~0.7 cancels most of
     # the inference lag without overshooting on direction changes.
     extrapolation: float = 0.7

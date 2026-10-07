@@ -48,11 +48,17 @@ camera thread ──newest frame──► inference worker (RF-DETR, 15-30 Hz)
 - The **render loop never waits on the camera or the model**. A stalled camera
   or slow inference must not freeze the game; poses update at 15-30 Hz while
   your game runs at 60 Hz.
-- `PoseSmoother` (EMA) and `PoseExtrapolator` (velocity projection, gain 0.7)
-  run before your game sees the pose. Motion therefore arrives in **steps**:
-  a few near-identical frames, then a jump. See §6.
-- End-to-end latency, camera to screen, is roughly **100 ms or more**. Tune
-  every timing-sensitive mechanic for that.
+- `PoseExtrapolator` (velocity projection, gain 0.7) runs before your game
+  sees the pose. Motion therefore arrives in **steps**: a few near-identical
+  frames, then a jump. See §6.
+- **Global smoothing is off** (`Config.smoothing = 0`). Simulated through the
+  real pipeline, the old EMA of 0.5 added ~36 ms of lag on battery. Filter in
+  your game instead, where you can choose the trade-off: `HandTracker` (One
+  Euro) for cursors, a time window for gestures. Raw poses wobble ~4-5 px held still.
+- End-to-end latency, camera to screen, is roughly **85-150 ms**: ~40 ms camera,
+  35 ms (plugged in) or 50 ms (battery, Low Power Mode) of model time, plus
+  waiting for the next frame. On battery it's about 30 ms worse, and the app
+  says so at startup. Tune every timing-sensitive mechanic for this.
 
 ---
 
@@ -62,7 +68,7 @@ camera thread ──newest frame──► inference worker (RF-DETR, 15-30 Hz)
 src/kpapp/
   app.py         CLI, camera selection, the 60 Hz render loop, recording hooks
   camera.py      threaded capture, health checks, choose-by-name, probe
-  inference.py   RF-DETR wrapper -> Pose; PoseSmoother; PoseExtrapolator
+  inference.py   RF-DETR wrapper -> Pose; PoseSmoother (off by default); PoseExtrapolator
   pipeline.py    inference worker thread
   controls.py    Pose -> ControlState (steer, throttle, gestures, raw pose)
   hand.py        HandTracker: stable palm cursor (use this for any pointing)
@@ -176,6 +182,10 @@ Use your own clock (sum of clamped `dt`) for timestamps you pass to these.
   per the docs.
 
 **Game design under ~100 ms latency**
+- Difficulty should **ease in and keep rising**. Flappy Raccoon's knobs follow
+  `limit + (start - limit) * exp(-score / tau)`: generous at first, harder at
+  every score, never flat. Prove fairness at the limit, not just the start;
+  its test flies 120 pipes with 150 ms of lag.
 - Original arcade tunings are too tight. Widen hit areas (Fruit Ninja's blade
   is a 34 px half-width stroke, and its trail stays sharp for 0.15 s), start
   gentle (one or two fruit, no bombs in the first waves), and require a **hold**

@@ -82,24 +82,29 @@ class Rules:
     bird_scale: float = 0.9
 
     # --- the pipes ---
-    # The gap starts at 230 px (32% of 720) and loses 2 px a point down to
-    # 175 px (24%) at score ~28. The original's gap is ~25% of play height
-    # from the first pipe; we only get there as the player warms up.
-    gap_start: float = 230.0
+    # Difficulty eases in and then keeps rising for as long as the player
+    # survives. Each knob approaches its limit exponentially:
+    #     value(score) = limit + (start - limit) * exp(-score / tau)
+    # so it changes fastest early and never flattens out. The old linear ramps
+    # hit their floors at score ~30 and stopped changing.
+    #
+    # Gap: 300 px at the start (48% of the play height, up from 230) to make
+    # the first pipes easy to clear while learning to flap; 248 at score 10,
+    # 216 at 20, 198 at 30, approaching 175 (24%) without reaching it.
+    gap_start: float = 300.0
     gap_min: float = 175.0
-    gap_shrink: float = 2.0  # px per point
-    # Horizontal speed: 200 px/s, +2 px/s per point up to 260 at score 30.
-    # Slow enough that a pipe is on screen for ~4.6 s before it reaches the bird.
+    gap_tau: float = 18.0  # points
+    # Horizontal speed: 200 px/s at the start, 220 at 10, 233 at 20, 270 limit.
+    # Slow early so a pipe is on screen for ~4.6 s before it reaches the bird.
     speed_start: float = 200.0
-    speed_max: float = 260.0
-    speed_ramp: float = 2.0
+    speed_max: float = 270.0
+    speed_tau: float = 25.0  # points
     # Time between consecutive pipes reaching the bird: 2.0 s at the start
-    # (400 px apart), shortening 0.015 s a point to 1.6 s (416 px at 260 px/s).
-    # The original is ~1.3 s; a player needs time to see the next gap, decide,
-    # and get a full-body motion through the camera.
+    # (400 px apart), toward 1.55 s. The original is ~1.3 s; a player needs time
+    # to see the next gap, decide, and get a full-body motion through the camera.
     interval_start: float = 2.0
-    interval_min: float = 1.6
-    interval_ramp: float = 0.015
+    interval_min: float = 1.55
+    interval_tau: float = 25.0  # points
     # Gaps stay away from the ceiling and ground: a gap hugging either needs
     # pinpoint flaps, and one at the ground punishes the lag the hardest.
     ceiling_margin: float = 80.0
@@ -124,7 +129,7 @@ class Rules:
             return self
         out = Rules(**self.__dict__)
         for name in ("gravity", "flap_velocity", "terminal_velocity", "dive_after", "gap_start",
-                     "gap_min", "gap_shrink", "ceiling_margin", "ground_margin", "max_drop",
+                     "gap_min", "ceiling_margin", "ground_margin", "max_drop",
                      "ready_bob"):
             setattr(out, name, getattr(self, name) * k)
         return out
@@ -296,17 +301,17 @@ class FlappyGame(Game):
     def gap_size(self, score: int | None = None) -> float:
         r = self.rules
         s = self.score if score is None else score
-        return max(r.gap_min, r.gap_start - r.gap_shrink * s)
+        return r.gap_min + (r.gap_start - r.gap_min) * math.exp(-s / r.gap_tau)
 
     def pipe_speed(self, score: int | None = None) -> float:
         r = self.rules
         s = self.score if score is None else score
-        return min(r.speed_max, r.speed_start + r.speed_ramp * s)
+        return r.speed_max - (r.speed_max - r.speed_start) * math.exp(-s / r.speed_tau)
 
     def pipe_interval(self, score: int | None = None) -> float:
         r = self.rules
         s = self.score if score is None else score
-        return max(r.interval_min, r.interval_start - r.interval_ramp * s)
+        return r.interval_min + (r.interval_start - r.interval_min) * math.exp(-s / r.interval_tau)
 
     @property
     def speed(self) -> float:

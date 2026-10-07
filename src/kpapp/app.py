@@ -49,6 +49,33 @@ def build_config(args: argparse.Namespace) -> Config:
     return cfg
 
 
+def _power_tip() -> str | None:
+    """Warn when macOS power settings slow the model.
+
+    On this Mac the 336 px model takes ~35 ms a frame plugged in and ~50 ms
+    on battery in Low Power Mode - about 30 ms more lag between a movement and
+    the game seeing it. Only the player can fix that, so tell them.
+    """
+    if sys.platform != "darwin":
+        return None
+    import subprocess
+
+    try:
+        batt = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=2).stdout
+        settings = subprocess.run(["pmset", "-g"], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    on_battery = "Battery Power" in batt
+    low_power = any(line.split()[:2] == ["lowpowermode", "1"] or line.split()[:2] == ["powermode", "1"]
+                    for line in settings.splitlines())
+    if low_power:
+        return ("Low Power Mode is on: pose tracking will lag ~30 ms more. "
+                "Plug in and turn it off for the most responsive play.")
+    if on_battery:
+        return "On battery power: plugging in can make pose tracking more responsive."
+    return None
+
+
 def _prepare(cfg: Config, size: tuple[int, int], optimize: bool) -> KeypointDetector:
     print(f"[kp] loading RF-DETR keypoint model at {cfg.resolution}px ...")
     t0 = time.perf_counter()
@@ -231,6 +258,9 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
         return 1
     size = camera.size
     print(f"[kp] camera {size[0]}x{size[1]}")
+    tip = _power_tip()
+    if tip:
+        print(f"[kp] tip: {tip}")
     worker = InferenceWorker(camera, detector, cfg).start()
     mapper = ControlMapper(size)
     extrapolator = PoseExtrapolator(gain=cfg.extrapolation, max_lead=cfg.max_lead)
