@@ -234,7 +234,22 @@ error 0.95, one wrong arm 0.85, arms-down-instead-of-out 0.71 — with the pass
 line at 0.82 and PERFECT at 0.93. `tests/test_holeinwall.py` pins this down,
 including a regression test asserting containment alone would *not* discriminate.
 
-### Fruit Ninja
+### Snack Attack (Fruit Ninja rules, raccoon theme)
+
+Your hand is a **purple-and-white raccoon** (an original character inspired by
+Roboflow's mascot, Lenny) that leaves a purple trail. Swipe it through the
+flying snacks to gobble them: cotton candy (the most common), plus other
+raccoon favourites. Avoid the **bags of trash**: grabbing one ends the run. The
+raccoon opens its mouth on every bite. Its hit area matches the drawn head
+(44 px half-width).
+
+The code keeps its Fruit Ninja names (`game/fruitninja/`, `--game fruitninja`):
+a "fruit" is a snack and a "bomb" is the bag of trash. Art comes from
+`tools/generate_fruitninja_snacks.py` and `tools/generate_fruitninja_scene.py`.
+
+The rules and tuning below are unchanged from Fruit Ninja.
+
+#### Fruit Ninja mechanics
 
 Classic rules: a point per fruit, a bonus for cutting several in one swing,
 three dropped fruit and you are out, and slicing a bomb ends the run
@@ -320,7 +335,7 @@ Original art, not Halfbrick's: the sprites are generated procedurally like the
 rest of the project.
 
 ```bash
-uv run python tools/generate_fruitninja_fruit.py
+uv run python tools/generate_fruitninja_snacks.py
 uv run python tools/generate_fruitninja_scene.py
 ```
 

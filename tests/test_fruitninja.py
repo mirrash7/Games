@@ -188,7 +188,7 @@ def test_slicing_a_bomb_ends_the_run():
                              radius=52, is_bomb=True))
     swipe(game, 200, 1000, 360)
     assert game.phase is Phase.GAME_OVER
-    assert "BOMB" in game.death_reason
+    assert "TRASH" in game.death_reason
 
 
 def test_one_swing_through_several_fruit_pays_a_combo():
@@ -271,7 +271,7 @@ def test_continuous_slicing_still_pays_a_combo():
 def test_empty_manifest_fails_loudly():
     game = new_game()
     game.art.fruits.clear()
-    with pytest.raises(RuntimeError, match="generate_fruitninja_fruit"):
+    with pytest.raises(RuntimeError, match="generate_fruitninja_snacks"):
         for _ in range(120):
             game.update(ControlState(present=False), DT)
 
@@ -486,3 +486,41 @@ def test_popups_render_without_error_near_edges():
         game.fx.popups.append(Popup(np.float32(pos), "+2", (60, 60, 220), big=True, life=0.5))
     frame = np.zeros((H, W, 3), np.uint8)
     FruitNinjaRenderer((W, H), game.art)._draw_popups(frame, game)
+
+
+
+# --- the raccoon ---
+
+
+def test_a_bite_opens_the_raccoons_mouth_briefly():
+    game = new_game()
+    game.spawner.timer = 1e9
+    game.fruits.append(Fruit(pos=np.float32([640, 360]), vel=np.float32([0, 0]), radius=52,
+                             art=game.art.fruits[0]))
+    swipe(game, 400, 900, 360)
+    assert game.fx.chomp > 0.5, "eating should show the open-mouth frame"
+    for _ in range(12):
+        game.update(ControlState(present=False), DT)
+    assert game.fx.chomp == 0.0, "the mouth closes again after ~0.2 s"
+
+
+def test_raccoon_is_drawn_on_the_palm():
+    """The cursor art replaces the plain ring when it is available."""
+    from kpapp.game.fruitninja.render import FruitNinjaRenderer
+
+    art = stub_art()
+    face = np.zeros((120, 120, 4), np.uint8)
+    face[30:90, 30:90] = (200, 60, 120, 255)  # a purple square standing in for the raccoon
+    art.cursor_idle = face
+    game = new_game()
+    game.art = art
+    game.spawner.timer = 1e9
+    game.update(ControlState(present=True, pose=hand_pose(640, 360)), DT)
+    frame = np.zeros((H, W, 3), np.uint8)
+    r = FruitNinjaRenderer((W, H), art)
+    r._draw_cursor(frame, game, np.float32([640, 360]))
+    assert tuple(frame[360, 640]) == (200, 60, 120), "raccoon sprite should sit on the palm"
+
+
+def test_hit_area_matches_the_raccoon_head():
+    assert new_game().blade.hit_radius == 44.0

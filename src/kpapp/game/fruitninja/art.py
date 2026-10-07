@@ -1,8 +1,14 @@
-"""Asset schema for Fruit Ninja.
+"""Asset schema for Snack Attack (the game package is still named fruitninja).
 
-Sprites are generated procedurally (see tools/generate_fruitninja_*.py) and
-described by a manifest so gameplay numbers - collision radius, juice colour,
-score value - travel with the art instead of being duplicated in code.
+A raccoon is the player's hand; it gobbles snacks (cotton candy and other
+raccoon favourites) and must avoid bags of trash. Sprites are generated
+procedurally (tools/generate_fruitninja_snacks.py, tools/generate_fruitninja_scene.py)
+and described by a manifest so gameplay numbers - collision radius, crumb
+colour, score value - travel with the art instead of being duplicated in code.
+
+Names are kept from the original fruit theme so the engine is unchanged:
+a "fruit" is any snack, `half_a`/`half_b` are the two pieces it breaks into
+when eaten, `juice` is its crumb colour, and `bomb` is the bag of trash.
 """
 
 from __future__ import annotations
@@ -38,12 +44,14 @@ class FruitArt:
 @dataclass
 class Art:
     fruits: list[FruitArt]
-    bomb: np.ndarray
+    bomb: np.ndarray  # the bag of trash
     background: np.ndarray
     splat: np.ndarray  # white, tinted per fruit at runtime
     flash: np.ndarray
     life_full: np.ndarray
     life_lost: np.ndarray
+    cursor_idle: np.ndarray | None = None  # BGRA raccoon head, mouth closed
+    cursor_chomp: np.ndarray | None = None  # BGRA raccoon head, mouth open (eating)
 
 
 _cache: Art | None = None
@@ -53,7 +61,7 @@ def _read(path: Path, flags: int = cv2.IMREAD_UNCHANGED) -> np.ndarray:
     if not path.exists():
         raise AssetsMissingError(
             f"missing asset {path.name}. Run:\n"
-            f"  uv run python tools/generate_fruitninja_fruit.py\n"
+            f"  uv run python tools/generate_fruitninja_snacks.py\n"
             f"  uv run python tools/generate_fruitninja_scene.py"
         )
     img = cv2.imread(str(path), flags)
@@ -69,7 +77,7 @@ def load_art(*, reload: bool = False) -> Art:
 
     if not MANIFEST.exists():
         raise AssetsMissingError(
-            f"missing {MANIFEST}. Run tools/generate_fruitninja_fruit.py first."
+            f"missing {MANIFEST}. Run tools/generate_fruitninja_snacks.py first."
         )
     spec = json.loads(MANIFEST.read_text())
 
@@ -93,5 +101,7 @@ def load_art(*, reload: bool = False) -> Art:
         flash=_read(ASSET_DIR / "flash.png"),
         life_full=_read(ASSET_DIR / "life_full.png"),
         life_lost=_read(ASSET_DIR / "life_lost.png"),
+        cursor_idle=_read(ASSET_DIR / "raccoon_idle.png"),
+        cursor_chomp=_read(ASSET_DIR / "raccoon_chomp.png"),
     )
     return _cache

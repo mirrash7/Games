@@ -219,7 +219,7 @@ class Spawner:
 
         if not art_list:
             raise RuntimeError(
-                "no fruit in the manifest - run tools/generate_fruitninja_fruit.py"
+                "no fruit in the manifest - run tools/generate_fruitninja_snacks.py"
             )
         self.wave += 1
         # Recorded play ended three rounds in about three seconds each: the

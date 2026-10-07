@@ -17,7 +17,7 @@ before changing a subsystem.
 ```bash
 uv sync                                   # Python 3.12, deps incl. torch, rfdetr, opencv
 uv run kp play --resolution 336           # the arcade (welcome screen, pick a game)
-uv run kp game --game fruitninja          # arcade with one game preselected
+uv run kp game --game fruitninja          # arcade with one game preselected (Snack Attack)
 uv run --with pytest pytest tests/ -q     # full test suite (fast, no camera needed)
 ```
 
@@ -76,7 +76,7 @@ src/kpapp/
     base.py        Game interface
     __init__.py    REGISTRY (name -> class) - register games here
     template/      Touch Targets: the reference game to copy (tested, off-menu)
-    fruitninja/    slicing with the palm: Blade (swept-segment cuts), art, effects
+    fruitninja/    Snack Attack: a raccoon on the palm eats snacks, avoids trash (Fruit Ninja rules; Blade swept-segment cuts)
     flappy/        arm flaps: FlapDetector (gesture.py), physics, picture-in-picture camera
     holeinwall/    full-body pose matching (off the menu, still runnable)
     demo.py        "catch": the first control-path demo
@@ -288,7 +288,9 @@ re-run the model on offline. Analyse these before tuning anything.
 
 ## 10. Current state and open work
 
-- **On the welcome screen:** Fruit Ninja and Flappy Bird. Flappy lives in
+- **On the welcome screen:** Snack Attack (`fruitninja`: Fruit Ninja re-themed with
+  a purple raccoon cursor, cotton candy and other snacks, and trash bags for
+  bombs) and Flappy Bird. Flappy lives in
   `game/flappy/`: original art from `tools/generate_flappy_assets.py`,
   `FlapDetector` in `gesture.py`, and the game in `game.py`/`render.py`. Its
   physics are tuned so a bot with 150 ms input lag passes every generated course.

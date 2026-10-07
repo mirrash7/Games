@@ -17,6 +17,12 @@ from .art import Art
 
 _WHITE = (255, 255, 255)
 _CYAN = (255, 225, 120)
+# The raccoon's trail (BGR). A near-white core read as white with a purple
+# edge; a vivid purple glow around a light-purple core reads as purple while
+# staying bright enough to pop on the dark night scene.
+_TRAIL_GLOW = (190, 60, 130)
+_TRAIL_CORE = (245, 175, 215)
+_RACCOON_PX = 104  # drawn width of the raccoon head on the palm
 _GOLD = (70, 210, 255)
 _RED = (70, 70, 255)
 
@@ -43,6 +49,18 @@ class FruitNinjaRenderer:
         # most expensive sprite on a busy board purely because of their area.
         # Halving the side quarters the blend cost and is not visible in play.
         self._splat = cv2.resize(art.splat, (140, 140), interpolation=cv2.INTER_AREA)
+
+        # The raccoon cursor, pre-scaled once to its on-screen size.
+        def scaled(img):
+            if img is None:
+                return None
+            k = _RACCOON_PX / img.shape[1]
+            return cv2.resize(img, (int(img.shape[1] * k), int(img.shape[0] * k)),
+                              interpolation=cv2.INTER_AREA)
+
+        self._raccoon_idle = scaled(getattr(art, "cursor_idle", None))
+        chomp = scaled(getattr(art, "cursor_chomp", None))
+        self._raccoon_chomp = chomp if chomp is not None else self._raccoon_idle
 
         # Pad once at startup; rotation happens every frame on these.
         self._padded: dict[int, np.ndarray] = {}
@@ -218,9 +236,9 @@ class FruitNinjaRenderer:
         glow = self._blade_polygon(pts, 13.0)
         core = self._blade_polygon(pts, 7.0)
         if glow is not None:
-            cv2.fillPoly(frame, [glow], (150, 140, 130), cv2.LINE_AA)
+            cv2.fillPoly(frame, [glow], _TRAIL_GLOW, cv2.LINE_AA)
         if core is not None:
-            cv2.fillPoly(frame, [core], _WHITE, cv2.LINE_AA)
+            cv2.fillPoly(frame, [core], _TRAIL_CORE, cv2.LINE_AA)
 
         tip = pts[-1]
         if game.blade.slicing:
@@ -228,11 +246,21 @@ class FruitNinjaRenderer:
         self._draw_cursor(frame, game, tip)
 
     def _draw_cursor(self, frame, game, tip) -> None:
-        """Ring showing the blade's real hit area, so the player can aim with it."""
+        """The raccoon on the player's palm, with a faint ring for the hit area.
+
+        The ring stays because the raccoon's outline is not the exact hit
+        area; it is drawn thin and in trail purple so it reads as part of the
+        character. Falls back to the plain ring when no raccoon art is loaded.
+        """
         r = int(game.blade.hit_radius)
-        colour = _CYAN if game.blade.slicing else (200, 200, 210)
-        cv2.circle(frame, tuple(tip.astype(int)), r, colour, 2, cv2.LINE_AA)
-        cv2.circle(frame, tuple(tip.astype(int)), 4, colour, -1, cv2.LINE_AA)
+        c = tuple(tip.astype(int))
+        ring = _TRAIL_CORE if game.blade.slicing else _TRAIL_GLOW
+        cv2.circle(frame, c, r, ring, 2, cv2.LINE_AA)
+        sprite = self._raccoon_chomp if game.fx.chomp > 0 else self._raccoon_idle
+        if sprite is None:
+            cv2.circle(frame, c, 4, ring, -1, cv2.LINE_AA)
+            return
+        blit(frame, sprite, tip)
 
     def _draw_hud(self, frame, game) -> None:
         # The score pulses when it changes: bigger, and flashing toward white.
@@ -251,8 +279,7 @@ class FruitNinjaRenderer:
         # the arcade countdown) the game has not looked for the hand yet, and
         # "no blade tracked" would be false.
         if not game.blade.active and game.phase.value != "game_over" and game.clock > 0.5:
-            self._hint(frame, "RAISE YOUR RIGHT HAND - NO BLADE TRACKED"
-                       if game.hand == "right" else "RAISE YOUR LEFT HAND - NO BLADE TRACKED",
+            self._hint(frame, f"RAISE YOUR {game.hand.upper()} HAND - IT'S THE RACCOON",
                        self.height - 40)
 
     def _hint(self, frame, text: str, y: int, colour=(70, 200, 255)) -> None:

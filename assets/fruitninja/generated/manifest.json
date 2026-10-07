@@ -1,84 +1,84 @@
 {
   "fruits": [
     {
-      "name": "watermelon",
-      "radius": 57,
+      "name": "cotton_candy_pink",
+      "radius": 50,
       "juice": [
-        58,
-        42,
-        226
+        214,
+        150,
+        255
       ],
       "score": 1
     },
     {
-      "name": "orange",
-      "radius": 56,
+      "name": "cotton_candy_blue",
+      "radius": 50,
       "juice": [
-        30,
-        142,
-        250
+        255,
+        214,
+        140
       ],
       "score": 1
     },
     {
-      "name": "apple",
+      "name": "cotton_candy_swirl",
+      "radius": 50,
+      "juice": [
+        248,
+        170,
+        210
+      ],
+      "score": 1
+    },
+    {
+      "name": "donut",
       "radius": 54,
       "juice": [
-        46,
-        46,
-        214
+        196,
+        140,
+        255
       ],
       "score": 1
     },
     {
-      "name": "lime",
-      "radius": 46,
+      "name": "pizza",
+      "radius": 50,
       "juice": [
-        72,
-        212,
-        148
+        70,
+        196,
+        255
       ],
       "score": 1
     },
     {
-      "name": "banana",
+      "name": "fries",
       "radius": 44,
       "juice": [
-        112,
-        232,
-        250
+        80,
+        210,
+        255
       ],
       "score": 1
     },
     {
-      "name": "strawberry",
-      "radius": 47,
+      "name": "cookie",
+      "radius": 44,
       "juice": [
-        66,
-        48,
-        232
+        100,
+        168,
+        222
+      ],
+      "score": 2
+    },
+    {
+      "name": "grapes",
+      "radius": 46,
+      "juice": [
+        120,
+        230,
+        170
       ],
       "score": 1
-    },
-    {
-      "name": "pineapple",
-      "radius": 45,
-      "juice": [
-        86,
-        212,
-        248
-      ],
-      "score": 2
-    },
-    {
-      "name": "coconut",
-      "radius": 55,
-      "juice": [
-        232,
-        240,
-        246
-      ],
-      "score": 2
     }
   ]
 }

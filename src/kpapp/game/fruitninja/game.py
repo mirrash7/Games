@@ -1,4 +1,9 @@
-"""Fruit Ninja - classic rules, driven by one tracked hand.
+"""Snack Attack - Fruit Ninja rules, with a raccoon for a hand.
+
+The player's palm is a raccoon that gobbles flying snacks (cotton candy and
+other raccoon favourites) and must stay away from bags of trash. The package
+and identifiers keep their Fruit Ninja names: a "fruit" is a snack, a "bomb"
+is the bag of trash, "slicing" is the raccoon taking a bite.
 
 Scoring, lives and combos follow the arcade original: a point per fruit, a
 bonus for cutting several in one swing, three misses and you are out, and a
@@ -39,7 +44,10 @@ class Rules:
     combo_min: int = COMBO_MIN
     max_swing: float = 1.2  # a swing this long is settled up even if unbroken
     # How forgiving cutting is. These are the knobs if it feels too hard.
-    hit_radius: float = HIT_RADIUS  # blade half-width, px
+    # Blade half-width, px. Wider than the plain blade's 34: the raccoon head
+    # drawn on the palm is ~100 px across, and players judge a bite by the
+    # head they see, so the hit area matches it.
+    hit_radius: float = 44.0
     cut_window: float = CUT_WINDOW  # seconds the trail stays sharp
     min_speed: float = MIN_SLICE_SPEED  # px/s a swing needs to cut
 
@@ -57,6 +65,7 @@ class Effects:
     splats: list[Splat] = field(default_factory=list)
     sparks: list[Spark] = field(default_factory=list)
     popups: list[Popup] = field(default_factory=list)
+    chomp: float = 0.0  # 1 -> 0 after a bite: the raccoon shows its open mouth
     score_bump: float = 0.0  # 1 -> 0 after the score changes, drives the HUD pulse
     flash: float = 0.0
     shake: float = 0.0
@@ -65,8 +74,8 @@ class Effects:
 
 class FruitNinjaGame(Game):
     name = "fruitninja"
-    title = "FRUIT NINJA"
-    blurb = "Slice fruit with your right hand. Avoid the bombs."
+    title = "SNACK ATTACK"
+    blurb = "Your hand is a raccoon. Gobble the snacks, dodge the trash bags."
 
     def __init__(
         self,
@@ -197,6 +206,7 @@ class FruitNinjaGame(Game):
             )
 
         self.fx.splats.append(Splat(fruit.pos.copy(), art.juice, scale=1.0))
+        self.fx.chomp = 1.0
         self.fx.popups.append(Popup(fruit.pos.copy(), f"+{fruit.score}", art.juice,
                                     big=fruit.score > 1))
         self.fx.score_bump = 1.0
@@ -207,7 +217,7 @@ class FruitNinjaGame(Game):
 
     def _explode(self, bomb: Fruit) -> None:
         self.phase = Phase.GAME_OVER
-        self._death_reason = "YOU SLICED A BOMB"
+        self._death_reason = "THE RACCOON GRABBED THE TRASH"
         self.fx.shake = 1.0
         self.fx.flash = 1.0
         for _ in range(60):
@@ -236,7 +246,7 @@ class FruitNinjaGame(Game):
                 self.lives -= 1
                 if self.lives <= 0:
                     self.phase = Phase.GAME_OVER
-                    self._death_reason = "OUT OF LIVES"
+                    self._death_reason = "TOO MANY SNACKS GOT AWAY"
         self.fruits = kept
         self.fx.halves = [h for h in self.fx.halves if h.life > 0 and h.pos[1] < floor]
         self.fx.sparks = [s for s in self.fx.sparks if s.life > 0]
@@ -266,6 +276,7 @@ class FruitNinjaGame(Game):
         fx.shake = max(0.0, fx.shake - dt * 1.6)
         fx.banner.life = max(0.0, fx.banner.life - dt * 0.7)
         fx.score_bump = max(0.0, fx.score_bump - dt * 3.5)
+        fx.chomp = max(0.0, fx.chomp - dt / 0.22)  # mouth stays open ~0.2 s
         for pop in fx.popups:
             pop.life -= dt / POPUP_SECONDS
             pop.pos[1] -= 85.0 * dt * max(pop.life, 0.0)  # rise, easing to a stop
