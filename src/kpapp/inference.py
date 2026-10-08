@@ -247,9 +247,23 @@ class PoseExtrapolator:
         # that happens to be zero.
         self._prev_t: float | None = None
         self.last_lead_ms = 0.0
+        # The newest result projected to the moment it arrived, then held
+        # until the next one: see `held`.
+        self.held: list[Pose] = []
 
-    def update(self, result: Result) -> None:
-        """Feed a freshly published inference result. Call once per result."""
+    def update(self, result: Result, arrived: float | None = None) -> None:
+        """Feed a freshly published inference result. Call once per result.
+
+        `arrived` is when the render loop picked it up. `held` is then the
+        result projected to that moment and held until the next result.
+
+        Use `held` for gesture detectors that measure speed between model
+        updates (FlapDetector). `poses_at()` moves every render frame, so
+        each new result shows up as a jump between two frames 8-16 ms apart.
+        The detector's teleport guard reads that jump as a tracking glitch
+        and drops its history. Simulated at 120 Hz render with 15-30 Hz
+        poses, it then caught 0 of 30 flaps; with `held`, 30 of 30.
+        """
         if self.gain > 0.0 and self._prev_t is not None:
             dt = result.timestamp - self._prev_t
             if 0.0 < dt <= self.max_gap:
@@ -281,6 +295,7 @@ class PoseExtrapolator:
         for slot in list(self._vel):
             if slot >= len(result.poses):
                 del self._vel[slot]
+        self.held = self.poses_at(arrived) if arrived is not None else list(result.poses)
 
     def poses_at(self, now: float) -> list[Pose]:
         """Poses projected to wall-clock time `now`."""

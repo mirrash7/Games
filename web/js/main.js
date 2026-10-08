@@ -210,11 +210,12 @@ function tick() {
 
   const latest = engine.latest;
   if (latest.seq !== lastSeq) {
-    extrapolator.update(latest.poses, latest.t0);
+    extrapolator.update(latest.poses, latest.t0, now);
     lastSeq = latest.seq;
   }
   const poses = extrapolator.posesAt(now);
   const controls = mapper.map(poses[0] ?? null);
+  controls.stepPose = extrapolator.held[0] ?? null;
 
   const t0 = performance.now();
   shell.update(controls, dt);

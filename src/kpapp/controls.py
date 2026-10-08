@@ -33,6 +33,11 @@ class ControlState:
     # The raw pose behind these signals. Most games should use the derived
     # fields above, but pose-matching games need the keypoints themselves.
     pose: Pose | None = None
+    # The same player, but updated only when the model produces a new result
+    # (projected to when it arrived), so it moves in steps. Gesture detectors
+    # that time motion between model updates want this one; see
+    # PoseExtrapolator.update.
+    step_pose: Pose | None = None
 
     def pressed(self, name: str) -> bool:
         return self.buttons.get(name, False)

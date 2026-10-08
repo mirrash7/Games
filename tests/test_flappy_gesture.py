@@ -461,3 +461,64 @@ def test_time_not_advancing_is_ignored():
     det.update(make_pose(TOP, TOP), 1.0)
     assert det.update(make_pose(BOTTOM, BOTTOM), 1.0) is None
     assert det.update(make_pose(BOTTOM, BOTTOM), 0.5) is None
+
+
+# --- through the real pose path: model results at 15-30 Hz, extrapolated per render frame ---
+
+
+def _flap_through_pipeline(render_hz, model_hz, beat, n=30, use="held", seed=1):
+    """Flap `n` times with results every 1/model_hz s arriving 50 ms late,
+    read at render_hz. `use`: "held" (what the game reads) or "projected"
+    (per-frame extrapolation). Returns the flaps detected."""
+    import math as _m
+
+    from kpapp.inference import PoseExtrapolator, Result
+
+    rng = np.random.default_rng(seed)
+    sw, sh_y, latency = 200.0, 330.0, 0.05
+
+    def h(t):
+        ph = (t % beat) / beat
+        if ph < 0.65:
+            return -1.3 + 2.2 * (0.5 - 0.5 * _m.cos(_m.pi * ph / 0.65))
+        return 0.9 - 2.2 * (0.5 - 0.5 * _m.cos(_m.pi * (ph - 0.65) / 0.35))
+
+    def pose_at(t):
+        xy = np.zeros((17, 2), np.float32)
+        c = np.zeros(17, np.float32)
+        for name, x, y in (("left_shoulder", 740, sh_y), ("right_shoulder", 540, sh_y),
+                           ("left_wrist", 860, sh_y - h(t) * sw), ("right_wrist", 420, sh_y - h(t) * sw)):
+            xy[KP[name]] = (x + rng.normal(0, 2.5), y + rng.normal(0, 2.5))
+            c[KP[name]] = 0.9 if 0 <= y <= 720 else 0.05
+        return Pose(xy=xy, confidence=c, score=0.9)
+
+    det = FlapDetector(mirrored=True)
+    ex = PoseExtrapolator(gain=0.7, max_lead=0.12)
+    queue, nxt, flaps, t = [], 0.0, 0, 0.0
+    while t < n * beat + 0.3:
+        while nxt <= t:
+            queue.append((nxt + latency, nxt, pose_at(nxt)))
+            nxt += 1.0 / model_hz
+        while queue and queue[0][0] <= t:
+            _, t0, p = queue.pop(0)
+            ex.update(Result(poses=[p], timestamp=t0), arrived=t)
+        poses = ex.held if use == "held" else ex.poses_at(t)
+        pose = poses[0] if poses else None
+        if det.update(pose, t):
+            flaps += 1
+        t += 1.0 / render_hz
+    return flaps
+
+
+@pytest.mark.parametrize("render_hz", [60, 120])
+@pytest.mark.parametrize("model_hz", [15, 20, 25, 30])
+def test_every_flap_is_caught_through_the_real_pipeline(render_hz, model_hz):
+    for beat in (0.4, 0.6):
+        got = _flap_through_pipeline(render_hz, model_hz, beat)
+        assert 30 <= got <= 31, f"{beat}s beat: {got} of 30"
+
+
+def test_why_the_game_reads_held_poses():
+    """Per-frame extrapolation turns each new result into a jump between two
+    render frames, which the teleport guard drops as a glitch."""
+    assert _flap_through_pipeline(120, 25, 0.6, use="projected") < 15

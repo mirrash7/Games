@@ -403,7 +403,10 @@ class FlappyGame(Game):
 
         self.last_pose = controls.pose
         self._update_framing(controls.pose)
-        event = self.detector.update(controls.pose, self._clock)
+        # Stepped poses: the detector times motion between model updates, and
+        # per-frame extrapolated poses break that (see PoseExtrapolator.update).
+        step = controls.step_pose if controls.step_pose is not None else controls.pose
+        event = self.detector.update(step, self._clock)
         if event is not None:
             self.fx.flap = 1.0
             self.fx.flap_strength = float(getattr(event, "strength", 1.0))

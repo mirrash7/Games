@@ -17,10 +17,21 @@ export class PoseExtrapolator {
     this._prev = new Map(); // slot -> {xy, conf}
     this._prevT = null;
     this.lastLeadMs = 0;
+    this.held = []; // the newest result projected to when it arrived, held until the next
   }
 
-  /** Feed one fresh result: poses (Pose[]) and the time (s) its frame entered the model. */
-  update(poses, timestamp) {
+  /**
+   * Feed one fresh result: poses (Pose[]) and the time (s) its frame entered
+   * the model. `arrived` is when the render loop picked it up: `held` is then
+   * the result projected to that moment, held until the next result.
+   *
+   * Use `held` for gesture detectors that measure speed between model updates
+   * (FlapDetector). posesAt() moves every render frame, so each new result
+   * shows up as a jump between two frames 8-16 ms apart, which the detector's
+   * teleport guard reads as a tracking glitch, dropping its history. Simulated
+   * at 120 Hz render with 15-30 Hz poses: 0 of 30 flaps caught; with `held`, 30/30.
+   */
+  update(poses, timestamp, arrived = null) {
     if (this.gain > 0 && this._prevT !== null) {
       const dt = timestamp - this._prevT;
       if (dt > 0 && dt <= this.maxGap) {
@@ -51,6 +62,7 @@ export class PoseExtrapolator {
     this._prevT = timestamp;
     this._poses = poses;
     for (const slot of [...this._vel.keys()]) if (slot >= poses.length) this._vel.delete(slot);
+    this.held = arrived == null ? poses : this.posesAt(arrived);
   }
 
   /** Poses projected to time `now` (s, same clock as the timestamps). */
@@ -76,5 +88,6 @@ export class PoseExtrapolator {
     this._vel.clear();
     this._prev.clear();
     this._prevT = null;
+    this.held = [];
   }
 }

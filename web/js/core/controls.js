@@ -18,7 +18,11 @@ export function emptyControls(pose = null) {
     handsUp: false,
     armsOut: false,
     crouching: false,
-    pose, // the raw Pose (or null)
+    pose, // the Pose projected to this frame (or null)
+    // The same player updated only when the model produces a new result
+    // (projected to when it arrived), so it moves in steps. Gesture detectors
+    // that time motion between model updates want this; see PoseExtrapolator.update.
+    stepPose: null,
   };
 }
 

@@ -356,7 +356,9 @@ export class FlappyRaccoonGame extends Game {
     const pose = controls?.pose ?? null;
     this.lastPose = pose;
     this._updateFraming(pose);
-    const event = this.detector.update(pose, this._clock);
+    // Stepped poses: the detector times motion between model updates, and
+    // per-frame extrapolated poses break that (see PoseExtrapolator.update).
+    const event = this.detector.update(controls?.stepPose ?? pose, this._clock);
     if (event != null) {
       this.fx.flap = 1.0;
       this.fx.flapStrength = Number(event.strength ?? 1.0);

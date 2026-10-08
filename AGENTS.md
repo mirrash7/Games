@@ -173,6 +173,14 @@ Use your own clock (sum of clamped `dt`) for timestamps you pass to these.
 - **Stepped motion:** per-frame velocity flickers between ~0 and huge. Measure
   speed over a **window** (~80 ms) and test motion as **swept segments**, never
   "is it inside the target right now". A fast hand jumps 50-250 px between pose updates.
+- **Gesture detectors read `step_pose`, not `pose`.** `controls.pose` is
+  extrapolated to every render frame, so each new model result arrives as a jump
+  between two frames 8-16 ms apart. Anything that times motion between model
+  updates (FlapDetector) then sees "teleports" and drops its history. Simulated at
+  120 Hz render, Flappy caught 0 of 30 flaps; live it felt like "a few flaps work,
+  then the bird falls". `controls.step_pose` (JS: `stepPose`) is the newest result
+  projected to when it arrived, held until the next one: 30/30, and up to 40 ms
+  quicker than the raw result. Cursors (HandTracker) still use `pose`.
 - **Teleports happen:** a tracking glitch can jump a keypoint across the
   screen. Treat implausible jumps (> ~35% of the width between samples) as
   "lost, then found", not as motion.

@@ -313,12 +313,13 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
             # Feed each result to the extrapolator exactly once, then ask for
             # poses projected to *now* rather than to the frame the model saw.
             if result.timestamp != last_result_ts:
-                extrapolator.update(result)
+                extrapolator.update(result, arrived=now)
                 last_result_ts = result.timestamp
             poses = extrapolator.poses_at(now)
             pose = poses[0] if poses else None
 
             controls = mapper.map(pose)
+            controls.step_pose = extrapolator.held[0] if extrapolator.held else None
             game = shell.game if shell is not None else None
             score_before = getattr(game, "score", None)
             t_update = time.perf_counter()

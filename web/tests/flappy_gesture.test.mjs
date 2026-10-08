@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { KP, Pose } from "../js/core/pose.js";
 import { Rng } from "../js/core/random.js";
 import { FlapDetector } from "../js/games/flappy/gesture.js";
+import { PoseExtrapolator } from "../js/core/extrapolate.js";
 
 const GAME_HZ = 60.0;
 const TOP = 0.7, BOTTOM = -1.3; // a full flap: wrists above the shoulders -> at the sides
@@ -501,4 +502,71 @@ test("time not advancing is ignored", () => {
   det.update(makePose(TOP, TOP), 1.0);
   assert.equal(det.update(makePose(BOTTOM, BOTTOM), 1.0), null);
   assert.equal(det.update(makePose(BOTTOM, BOTTOM), 0.5), null);
+});
+
+// --- through the real pose path: model results at 15-30 Hz, extrapolated per render frame ---
+
+/**
+ * Flap `n` times (wrists +0.9 sw at the top, -1.3 sw at the bottom) with model
+ * results every 1/modelHz s arriving 50 ms late, read at `renderHz`. `use`
+ * picks what the detector sees: "held" (the fix) or "projected" (per-frame
+ * extrapolation, what the game used to get). Returns the flaps detected.
+ */
+function flapThroughPipeline({ renderHz, modelHz, beat, n = 30, use = "held", seed = 1 }) {
+  const rng = new Rng(seed);
+  const sw = 200, shY = 330, latency = 0.05;
+  const h = (t) => {
+    const ph = (t % beat) / beat;
+    if (ph < 0.65) return -1.3 + 2.2 * (0.5 - 0.5 * Math.cos((Math.PI * ph) / 0.65));
+    return 0.9 - 2.2 * (0.5 - 0.5 * Math.cos((Math.PI * (ph - 0.65)) / 0.35));
+  };
+  const poseAt = (t) => {
+    const xy = new Float32Array(34), c = new Float32Array(17);
+    const put = (k, x, y) => {
+      xy[2 * k] = x + rng.gauss(0, 2.5);
+      xy[2 * k + 1] = y + rng.gauss(0, 2.5);
+      c[k] = y >= 0 && y <= 720 ? 0.9 : 0.05;
+    };
+    put(KP.left_shoulder, 740, shY);
+    put(KP.right_shoulder, 540, shY);
+    put(KP.left_wrist, 860, shY - h(t) * sw);
+    put(KP.right_wrist, 420, shY - h(t) * sw);
+    return new Pose(xy, c);
+  };
+  const det = new FlapDetector(true);
+  const ex = new PoseExtrapolator({ gain: 0.7, maxLead: 0.12 });
+  const queue = [];
+  let next = 0, flaps = 0;
+  for (let t = 0; t < n * beat + 0.3; t += 1 / renderHz) {
+    while (next <= t) {
+      queue.push({ at: next + latency, t0: next, pose: poseAt(next) });
+      next += 1 / modelHz;
+    }
+    while (queue.length && queue[0].at <= t) {
+      const r = queue.shift();
+      ex.update([r.pose], r.t0, t);
+    }
+    const pose = use === "held" ? ex.held[0] : ex.posesAt(t)[0];
+    if (det.update(pose ?? null, t)) flaps++;
+  }
+  return flaps;
+}
+
+test("every flap is caught through the real pipeline, at 60 and 120 Hz render", () => {
+  for (const renderHz of [60, 120]) {
+    for (const modelHz of [15, 20, 25, 30]) {
+      for (const beat of [0.4, 0.6]) {
+        const got = flapThroughPipeline({ renderHz, modelHz, beat });
+        assert.ok(got >= 30 && got <= 31, `${renderHz} Hz render, ${modelHz} Hz model, ${beat}s beat: ${got} of 30`);
+      }
+    }
+  }
+});
+
+test("why the detector reads held poses: per-frame extrapolation loses flaps", () => {
+  // A new result shows up as a jump between two render frames 8 ms apart,
+  // which the teleport guard treats as a glitch. This is the "only a few
+  // flaps work, then the bird falls" bug seen in the browser on a 120 Hz screen.
+  const got = flapThroughPipeline({ renderHz: 120, modelHz: 25, beat: 0.6, use: "projected" });
+  assert.ok(got < 15, `projected poses caught ${got} of 30`);
 });
