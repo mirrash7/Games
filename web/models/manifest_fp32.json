@@ -1,0 +1,26 @@
+{
+  "name": "kp336_fp32.onnx",
+  "variant": "fp32",
+  "resolution": 336,
+  "bytes": 142742315,
+  "sha256": "6545d84aaabc0a8408e67f01c2b5e8d6b450c59479dc4307814ee9ef5d2bd220",
+  "parts": [
+    "kp336_fp32.onnx.part0",
+    "kp336_fp32.onnx.part1",
+    "kp336_fp32.onnx.part2"
+  ],
+  "inputs": {
+    "input": [
+      1,
+      3,
+      336,
+      336
+    ]
+  },
+  "outputs": [
+    "dets",
+    "labels",
+    "keypoints"
+  ],
+  "license": "RF-DETR keypoint preview weights, Apache-2.0, Roboflow"
+}

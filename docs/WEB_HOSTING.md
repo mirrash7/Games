@@ -1,64 +1,144 @@
-# Hosting the games on a website
+# The browser build (GitHub Pages)
 
-**Short version:** this repo is a desktop Python app (PyTorch on the GPU via MPS,
-an OpenCV window, direct camera access). A web page cannot run it as-is. There are
-three ways to get the games onto a website. They differ a lot in effort and in
-how the games feel, so choose one before building toward it.
+The arcade runs entirely in the browser: the same RF-DETR keypoint model,
+exported to ONNX and run by onnxruntime-web, and a JavaScript port of
+everything that runs per frame. No server sees the video. The site is static
+and deploys to GitHub Pages from `web/` on every push to `main`.
 
-## What we know (measured 2026-10-06, M5 Max)
+URL once Pages is enabled: **https://mirrash7.github.io/Games/**
 
-- **The model leaves PyTorch cleanly.** `RFDETRKeypointPreview(...).export(shape=(336, 336))`
-  produces one ONNX file of **143 MB** (fp32; fp16 should be about half). It needs
-  `onnx>=1.17` and `onnxscript` installed, because the environment's own `onnx`
-  is missing or too old for the exporter.
-- **ONNX Runtime runs it correctly:** input `[1, 3, 336, 336]`, outputs `dets
-  [1,100,4]`, `labels [1,100,2]` and `keypoints [1,100,34,8]`. Post-processing
-  (decoding those to 17 keypoints) currently lives in rfdetr's Python and would
-  need reimplementing.
-- **CPU speed is far too slow for games:** 232 ms per frame (~4 FPS) in
-  onnxruntime on CPU. A browser would have to use the GPU (WebGPU via
-  onnxruntime-web). **That speed is not yet measured**, and it is the deciding number.
-- Games currently need ~20-30 model updates per second with ~100 ms end-to-end
-  latency (see AGENTS.md §6).
+## GPU or CPU?
 
-## Options
+The page picks the backend itself, in this order:
 
-| | A. Runs in the browser | B. Server runs the model | C. Download the app |
-|---|---|---|---|
-| How | Port the runtime and games to TypeScript; RF-DETR via onnxruntime-web on WebGPU | Browser sends webcam frames to a GPU server running this Python model; games in the browser | Website is a landing page; players download this app |
-| Player experience | Open a link and play; no install | Open a link; extra network lag | Install first; macOS-first |
-| Camera privacy | Video never leaves the device | **Video is streamed to your server** | Video stays local |
-| Latency | Depends on WebGPU speed (unmeasured) | +50-150 ms network round trip on top of ~100 ms: bad for Flappy/Fruit Ninja | Same as today |
-| Running cost | Static hosting only | A GPU server per concurrent player group | Static hosting only |
-| Effort | Highest: games rewritten in TS/Canvas; 70-143 MB model download | Medium: a frame-streaming server + browser games | Lowest: packaging, code signing |
-| Same RF-DETR backbone | Yes (the ONNX export above) | Yes (unchanged) | Yes (unchanged) |
+1. **WebGPU + fp16 model (72 MB)** when the GPU supports `shader-f16`
+   (Chrome/Edge on recent Macs and most recent PCs).
+2. **WebGPU + fp32 model (143 MB)** on a WebGPU GPU without fp16.
+3. **CPU (WASM) + fp32 model**, when there's no WebGPU (older browsers,
+   some Firefox/Safari versions) or the GPU path fails.
 
-## Recommendation
+The intro screen says which one the player will get before anything
+downloads, and the menu warns when the model ended up on the CPU. `?ep=wasm`
+forces the CPU path, and `?model=fp32` forces the fp32 model.
 
-1. **First, measure the deciding number:** onnxruntime-web + WebGPU running the
-   exported model in Chrome on a typical laptop. At ≤ 50 ms per frame, option A
-   is viable and is the best experience: a link, no install, private. At much
-   more than that, the RF-DETR checkpoint is too heavy for in-browser real time,
-   and the choice becomes C (or a lighter browser-native pose model, which would
-   give up the "same backbone" requirement).
-2. Keep this Python repo as the **reference implementation**: its tests, tuning
-   numbers and measured lessons carry straight into a port. The game rules
-   (`update` logic, physics constants, fairness proofs) are plain arithmetic
-   and port mechanically. The OpenCV drawing does not; a web version would
-   redraw with Canvas/WebGL using the same procedural art (the PNGs in
-   `assets/*/generated/` can be served as-is).
-3. Avoid B for these games: the network round trip lands on top of the
-   existing latency, exactly where Flappy Bird and Fruit Ninja are least forgiving.
+## Measured (2026-10-07, Apple M5 Max, Chromium, onnxruntime-web 1.29)
 
-## Reproducing the export
+| path | model time / frame | pose updates / s |
+|---|---|---|
+| WebGPU, fp16 | ~20-25 ms | ~26 (camera-limited at 30 fps) |
+| WebGPU, fp32 | ~29 ms | ~30 |
+| CPU (WASM, 18 threads), fp32 | ~150 ms (measured on ORT 1.22, whose CPU kernels are correct) | ~6-7 |
+| CPU (WASM, 1 thread: no cross-origin isolation) | ~1.2 s | ~1 |
+| Desktop app, PyTorch MPS (for comparison) | ~33 ms plugged in | ~25 |
 
-```bash
-uv run --with "onnx>=1.17" --with onnxruntime --with onnxscript python - <<'PY'
-from rfdetr import RFDETRKeypointPreview
-RFDETRKeypointPreview(device="cpu", resolution=336).export(
-    output_dir="build/onnx", shape=(336, 336), batch_size=1)
-PY
+The browser's GPU path is as fast as the desktop app. The CPU path is
+playable for Snack Attack (sluggish) but not for Flappy Raccoon, whose flap
+detector wants 15+ updates a second. Ordinary laptops have fewer cores, so
+expect worse than 6 per second there.
+
+The CPU figures were measured while the browser tab was visible. A hidden tab
+or pane throttles the model's worker threads by 10-20x, so the timings above
+can't be reproduced from a background tab.
+
+Accuracy: on a public sample image, WebGPU fp16, WebGPU fp32 and WASM fp32 all
+find the same people. fp32 scores match the reference ONNX run to within 0.01,
+and fp16 matches fp32 to within 0.01. (`web/dev/pipeline.html` reproduces
+this; see below.)
+
+### Things that cost a session to learn
+
+- **onnxruntime-web 1.22 silently breaks this model on WebGPU.** RF-DETR's
+  `GridSample` compiles to an invalid WebGPU pipeline; the session runs fast
+  and returns no detections, with only console validation errors. 1.29 is
+  correct. **Re-check accuracy with `web/dev/pipeline.html` on any ORT
+  upgrade.** A speed benchmark on zero input will not catch this.
+- **fp16 on the CPU backend hangs** (no fp16 kernels; casts everywhere), so
+  fp16 is GPU-only and fp32 is the fallback.
+- `onnxconverter_common` cannot convert this graph to fp16; ORT's
+  `onnxruntime.transformers.float16.convert_float_to_float16(keep_io_types=True)`
+  can (see `tools/export_web_model.py`).
+- **Multithreaded CPU needs cross-origin isolation** (COOP/COEP headers for
+  SharedArrayBuffer). GitHub Pages can't set headers, so `web/coi-sw.js`, a
+  service worker, adds them and the page reloads once. If the browser refuses
+  the service worker, the CPU path runs on one thread; WebGPU doesn't care.
+- `img.decode()` never resolves while a tab is hidden; `gfx.loadImage` waits on
+  `onload` instead.
+- GitHub blocks files over 100 MB, so the models ship as equal chunks under
+  48 MiB (`*.onnx.partN` + `manifest_<variant>.json`). The page downloads them,
+  checks the SHA-256, and keeps them in Cache Storage per variant and hash, so
+  a return visit starts in about a second.
+
+## Layout
+
+```
+web/
+  index.html, style.css     intro card, canvas, toolbar (camera picker, fullscreen, skeleton)
+  coi-sw.js                 cross-origin isolation for static hosting
+  js/main.js                boot (backend choice, downloads) and the render loop (app.py's twin)
+  js/camera.js              getUserMedia -> mirrored 1280x720 frame; built-in camera over iPhone
+  js/shell.js               welcome screen, dwell buttons, countdown, pause, game over (shell.py)
+  js/model/                 loader.js (chunks + cache), engine.js (main thread), worker.js (ORT)
+  js/core/                  decode (rf-detr PostProcess), pose, hand, controls, extrapolate,
+                            random, theme, gfx
+  js/games/                 base.js (the Game interface), index.js (registry), snack/, flappy/
+  models/                   model chunks + manifests (the unsplit .onnx files are gitignored)
+  tests/                    node:test suites (also run by pytest via tests/test_web.py)
+  dev/                      dev-only harness pages (not published)
+assets/<game>/generated/    game art, mounted into the site at assets/snack, assets/flappy
 ```
 
-`build/` is git-ignored. The model file is too large for a normal git repo; host
-it alongside the website or on a CDN.
+The render loop never waits on the model. Inference runs in a module Web
+Worker; the main thread sends the newest frame, 336x336 RGBA, whenever the
+worker is free, and projects poses to the current time with the same
+`PoseExtrapolator` as the desktop app.
+
+## Develop
+
+```bash
+uv run python tools/serve_web.py           # http://localhost:8765 with COOP/COEP set
+cd web && node --test tests/*.test.mjs     # or: uv run --with pytest pytest tests/ -q
+```
+
+Open `http://localhost:8765/`. Useful URL options:
+
+- `?debug=1` shows the skeleton and the timings (or press D).
+- `?game=snack` or `?game=flappy` preselects a game.
+- `?source=dev/people-walking.jpg` uses an image or video in place of the
+  webcam. Sample media is gitignored; this one is Roboflow's public
+  people-walking image.
+
+Dev pages:
+
+- `dev/pipeline.html?model=fp16&ep=webgpu&threshold=0.2` runs the model path
+  on a still and reports backend, timing and scores.
+- `dev/snack.html` and `dev/flappy.html` render contact sheets of key moments
+  from scripted poses.
+
+## Re-export the model
+
+```bash
+uv run --with "onnx>=1.17" --with onnxscript --with onnxruntime --with sympy --with packaging \
+    python tools/export_web_model.py
+```
+
+This exports fp32 at 336, converts fp16, then splits both and writes the
+manifests. Commit the new `web/models/*.part*` and `manifest_*.json`. The
+SHA-256 in the manifest invalidates players' cached copies.
+
+## Deploy
+
+`.github/workflows/pages.yml` runs the browser tests and then
+`tools/build_web.py`, which copies `web/` without tests, dev pages or unsplit
+models, mounts the art and adds `.nojekyll`. It then publishes to Pages.
+
+Pages has to be switched on once by a repo **admin**: Settings → Pages →
+Build and deployment → Source: **GitHub Actions**. After that, every push to
+`main` that touches `web/`, `assets/` or the workflow deploys within a couple
+of minutes. Re-run it by hand from the Actions tab ("Deploy browser arcade" →
+Run workflow).
+
+## Keeping the two builds in step
+
+The Python package is the reference and the JS is a port. Behaviour changes
+(tuning numbers, rules, gesture thresholds) go into both, along with the
+matching tests in `tests/` and `web/tests/`. The art lives once in `assets/`.

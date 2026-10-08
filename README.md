@@ -6,6 +6,16 @@
 Runs the RF-DETR keypoint model locally on live webcam video and turns body pose
 into game control input.
 
+## Play in the browser
+
+**https://mirrash7.github.io/Games/**: no install. The same model runs inside
+the browser (onnxruntime-web), on the GPU via WebGPU when available (~20-30 ms a
+frame on an M5 Max, as fast as this desktop app) and on the CPU otherwise
+(~150 ms, ~6 pose updates a second: Snack Attack is playable, Flappy Raccoon
+is not). Video never leaves the computer. How it's built, measured and
+deployed: [docs/WEB_HOSTING.md](docs/WEB_HOSTING.md). The rest of this README
+covers the desktop Python app, which is the reference implementation.
+
 ## Measured on this machine (Apple M5 Max, MPS)
 
 | | |
@@ -462,7 +472,7 @@ the games that do.
 ## Tests
 
 ```bash
-uv run --with pytest pytest tests/ -q
+uv run --with pytest pytest tests/ -q   # also runs the browser suite (web/tests) if Node is installed
 ```
 
 204 tests. The Hole in the Wall suite covers fit scoring (distance and position

@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pipeline check</title>
+<body style="background:#111;color:#ddd;font:14px system-ui">
+<canvas id="c" width="1280" height="720" style="width:960px"></canvas>
+<pre id="log"></pre>
+<script type="module">
+  // Dev check of the whole browser model path on a still image:
+  // FileSource (mirror + crop) -> PoseEngine -> worker (WebGPU/WASM) -> decode.
+  import { FileSource } from "../js/camera.js";
+  import { loadModel } from "../js/model/loader.js";
+  import { PoseEngine } from "../js/model/engine.js";
+  import { SKELETON } from "../js/core/pose.js";
+  const params = new URLSearchParams(location.search);
+  const log = (s) => (document.getElementById("log").textContent += s + "\n");
+  const ctx = document.getElementById("c").getContext("2d");
+  window.onerror = (m) => log("error: " + m);
+  window.onunhandledrejection = (e) => log("rejected: " + (e.reason?.stack ?? e.reason));
+  log("loading source");
+  const src = await new FileSource(params.get("source") ?? "people-walking.jpg").open();
+  log("loading model");
+  // ?model=fp16|fp32 loads that shipped variant; ?file=int8 an unsplit local export.
+  const file = params.get("file");
+  const { buffer } = file
+    ? { buffer: await (await fetch(`../models/kp336_${file}.onnx`)).arrayBuffer() }
+    : await loadModel(new URL("../models/", location.href), params.get("model") ?? "fp32",
+        (f, c) => { window.__progress = [f, c]; });
+  log("starting engine");
+  const engine = new PoseEngine({ people: 5 });
+  engine.threshold = Number(params.get("threshold") ?? 0.5);
+  const info = await engine.start(buffer, params.get("ep") ? [params.get("ep")] : ["webgpu", "wasm"]);
+  log(JSON.stringify(info));
+  const times = [];
+  for (let i = 0; i < Number(params.get("runs") ?? 20); i++) {
+    await new Promise((r) => setTimeout(r, 35));
+    src.grab();
+    await new Promise((resolve) => { engine.onResult = resolve; engine.submit(src.frame, performance.now() / 1000); });
+    times.push(engine.meter.ms.at(-1));
+  }
+  const poses = engine.latest.poses;
+  ctx.drawImage(src.frame, 0, 0);
+  ctx.lineWidth = 3;
+  for (const p of poses) {
+    for (const [a, b, col] of SKELETON) {
+      if (p.confidence[a] < 0.5 || p.confidence[b] < 0.5) continue;
+      ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(p.x(a), p.y(a)); ctx.lineTo(p.x(b), p.y(b)); ctx.stroke();
+    }
+  }
+  times.sort((a, b) => a - b);
+  const result = { ep: info.ep, adapter: info.adapter, threads: info.threads, isolated: crossOriginIsolated,
+    people: poses.length, scores: poses.map((p) => +p.score.toFixed(3)), noseX: poses.map((p) => +p.x(0).toFixed(1)), medianMs: +times[times.length >> 1].toFixed(1), minMs: +times[0].toFixed(1) };
+  log(JSON.stringify(result));
+  window.__result = result;
+</script>

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flappy Raccoon harness</title>
+<style>
+  :root { --bg: #15161a; --fg: #e8e6e3; --dim: #9a978f; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 10px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+  header b { font-size: 15px; }
+  #perf, #status { color: var(--dim); font-variant-numeric: tabular-nums; }
+  nav a { color: #ffd246; margin-right: 10px; }
+  canvas#sheet { display: block; width: 100%; max-width: 1280px; height: auto; margin: 0 auto; }
+</style>
+</head>
+<body>
+<!-- Dev-only harness (not published): drives Flappy Raccoon with scripted,
+     synthetic flapping poses through the real FlapDetector, over a synthetic
+     camera image, and renders a contact sheet of key moments.
+     ?moment=N shows one moment at full 1280x720. -->
+<header>
+  <b>Flappy Raccoon harness</b>
+  <span id="status">loading art...</span>
+  <span id="perf"></span>
+  <nav id="nav"></nav>
+</header>
+<canvas id="sheet" width="1280" height="1080"></canvas>
+<script type="module">
+import { FlappyRaccoonGame } from "../js/games/flappy/game.js";
+import { KP, Pose } from "../js/core/pose.js";
+import { emptyControls } from "../js/core/controls.js";
+
+const W = 1280, H = 720, DT = 1 / 60, MODEL_HZ = 20;
+const status = document.getElementById("status");
+const params = new URLSearchParams(location.search);
+
+// --- synthetic player ------------------------------------------------------
+
+/** A standing player: shoulders `sw` apart at height cy, wrists h sw above them. */
+function playerPose(hl, hr, { sw = 200, cx = 640, cy = 380 } = {}) {
+  const xy = new Float32Array(34), c = new Float32Array(17);
+  const set = (name, x, y, conf = 0.9) => {
+    xy[2 * KP[name]] = x;
+    xy[2 * KP[name] + 1] = y;
+    c[KP[name]] = conf;
+  };
+  set("nose", cx, cy - 0.75 * sw);
+  set("left_eye", cx + 0.1 * sw, cy - 0.85 * sw);
+  set("right_eye", cx - 0.1 * sw, cy - 0.85 * sw);
+  set("left_shoulder", cx + sw / 2, cy);
+  set("right_shoulder", cx - sw / 2, cy);
+  set("left_hip", cx + 0.35 * sw, cy + 1.5 * sw);
+  set("right_hip", cx - 0.35 * sw, cy + 1.5 * sw);
+  for (const [side, s, h] of [["left", 1, hl], ["right", -1, hr]]) {
+    const sx = cx + s * sw / 2;
+    const wx = cx + s * 0.9 * sw * 1.4, wy = cy - h * sw;
+    // Elbow bent outward a little from the shoulder-wrist midpoint.
+    set(`${side}_elbow`, (sx + wx) / 2 + s * 0.25 * sw, (cy + wy) / 2 + 0.1 * sw);
+    set(`${side}_wrist`, wx, wy);
+  }
+  return new Pose(xy, c, 0.9);
+}
+
+/** The "camera": a dim room and a figure drawn from the pose (mirrored view already). */
+const cam = document.createElement("canvas");
+cam.width = W;
+cam.height = H;
+const camCtx = cam.getContext("2d");
+function drawCamera(pose) {
+  const g = camCtx;
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#4a4f5c");
+  grad.addColorStop(1, "#262830");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "#3a3d47";
+  g.fillRect(0, H * 0.62, W, H * 0.38); // floor
+  g.fillStyle = "#6b5f4c";
+  g.fillRect(90, 140, 220, 300); // a door
+  g.fillStyle = "#8aa4c8";
+  g.fillRect(900, 120, 260, 180); // a window
+  if (!pose) return;
+  const p = (n) => [pose.x(KP[n]), pose.y(KP[n])];
+  const vis = (n) => pose.confidence[KP[n]] >= 0.4;
+  g.lineCap = "round";
+  g.strokeStyle = "#c9785a";
+  g.fillStyle = "#c9785a";
+  // torso
+  if (vis("left_shoulder") && vis("right_shoulder")) {
+    const [lx, ly] = p("left_shoulder"), [rx, ry] = p("right_shoulder");
+    const [hx1, hy1] = p("left_hip"), [hx2, hy2] = p("right_hip");
+    g.fillStyle = "#3f7fbf";
+    g.beginPath();
+    g.moveTo(lx, ly); g.lineTo(rx, ry); g.lineTo(hx2, hy2); g.lineTo(hx1, hy1);
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = "#d9a07e";
+  const [nx, ny] = p("nose");
+  g.beginPath();
+  g.arc(nx, ny - 10, 62, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = "#3f7fbf";
+  g.lineWidth = 38;
+  for (const s of ["left", "right"]) {
+    if (!vis(`${s}_shoulder`) || !vis(`${s}_wrist`)) continue;
+    g.beginPath();
+    g.moveTo(...p(`${s}_shoulder`));
+    g.lineTo(...p(`${s}_elbow`));
+    g.lineTo(...p(`${s}_wrist`));
+    g.stroke();
+  }
+}
+
+/**
+ * Arms raised at TOP; a flap is a 0.18 s cosine downstroke to the sides and a
+ * 0.30 s upstroke back. The model publishes poses at MODEL_HZ; the game sees
+ * each one held until the next (stepped input, as in real play).
+ */
+const TOP = 0.7, BOTTOM = -1.3, DOWN = 0.18, UP = 0.30;
+class Flapper {
+  constructor() { this.strokeAt = -10; }
+  busy(t) { return t - this.strokeAt < DOWN + UP; }
+  flap(t) { if (!this.busy(t)) this.strokeAt = t; }
+  height(t) {
+    const u = t - this.strokeAt;
+    const ease = (a, b, k) => a + (b - a) * (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, k)))) / 2;
+    if (u < 0 || u >= DOWN + UP) return TOP;
+    return u < DOWN ? ease(TOP, BOTTOM, u / DOWN) : ease(BOTTOM, TOP, (u - DOWN) / UP);
+  }
+}
+
+/** Steers like a player: flaps when the bird will soon sink below a line in the next gap. */
+function wantsFlap(game) {
+  const b = game.bird, r = game.rules;
+  const reach = game.pipeWidth / 2 + game.hitRadius;
+  const p = game.pipes.find((q) => q.x + reach > b.x);
+  const line = p ? p.gapY + 25 : game.groundY * 0.5;
+  const lead = 0.17; // detection lag the player has learned to anticipate
+  const y = b.y + b.vy * lead + 0.5 * r.gravity * lead * lead;
+  return y > line;
+}
+
+// --- capture ---------------------------------------------------------------
+
+const shots = []; // {title, canvas}
+function capture(game, pose, title) {
+  drawCamera(pose);
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const g = c.getContext("2d");
+  g.drawImage(cam, 0, 0); // the shell hands the game a ctx already holding the camera
+  game.render(g, cam);
+  shots.push({ title, canvas: c });
+}
+
+function makeGame(seed) {
+  FlappyRaccoonGame.sessionBest = 0;
+  return new FlappyRaccoonGame({ width: W, height: H, mirrored: true, seed });
+}
+
+/** Run a game for `seconds`, flapping when the policy says so. Calls onFrame(t, pose) after each update. */
+function drive(game, flapper, clock, seconds, { policy = true, poseFn = null, onFrame } = {}) {
+  let held = null, heldAt = -1;
+  for (let i = 0, n = Math.round(seconds / DT); i < n; i++) {
+    clock.t += DT;
+    const t = clock.t;
+    if (policy && game.phase === "playing" && wantsFlap(game)) flapper.flap(t);
+    const modelT = Math.floor(t * MODEL_HZ) / MODEL_HZ;
+    if (modelT !== heldAt) {
+      heldAt = modelT;
+      const h = flapper.height(modelT);
+      held = poseFn ? poseFn(modelT) : playerPose(h, h);
+    }
+    game.update(emptyControls(held), DT);
+    if (onFrame && onFrame(t, held) === false) return held;
+  }
+  return held;
+}
+
+async function main() {
+  await FlappyRaccoonGame.preload();
+  status.textContent = "simulating...";
+
+  // 1) READY: arms up, the bird bobbing, the ground rolling.
+  const game = makeGame(7);
+  const flapper = new Flapper();
+  const clock = { t: 0 };
+  let pose = drive(game, flapper, clock, 1.2, { policy: false });
+  capture(game, pose, "1 READY - arms up, FLAP TO START");
+
+  // First flap starts play.
+  flapper.flap(clock.t);
+  let got = { flight: false, popup: false };
+  let lastScore = 0, scoreAt = -1;
+  pose = drive(game, flapper, clock, 60, {
+    onFrame(t, p) {
+      if (!got.flight && game.score === 0 && game.pipes.some((q) => q.x < W - 200 && q.x > 500)
+          && game.fx.flap > 0.85 && game.fx.feathers.length > 4) {
+        got.flight = true;
+        capture(game, p, "2 mid-flight - wings, feathers, pipes, PiP FLAP!");
+      }
+      if (game.score !== lastScore) {
+        lastScore = game.score;
+        scoreAt = t;
+      }
+      if (!got.popup && game.score >= 2 && scoreAt > 0 && t - scoreAt > 0.14) {
+        got.popup = true;
+        capture(game, p, `3 "+1" popup and score pulse (score ${game.score})`);
+      }
+      if (game.phase === "game_over") return false;
+      if (got.popup && game.score >= 4) return false; // enough: crash on purpose below
+    },
+  });
+
+  // 5) Crash: stop flapping; capture just after impact (flash + shake).
+  if (game.phase === "playing") {
+    pose = drive(game, flapper, clock, 8, { policy: false,
+      onFrame: () => (game.phase === "playing" ? undefined : false) });
+  }
+  drive(game, flapper, clock, 0.12, { policy: false });
+  capture(game, pose, `5 crash - flash and shake (score ${game.score})`);
+
+  // 6) Game over panel. The score is forced to 23 so the silver medal shows.
+  game.score = 23;
+  game.newBest = true;
+  FlappyRaccoonGame.sessionBest = 23;
+  drive(game, flapper, clock, 2.6, { policy: false });
+  capture(game, pose, "6 game over - medal panel (score set to 23 for silver), NEW BEST");
+
+  // 4) STEP BACK: a separate game; the player stands close (shoulders 0.4 sw off the bottom).
+  const close = makeGame(8);
+  const closePose = (t) => playerPose(TOP, TOP, { sw: 420, cy: 720 - 0.4 * 420 });
+  const cp = drive(close, new Flapper(), { t: 0 }, 1.0, { policy: false, poseFn: closePose });
+  shots.splice(3, 0, null);
+  capture(close, cp, "4 READY, standing too close - STEP BACK");
+  shots[3] = shots.pop();
+
+  // 7) No player at all: SHOW BOTH ARMS in the PiP.
+  const lost = makeGame(9);
+  drive(lost, new Flapper(), { t: 0 }, 1.0, { policy: false, poseFn: () => null });
+  capture(lost, null, "7 nobody in frame - PiP: SHOW BOTH ARMS");
+
+  // 8) Mid-flight later, at a higher score (narrower gaps, faster).
+  const late = makeGame(11);
+  const lf = new Flapper(), lc = { t: 0 };
+  drive(late, lf, lc, 0.5, { policy: false });
+  lf.flap(lc.t);
+  let lp = null;
+  lp = drive(late, lf, lc, 60, { onFrame: () => (late.phase === "game_over" || late.score >= 6 ? false : undefined) });
+  capture(late, lp, `8 later flight (score ${late.score}, gap ${late.gapSize().toFixed(0)} px)`);
+
+  drawSheet();
+  status.textContent = `${shots.length} moments`;
+  measure(late, lf, lc);
+}
+
+function drawSheet() {
+  const one = params.get("moment");
+  const sheet = document.getElementById("sheet");
+  const g = sheet.getContext("2d");
+  const nav = document.getElementById("nav");
+  nav.innerHTML = `<a href="?">sheet</a>` + shots.map((s, i) => `<a href="?moment=${i}">${i + 1}</a>`).join("");
+  if (one != null && shots[+one]) {
+    sheet.width = W;
+    sheet.height = H;
+    g.drawImage(shots[+one].canvas, 0, 0);
+    return;
+  }
+  const cols = 2, tw = W / 2, th = H / 2, cap = 26;
+  const rows = Math.ceil(shots.length / cols);
+  sheet.width = W;
+  sheet.height = rows * (th + cap);
+  g.fillStyle = "#15161a";
+  g.fillRect(0, 0, sheet.width, sheet.height);
+  shots.forEach((s, i) => {
+    const x = (i % cols) * tw, y = Math.floor(i / cols) * (th + cap);
+    g.fillStyle = "#e8e6e3";
+    g.font = "15px -apple-system, system-ui, sans-serif";
+    g.fillText(s.title, x + 8, y + 18);
+    g.imageSmoothingQuality = "high";
+    g.drawImage(s.canvas, x, y + cap, tw, th);
+  });
+}
+
+// --- render cost -----------------------------------------------------------
+
+function measure(game, flapper, clock) {
+  // A busy scene: keep flying the late game (pipes, feathers, popups, PiP).
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const g = c.getContext("2d");
+  const js = [], flushed = [], base = [];
+  let pose = null;
+  for (let i = 0; i < 300; i++) {
+    pose = drive(game, flapper, clock, DT) ?? pose;
+    if (game.phase !== "playing") { // keep it busy: restart
+      game.reset();
+      flapper.flap(clock.t);
+    }
+    drawCamera(pose);
+    g.drawImage(cam, 0, 0);
+    g.getImageData(0, 0, 1, 1); // finish the camera's raster work before timing
+    const tb = performance.now();
+    g.getImageData(0, 0, 1, 1); // baseline: the cost of a flush + 1 px readback alone
+    const t0 = performance.now();
+    game.render(g, cam);
+    const t1 = performance.now();
+    g.getImageData(0, 0, 1, 1); // force the game's raster work to finish
+    const t2 = performance.now();
+    js.push(t1 - t0);
+    flushed.push(t2 - t0);
+    base.push(t0 - tb);
+  }
+  const stats = (a) => {
+    const s = [...a].sort((x, y) => x - y);
+    return { median: s[s.length >> 1], p95: s[Math.floor(s.length * 0.95)],
+      mean: a.reduce((x, y) => x + y, 0) / a.length };
+  };
+  // Throughput on canvases that are never read back mid-run (Chrome moves a
+  // canvas to software rendering once it is read often): 300 frames, one
+  // readback at the end, with and without the game's render.
+  drawCamera(pose);
+  const batch = (withGame) => {
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const gg = cv.getContext("2d");
+    const t0 = performance.now();
+    for (let i = 0; i < 300; i++) {
+      drive(game, flapper, clock, DT);
+      if (game.phase !== "playing") { game.reset(); flapper.flap(clock.t); }
+      gg.drawImage(cam, 0, 0);
+      if (withGame) game.render(gg, cam);
+    }
+    gg.getImageData(0, 0, 1, 1);
+    return (performance.now() - t0) / 300;
+  };
+  batch(true); // warm up
+  const withGame = batch(true), without = batch(false);
+  const r = { js: stats(js), flushed: stats(flushed), readback: stats(base), frames: js.length,
+    amortizedTotal: withGame, amortizedCameraOnly: without };
+  window.__perf = r;
+  document.getElementById("perf").textContent =
+    `render (300 frames): median ${r.js.median.toFixed(2)} ms, p95 ${r.js.p95.toFixed(2)} ms;`
+    + ` incl. raster flush median ${r.flushed.median.toFixed(2)} ms`
+    + ` (software-raster worst case);`
+    + ` GPU canvas, 300 frames amortized (camera blit + render): ${r.amortizedTotal.toFixed(2)} ms/frame`;
+  window.__ready = true;
+}
+
+main().catch((err) => {
+  status.textContent = `error: ${err.message}`;
+  console.error(err);
+  window.__error = String(err.stack || err);
+  window.__ready = true;
+});
+</script>
+</body>
+</html>

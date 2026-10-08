@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Motion Arcade</title>
+  <meta name="description" content="Body-controlled arcade games in your browser. A pose model watches your webcam; nothing leaves your computer.">
+  <link rel="icon" href="assets/snack/raccoon_idle.png">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Cross-origin isolation via service worker (see coi-sw.js). Reload once
+    // when it first takes control; never loop.
+    (function () {
+      if (window.crossOriginIsolated || !window.isSecureContext || !("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("coi-sw.js").then(function (reg) {
+        if (navigator.serviceWorker.controller) {
+          // Controlled but still not isolated: the browser refused; carry on single-threaded.
+          return;
+        }
+        var reload = function () {
+          if (sessionStorage.getItem("coi-reloaded")) return;
+          sessionStorage.setItem("coi-reloaded", "1");
+          location.reload();
+        };
+        if (reg.active) reload();
+        navigator.serviceWorker.addEventListener("controllerchange", reload);
+      }).catch(function (e) { console.warn("coi service worker:", e); });
+    })();
+  </script>
+</head>
+<body>
+  <main id="stage">
+    <canvas id="screen" width="1280" height="720" aria-label="Game screen"></canvas>
+
+    <section id="intro" class="overlay">
+      <div class="card">
+        <img class="mascot" src="assets/snack/raccoon_idle.png" alt="">
+        <h1>MOTION ARCADE</h1>
+        <p class="lede">Arcade games you play with your body. A pose model watches your webcam
+          and runs entirely in this browser: no video leaves your computer.</p>
+        <ul class="games">
+          <li><b>Snack Attack</b> your hand is a raccoon. Swipe through the snacks and dodge the trash.</li>
+          <li><b>Flappy Raccoon</b> flap your arms to fly through the pipes.</li>
+        </ul>
+        <p id="device" class="device">Checking your graphics card...</p>
+        <button id="go" class="go" disabled>Allow camera and play</button>
+        <div id="progress" class="progress" hidden>
+          <div class="bar"><span id="bar"></span></div>
+          <p id="status" class="status"></p>
+        </div>
+        <p class="fine">The first visit downloads the pose model once (<span id="model-size">72-143 MB</span>); after that it starts from the browser cache.
+          Stand about 2 m back with your upper body in view.</p>
+      </div>
+    </section>
+
+    <section id="failure" class="overlay" hidden>
+      <div class="card">
+        <h1>Something went wrong</h1>
+        <p id="failure-text" class="lede"></p>
+        <button class="go" onclick="location.reload()">Try again</button>
+      </div>
+    </section>
+  </main>
+
+  <footer id="bar-bottom">
+    <span id="engine" class="chip">model: not loaded</span>
+    <label class="cam">Camera <select id="camera" disabled></select></label>
+    <button id="fullscreen" class="tool" title="Fullscreen (F)">Fullscreen</button>
+    <button id="debug" class="tool" title="Show the skeleton (D)">Skeleton</button>
+    <span class="spacer"></span>
+    <a href="https://github.com/mirrash7/Games" target="_blank" rel="noopener">Source</a>
+    <span class="credit">Pose model: <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> by Roboflow (Apache-2.0)</span>
+  </footer>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

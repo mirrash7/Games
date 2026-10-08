@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snack Attack harness</title>
+<style>
+  body { margin: 0; background: #111; color: #ccc; font: 14px system-ui, sans-serif; }
+  header { padding: 8px 12px; }
+  canvas { display: block; width: 100%; height: auto; }
+  pre { margin: 0; padding: 8px 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>Snack Attack dev harness (seeded, scripted poses at 20 Hz over a synthetic camera).
+  <code>?panel=N</code> shows one panel at full size.</header>
+<pre id="stats">running...</pre>
+<canvas id="sheet"></canvas>
+<script type="module">
+import { SnackAttackGame } from "../js/games/snack/game.js";
+import { Fruit } from "../js/games/snack/entities.js";
+import { KP, Pose } from "../js/core/pose.js";
+import { emptyControls } from "../js/core/controls.js";
+import { handPoint } from "../js/core/hand.js";
+import { makeCanvas } from "../js/core/gfx.js";
+
+const W = 1280, H = 720, LABEL = 46, DT = 1 / 60;
+const SEED = 7;
+
+await SnackAttackGame.preload();
+const art = (await import("../js/games/snack/art.js")).cachedArt();
+const byName = Object.fromEntries(art.fruits.map((f) => [f.name, f]));
+
+// --- the synthetic player ---
+
+// The player's real right hand is left_wrist on a mirrored feed.
+function poseAt(wx, wy) {
+  const xy = new Float32Array(34), c = new Float32Array(17);
+  const set = (n, x, y) => { xy[2 * KP[n]] = x; xy[2 * KP[n] + 1] = y; c[KP[n]] = 0.9; };
+  set("left_shoulder", 760, 330);
+  set("right_shoulder", 560, 330);
+  set("nose", 660, 220);
+  set("right_elbow", 500, 520);
+  set("right_wrist", 470, 680);
+  // Elbow below and toward the body, so the forearm leans like a real arm.
+  const ex = wx + (760 - wx) * 0.25, ey = Math.min(wy + 170, 715);
+  set("left_elbow", ex, ey);
+  set("left_wrist", wx, wy);
+  return new Pose(xy, c, 0.9);
+}
+
+const camera = makeCanvas(W, H);
+function drawCamera(pose) {
+  const g = camera.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#1d2230");
+  grad.addColorStop(1, "#0b0d12");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "#3a3330"; // a dim wall poster, so the blend is visible
+  g.fillRect(90, 90, 240, 300);
+  if (!pose) return;
+  const p = (n) => [pose.x(KP[n]), pose.y(KP[n])];
+  g.fillStyle = "#5a4c44";
+  g.beginPath(); g.ellipse(660, 230, 62, 78, 0, 0, Math.PI * 2); g.fill(); // head
+  g.fillRect(540, 320, 240, 420); // torso
+  g.strokeStyle = "#5a4c44"; g.lineCap = "round"; g.lineWidth = 46;
+  for (const [a, b, cc] of [["left_shoulder", "left_elbow", "left_wrist"], ["right_shoulder", "right_elbow", "right_wrist"]]) {
+    g.beginPath(); g.moveTo(...p(a)); g.lineTo(...p(b)); g.lineTo(...p(cc)); g.stroke();
+  }
+  const palm = handPoint(pose, "right", true);
+  if (palm) { // the real hand: the raccoon should sit right on it
+    g.fillStyle = "#9c7a64";
+    g.beginPath(); g.ellipse(palm[0], palm[1], 30, 36, 0, 0, Math.PI * 2); g.fill();
+  }
+}
+
+// --- driving a game ---
+
+function newGame() {
+  const game = new SnackAttackGame({ width: W, height: H, mirrored: true, seed: SEED });
+  game.spawner.timer = 1e9; // scenes place their own snacks
+  return game;
+}
+
+/** Run `seconds` at 60 Hz with the hand at hand(t) (null = nobody), poses updating at 20 Hz. */
+function run(game, seconds, hand) {
+  const frames = Math.round(seconds / DT);
+  for (let i = 0; i < frames; i++) {
+    const t = game.clock;
+    if (game._tick === undefined) game._tick = 0;
+    if (game._tick % 3 === 0) { // a new pose every third frame: 20 Hz
+      const at = hand ? hand(t) : null;
+      game._pose = at ? poseAt(at[0], at[1]) : null;
+    }
+    game._tick++;
+    const controls = game._pose ? { ...emptyControls(game._pose), present: true } : emptyControls();
+    game.update(controls, DT);
+  }
+}
+
+const sweep = (x0, x1, y, t0, dur) => (t) => {
+  const k = Math.min(Math.max((t - t0) / dur, 0), 1);
+  return [x0 + (x1 - x0) * k, y + Math.sin(k * Math.PI) * -40];
+};
+
+const work = makeCanvas(W, H);
+const wctx = work.getContext("2d");
+function frameOf(game) {
+  drawCamera(game._pose);
+  wctx.drawImage(camera, 0, 0);
+  game.render(wctx, camera);
+  return work;
+}
+
+const toss = (name, x, y, vx, vy, extra = {}) =>
+  new Fruit({ pos: [x, y], vel: [vx, vy], radius: name ? byName[name].radius : 52,
+    art: name ? byName[name] : null, angle: 0.4, spin: 1.2, ...extra });
+
+// --- the scenes ---
+
+const panels = [];
+function capture(label, game) {
+  const c = makeCanvas(W, H);
+  c.getContext("2d").drawImage(frameOf(game), 0, 0);
+  panels.push({ label, canvas: c,
+    info: `score ${game.score} lives ${game.lives} phase ${game.phase} popups ${game.fx.popups.length}` });
+}
+
+{ // 1. raccoon cursor and purple trail, a couple of snacks in flight
+  const g = newGame();
+  g.fruits.push(toss("cotton_candy_pink", 300, 760, 120, -1250), toss("donut", 1000, 780, -150, -1200));
+  run(g, 0.5, () => [380, 470]);
+  run(g, 0.32, sweep(380, 980, 470, g.clock, 0.4));
+  capture("1. raccoon on the palm + purple trail (mid-swing)", g);
+}
+{ // 2. a bite: crumbs, halves, +1 popup, open mouth
+  const g = newGame();
+  run(g, 0.4, () => [360, 420]);
+  g.fruits.push(toss("pizza", 700, 380, 0, -280)); // near its apex as the hand arrives
+  run(g, 0.38, sweep(360, 980, 420, g.clock, 0.35));
+  capture("2. a bite: crumbs, halves, +1 popup, chomp", g);
+}
+{ // 3. combo banner
+  const g = newGame();
+  run(g, 0.4, () => [240, 420]);
+  ["cotton_candy_blue", "fries", "cookie", "grapes"].forEach((n, i) =>
+    g.fruits.push(toss(n, 380 + i * 150, 380, 0, -200 - i * 90)));
+  run(g, 0.5, sweep(240, 1000, 420, g.clock, 0.45));
+  run(g, 0.4, () => [1000, 420]);
+  capture("3. one swing through four: combo banner (+2 popup from the cookie)", g);
+}
+{ // 4. a dropped snack costs a life; no hand -> the hint
+  const g = newGame();
+  g.fruits.push(toss("cotton_candy_swirl", 640, 650, 0, 300));
+  run(g, 0.9, null);
+  capture("4. a dropped snack: one life lost, hand missing hint", g);
+}
+{ // 5. busy board
+  const g = newGame();
+  g.slicedTotal = 96; // level 12
+  g.spawner.timer = 0;
+  g.lives = 99;
+  run(g, 0.3, () => [200, 300]);
+  for (let k = 0; k < 6; k++) {
+    for (let j = 0; j < 4; j++) g.fruits.push(toss(art.fruits[(k * 4 + j) % art.fruits.length].name,
+      200 + j * 260 + k * 20, 780, (j - 1.5) * 60, -1150 - 40 * j));
+    run(g, 0.45, sweep(k % 2 ? 1100 : 180, k % 2 ? 180 : 1100, 260 + (k % 3) * 70, g.clock, 0.4));
+    if (g.phase === "game_over") break;
+  }
+  capture("5. busy board", g);
+}
+{ // 6. trash bag: game over
+  const g = newGame();
+  run(g, 0.4, () => [300, 400]);
+  g.fruits.push(toss(null, 640, 360, 0, -260, { isBomb: true }), toss("donut", 960, 260, 0, -500));
+  run(g, 0.3, sweep(300, 800, 400, g.clock, 0.25));
+  run(g, 0.25, () => [800, 400]);
+  capture("6. the raccoon grabbed the trash: game over", g);
+}
+
+// --- render cost on a busy board ---
+
+function measure() {
+  const g = newGame();
+  g.slicedTotal = 96;
+  g.spawner.timer = 0;
+  const hand = (t) => [640 + 520 * Math.sin(t * 5.5), 330 + 120 * Math.sin(t * 2.3)];
+  const times = [];
+  let maxFruits = 0, maxDebris = 0, restarts = 0;
+  let game = g;
+  for (let i = 0; i < 360; i++) {
+    if (i % 20 === 0) for (let j = 0; j < 3; j++)
+      game.fruits.push(toss(art.fruits[(i + j) % art.fruits.length].name, 250 + j * 380, 780, 0, -1150));
+    game.lives = 99;
+    run(game, DT, hand);
+    if (game.phase === "game_over") { // a bomb got bitten: keep the board busy
+      const fresh = newGame();
+      fresh.slicedTotal = 96; fresh.spawner.timer = 0;
+      fresh.fruits = game.fruits.filter((f) => !f.isBomb);
+      game = fresh; restarts++;
+    }
+    drawCamera(game._pose);
+    wctx.drawImage(camera, 0, 0);
+    const t0 = performance.now();
+    game.render(wctx, camera);
+    const t1 = performance.now();
+    if (i >= 60) times.push(t1 - t0);
+    maxFruits = Math.max(maxFruits, game.fruits.length);
+    maxDebris = Math.max(maxDebris, game.fx.halves.length + game.fx.splats.length + game.fx.sparks.length);
+  }
+  // Flushed samples: a 1-pixel readback forces the GPU to finish the frame.
+  // Baseline = camera only; the game's cost is the difference.
+  const flushedMs = (withGame) => {
+    wctx.getImageData(0, 0, 1, 1); // warm-up
+    let sum = 0;
+    for (let k = 0; k < 40; k++) {
+      const t0 = performance.now();
+      wctx.drawImage(camera, 0, 0);
+      if (withGame) game.render(wctx, camera);
+      wctx.getImageData(0, 0, 1, 1);
+      sum += performance.now() - t0;
+    }
+    return sum / 40;
+  };
+  const base = flushedMs(false), full = flushedMs(true);
+  const flushed = full - base;
+  times.sort((a, b) => a - b);
+  const mean = times.reduce((a, b) => a + b, 0) / times.length;
+  return { frames: times.length, mean: +mean.toFixed(3), p50: +times[times.length >> 1].toFixed(3),
+    p95: +times[Math.floor(times.length * 0.95)].toFixed(3), max: +times[times.length - 1].toFixed(3),
+    flushedOnce: +flushed.toFixed(3), maxFruits, maxDebris, restarts };
+}
+const perf = measure();
+
+// --- the contact sheet ---
+
+const params = new URLSearchParams(location.search);
+const only = params.has("panel") ? [panels[Number(params.get("panel")) - 1]] : panels;
+const cols = only.length === 1 ? 1 : 3;
+const rows = Math.ceil(only.length / cols);
+const sheet = document.getElementById("sheet");
+sheet.width = cols * W;
+sheet.height = rows * (H + LABEL);
+const s = sheet.getContext("2d");
+s.fillStyle = "#222";
+s.fillRect(0, 0, sheet.width, sheet.height);
+only.forEach((p, i) => {
+  const x = (i % cols) * W, y = Math.floor(i / cols) * (H + LABEL);
+  s.drawImage(p.canvas, x, y + LABEL);
+  s.fillStyle = "#eee";
+  s.font = "600 26px system-ui, sans-serif";
+  s.fillText(`${p.label}    [${p.info}]`, x + 14, y + 32);
+  s.strokeStyle = "#555"; s.lineWidth = 2; s.strokeRect(x + 1, y + 1, W - 2, H + LABEL - 2);
+});
+
+document.getElementById("stats").textContent =
+  `render ms per frame (busy board, ${perf.frames} frames): mean ${perf.mean}, p50 ${perf.p50}, ` +
+  `p95 ${perf.p95}, max ${perf.max}; GPU-flushed game cost ${perf.flushedOnce} ms over the camera draw; ` +
+  `max snacks ${perf.maxFruits}, max debris ${perf.maxDebris}, restarts ${perf.restarts}\n` +
+  panels.map((p) => `${p.label}: ${p.info}`).join("\n");
+window.__perf = perf;
+window.__panels = panels.map((p) => ({ label: p.label, info: p.info }));
+window.__ready = true;
+</script>
+</body>
+</html>

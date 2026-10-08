@@ -7,3 +7,8 @@ __pycache__/
 build/
 *.onnx
 .DS_Store
+
+# dev-only sample media (not ours to publish)
+/web/dev/*.jpg
+/web/dev/*.png
+/web/dev/*.mp4

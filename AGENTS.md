@@ -314,8 +314,38 @@ re-run the model on offline. Analyse these before tuning anything.
   via `Blade` on both hands), drawing (palm cursor + trail), two-player
   (`--max-people 2`; you'd need identity tracking, because pose order is by
   score and can swap between frames).
-- **Website:** the platform is desktop Python today. See `docs/WEB_HOSTING.md`
-  for the measured options (the model exports to a 143 MB ONNX file; browser
-  speed is the open question) before building anything web-facing.
+- **Website:** the browser build in `web/` (GitHub Pages) runs the same model
+  with onnxruntime-web and a JavaScript port of the runtime, shell and both
+  games. See §11 and `docs/WEB_HOSTING.md`.
 - Known limits: one player is the tuned case. Latency is ~100 ms+. The preview
   keypoint model is the only checkpoint available (no smaller variant).
+
+---
+
+## 11. The browser build (`web/`)
+
+The arcade also runs in the browser: https://mirrash7.github.io/Games/, deployed
+by `.github/workflows/pages.yml` from `web/` on every push to `main`. Full notes,
+measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
+
+- **Same model, same rules.** RF-DETR is exported to ONNX (`tools/export_web_model.py`)
+  and run by onnxruntime-web in a Web Worker: WebGPU + fp16 when the GPU has
+  `shader-f16`, else fp32 on WebGPU, else fp32 on the CPU (WASM, ~6 updates/s).
+  `web/js/core/decode.js` is a tested port of rf-detr's PostProcess.
+- **The Python code is the reference; the JS is a port.** Module for module:
+  `core/hand.js`, `core/controls.js`, `core/extrapolate.js`, `shell.js`,
+  `games/snack/*` (fruitninja), `games/flappy/*` (incl. `gesture.js`). A behaviour
+  change goes into both, with tests in `tests/` and `web/tests/`. Colours in JS
+  are **RGB** (`core/theme.js`), not OpenCV's BGR: convert, or purple turns orange.
+- **A new browser game:** a class extending `games/base.js` (`static id/title/blurb/tip`,
+  `static async preload()` for art, `update(controls, dt)`, `render(ctx, frame)`,
+  `phase`), registered in `games/index.js`. Logic modules must import under Node
+  with no DOM, so tests run without a browser; build the renderer lazily.
+- **Art** stays in `assets/<game>/generated/`. `tools/build_web.py` (Pages) and
+  `tools/serve_web.py` (local) mount it into the site; add a line to `MOUNTS`.
+- **Verify:** `cd web && node --test tests/*.test.mjs` (pytest runs it too), then
+  look at it: `uv run python tools/serve_web.py`, open `http://localhost:8765/?debug=1`
+  (`?source=<image/video>` stands in for a webcam), plus `dev/<game>.html` contact
+  sheets and `dev/pipeline.html` for model accuracy and speed.
+- **Pinned onnxruntime-web 1.29.** 1.22 silently returned no detections on WebGPU
+  (broken `GridSample`). Check accuracy with `dev/pipeline.html` after any upgrade.
