@@ -19,6 +19,8 @@ import { SKELETON } from "./core/pose.js";
 import { banner, text, panel, WARN, css } from "./core/theme.js";
 import { Shell } from "./shell.js";
 import { GAMES } from "./games/index.js";
+import { createBoard } from "./leaderboard.js";
+import { LEADERBOARD } from "./config.js";
 
 const W = 1280, H = 720;
 const RESOLUTION = 336;
@@ -181,7 +183,8 @@ async function startModel(gpu) {
 
 // --- the loop ---
 
-const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, selected: params.get("game") });
+const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, selected: params.get("game"),
+  board: createBoard(LEADERBOARD) });
 const extrapolator = new PoseExtrapolator({ gain: 0.7, maxLead: 0.12 });
 const mapper = new ControlMapper(W, H);
 let last = performance.now() / 1000;
@@ -270,6 +273,10 @@ window.addEventListener("keydown", (e) => {
   if (!engine?.info || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target instanceof HTMLSelectElement) return;
   const k = e.key.toLowerCase();
+  if (shell.screen === "entry") {
+    if (shell.handleKey(e.key)) e.preventDefault(); // every letter is part of the name here
+    return;
+  }
   if (k === "f") toggleFullscreen();
   else if (k === "d") setDebug(!debug);
   else if (!shell.handleKey(e.key)) return;

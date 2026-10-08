@@ -25,6 +25,7 @@ import { Rng } from "../../core/random.js";
 import { FlapDetector } from "./gesture.js";
 import { cachedArt, loadArt } from "./art.js";
 import { FlappyRenderer } from "./render.js";
+import { FLAPPY_TUTORIAL } from "./tutorial.js";
 
 export const Phase = Object.freeze({ READY: "ready", PLAYING: "playing", GAME_OVER: "game_over" });
 
@@ -171,6 +172,7 @@ export class FlappyRaccoonGame extends Game {
   static title = "FLAPPY RACCOON";
   static blurb = "Flap your arms to fly the raccoon. Don't touch the pipes.";
   static tip = "Stand back so both arms are in frame - flap to fly";
+  static tutorial = FLAPPY_TUTORIAL; // the shell's how-to-play cards
   static menu = true;
 
   // Session best. The arcade builds a fresh game for every PLAY AGAIN, so a

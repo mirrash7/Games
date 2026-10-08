@@ -19,6 +19,7 @@ import { loadArt, cachedArt } from "./art.js";
 import { Blade, CUT_WINDOW, MIN_SLICE_SPEED } from "./blade.js";
 import { POPUP_SECONDS, Half, Popup, Spark, Splat, Spawner } from "./entities.js";
 import { SnackRenderer } from "./render.js";
+import { SNACK_TUTORIAL } from "./tutorial.js";
 
 export const COMBO_WINDOW = 0.40; // bites this close together count as one swing
 export const COMBO_MIN = 3;
@@ -61,6 +62,7 @@ export class SnackAttackGame extends Game {
   static blurb = "Your hand is a raccoon. Gobble the snacks, dodge the trash bags.";
   static menu = true;
   static tip = "Stand back so your upper body is in frame";
+  static tutorial = SNACK_TUTORIAL; // the shell's how-to-play cards
 
   static async preload() {
     await loadArt();

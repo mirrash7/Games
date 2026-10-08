@@ -82,6 +82,9 @@ web/
   js/main.js                boot (backend choice, downloads) and the render loop (app.py's twin)
   js/camera.js              getUserMedia -> mirrored 1280x720 frame; built-in camera over iPhone
   js/shell.js               welcome screen, dwell buttons, countdown, pause, game over (shell.py)
+                            + browser-only: how-to-play cards, name entry, results table
+  js/leaderboard.js         per-game top-10 tables: this browser, or worldwide (docs/LEADERBOARD.md)
+  js/config.js              site settings (the worldwide leaderboard's Supabase project)
   js/model/                 loader.js (chunks + cache), engine.js (main thread), worker.js (ORT)
   js/core/                  decode (rf-detr PostProcess), pose, hand, controls, extrapolate,
                             random, theme, gfx
@@ -118,6 +121,9 @@ Dev pages:
   on a still and reports backend, timing and scores.
 - `dev/snack.html` and `dev/flappy.html` render contact sheets of key moments
   from scripted poses.
+- `dev/tutorial.html?game=snack&t=1` freezes the how-to-play cards at a
+  time, and `&screen=entry` or `&screen=results` shows the leaderboard
+  screens. `&crop=x0,y0,x1,y1` enlarges part of the screen.
 
 ## Re-export the model
 

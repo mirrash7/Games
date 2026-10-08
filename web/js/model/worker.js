@@ -55,6 +55,7 @@ async function init({ model, eps = ["webgpu", "wasm"], resolution = 336, width =
 
   ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 16) : 1;
   ort.env.webgpu.powerPreference = "high-performance";
+  ort.env.logLevel = "error"; // graph-optimiser warnings are expected for this model and only noise
 
   const adapter = eps.includes("webgpu") ? await webgpuAdapter() : null;
   const plans = eps.filter((ep) => ep !== "webgpu" || adapter);

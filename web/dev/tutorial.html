@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tutorial cards</title>
+<body style="margin:0;background:#111">
+<canvas id="c" width="1280" height="720" style="width:100%"></canvas>
+<script type="module">
+  // Dev view of the shell's how-to-play cards. ?game=snack|flappy, ?t=seconds to freeze
+  // (omit to animate), ?screen=entry|results to preview the leaderboard screens.
+  import { Shell } from "../js/shell.js";
+  import { GAMES } from "../js/games/index.js";
+  import { LocalBoard } from "../js/leaderboard.js";
+  const q = new URLSearchParams(location.search);
+  await Promise.all(GAMES.map((g) => g.preload()));
+  const mem = new Map();
+  const board = new LocalBoard({ getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) });
+  for (const [n, s] of [["ACE", 41], ["BOB", 33], ["CAT", 27], ["DEV", 12], ["EVE", 9]]) await board.submit(q.get("game") ?? "snack", n, s);
+  const shell = new Shell({ games: GAMES, board });
+  await shell.refreshScores();
+  shell.start(q.get("game") ?? "snack");
+  const frame = document.createElement("canvas");
+  frame.width = 1280; frame.height = 720;
+  const f = frame.getContext("2d");
+  const g = f.createLinearGradient(0, 0, 1280, 720);
+  g.addColorStop(0, "#3b3550"); g.addColorStop(1, "#1d2a35");
+  f.fillStyle = g; f.fillRect(0, 0, 1280, 720);
+  const screen = q.get("screen");
+  if (screen) {
+    shell.endTutorial();
+    shell.screen = "playing";
+    shell.game.score = Number(q.get("score") ?? 30);
+    shell.game.phase = "game_over";
+    shell.update({ present: false, pose: null }, 1 / 60);
+    if (screen === "entry") { shell.enterName(); for (const k of q.get("name") ?? "AB") shell.handleKey(k); }
+    else if (screen === "results") { shell.enterName(); for (const k of "ZED") shell.handleKey(k); shell.handleKey("Enter"); await new Promise((r) => setTimeout(r, 10)); }
+  }
+  // ?crop=x0,y0,x1,y1 shows that part of the 1280x720 screen enlarged.
+  const crop = q.get("crop")?.split(",").map(Number);
+  const view = document.getElementById("c").getContext("2d");
+  const off = document.createElement("canvas");
+  off.width = 1280; off.height = 720;
+  const ctx = crop ? off.getContext("2d") : view;
+  const t0 = performance.now();
+  const draw = () => {
+    shell.tutorialT = q.has("t") ? Number(q.get("t")) : (performance.now() - t0) / 1000;
+    ctx.drawImage(frame, 0, 0);
+    shell.render(ctx, frame);
+    if (crop) {
+      view.imageSmoothingQuality = "high";
+      const cw = crop[2] - crop[0], ch = crop[3] - crop[1];
+      view.clearRect(0, 0, 1280, 720);
+      view.drawImage(off, crop[0], crop[1], cw, ch, 0, 0, 1280, (1280 * ch) / cw);
+    }
+    if (!q.has("t")) requestAnimationFrame(draw);
+  };
+  draw();
+  window.__ready = true;
+</script>

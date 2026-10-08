@@ -347,5 +347,10 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
   look at it: `uv run python tools/serve_web.py`, open `http://localhost:8765/?debug=1`
   (`?source=<image/video>` stands in for a webcam), plus `dev/<game>.html` contact
   sheets and `dev/pipeline.html` for model accuracy and speed.
+- **Browser-only screens:** each game's `static tutorial` (cards drawn with
+  `core/figure.js`, shown before a player's first round per visit) and the
+  leaderboards (`leaderboard.js`, `docs/LEADERBOARD.md`: name entry by hovering
+  over letters, per-game top 10, per browser or worldwide via Supabase). A new
+  game needs a `score` property and its id in the Supabase `check` constraint.
 - **Pinned onnxruntime-web 1.29.** 1.22 silently returned no detections on WebGPU
   (broken `GridSample`). Check accuracy with `dev/pipeline.html` after any upgrade.
