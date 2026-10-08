@@ -355,11 +355,14 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
   look at it: `uv run python tools/serve_web.py`, open `http://localhost:8765/?debug=1`
   (`?source=<image/video>` stands in for a webcam), plus `dev/<game>.html` contact
   sheets and `dev/pipeline.html` for model accuracy and speed.
-- **Browser-only screens:** each game's `static tutorial` (cards drawn with
-  `core/figure.js`, shown before a player's first round per visit) and the
-  leaderboards (`leaderboard.js`, `docs/LEADERBOARD.md`: name entry by hovering
-  over letters, per-game top 10, per browser or worldwide via the Cloudflare
-  Worker in `leaderboard/`). A new game needs a `score` property and an entry in
+- **Tutorial and leaderboards exist in both builds.** Each game's `tutorial`
+  (how-to-play cards: `core/figure.js` / `figure.py`, shown before a player's
+  first round of a game per run) and the leaderboards (`leaderboard.js` /
+  `leaderboard.py`, `docs/LEADERBOARD.md`: name entry by hovering over letters,
+  per-game top 10, local or worldwide via the Cloudflare Worker in
+  `leaderboard/`). The desktop and the site share the worldwide board. Desktop
+  ids map to the site's with `board_id` (fruitninja -> snack). A new game needs a
+  `score` property, a `tutorial`, a `tip`, and an entry in
   `leaderboard/src/rules.js` (its fastest possible scoring rate, with a test).
 - **Pinned onnxruntime-web 1.29.** 1.22 silently returned no detections on WebGPU
   (broken `GridSample`). Check accuracy with `dev/pipeline.html` after any upgrade.

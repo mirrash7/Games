@@ -23,7 +23,8 @@ from .inference import KeypointDetector, PoseExtrapolator
 from .overlay import draw_banner, draw_box, draw_hud, draw_pose
 from .pipeline import InferenceWorker, RateMeter
 from .recorder import Recorder
-from .shell import Shell
+from .leaderboard import create_board
+from .shell import Screen, Shell
 
 
 def build_config(args: argparse.Namespace) -> Config:
@@ -268,7 +269,11 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
     if use_shell:
         # Headless runs are benchmarks: there is no one to press start.
         autostart = bool(getattr(args, "autostart", False) or headless) and game_name is not None
-        shell = Shell(size, REGISTRY, mirrored=cfg.mirror, selected=game_name, autostart=autostart)
+        board = None if headless else create_board(getattr(args, "leaderboard", None))
+        shell = Shell(size, REGISTRY, mirrored=cfg.mirror, selected=game_name, autostart=autostart, board=board)
+        if board is not None:
+            where = "worldwide" if getattr(board, "scope", "") == "world" else f"this computer ({board.path})"
+            print(f"[kp] leaderboard: {where}")
 
     render_meter = RateMeter()
     recorder = Recorder(args.record) if getattr(args, "record", None) else None
@@ -295,6 +300,12 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
             print("[kp] running - q quit, s skeleton, d debug")
         cv2.namedWindow(cfg.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(cfg.window_name, size[0], size[1])
+        if shell is not None:
+            # Clicks work like hovering does (OpenCV reports image coordinates).
+            def on_mouse(event, x, y, _flags, _param):
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    shell.handle_click(x, y)
+            cv2.setMouseCallback(cfg.window_name, on_mouse)
     started = time.perf_counter()
 
     try:
@@ -409,6 +420,8 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
             key = cv2.waitKey(max(1, int(delay * 1000))) & 0xFF
             if key == 255:
                 pass
+            elif shell is not None and shell.screen is Screen.ENTRY:
+                shell.handle_key(key)  # every key is part of the name here, q included
             elif key == ord("q"):
                 break
             elif key == ord("s"):
@@ -548,6 +561,9 @@ def main() -> int:
         p.add_argument("--fps", type=float, help="display/game rate, independent of the camera (default 60)")
         p.add_argument("--duration", type=float,
                        help="stop after this many seconds (headless default 10)")
+        p.add_argument("--leaderboard", type=str, metavar="local|URL",
+                       help="where high scores go: 'local' (this computer), a leaderboard server URL, "
+                            "or by default the same server as the website (web/js/config.js), else local")
         p.add_argument("--record", type=str, metavar="DIR",
                        help="save frames and per-frame timings to DIR for review")
 

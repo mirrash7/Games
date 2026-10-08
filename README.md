@@ -97,8 +97,23 @@ uv run kp game
 | `h` | switch which hand points and slices |
 | `s` / `d` | skeleton overlay / debug stats (off by default) |
 | `q` | quit |
+| click | presses a button, the same as hovering over it |
 
-Closing the window also quits. These are shown bottom-right in game.
+Closing the window also quits. These are shown bottom-left in game. When a
+name is being typed for the leaderboard, every key types, including `q`,
+`h` and `r`; `Backspace` deletes, `Enter` saves and `Esc` skips.
+
+**How to play and high scores.** The first time you start each game in a run,
+three animated cards show how to play it. A score that makes a game's top 10
+asks for a 1-3 character name, by hovering over the on-screen letters or by
+typing it. The table is then shown, and each game's menu tile shows its high
+score. Where scores go is set by `--leaderboard`:
+- `local` keeps them on this computer (`~/.kp/leaderboard.json`).
+- A URL sends them to that leaderboard server.
+- The default is the same worldwide server as the website, when
+  `web/js/config.js` has one, otherwise local.
+
+See [docs/LEADERBOARD.md](docs/LEADERBOARD.md).
 
 **Framing matters.** The shapes are full-body, so the camera must see you from
 head to hips at minimum — knees and ankles may be out of frame without penalty.

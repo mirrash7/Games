@@ -27,6 +27,7 @@ from .art import Art, FruitArt, load_art
 from ...hand import HandTracker
 from .blade import CUT_WINDOW, HIT_RADIUS, MIN_SLICE_SPEED, Blade
 from .entities import POPUP_SECONDS, Fruit, Half, Popup, Spark, Splat, Spawner
+from .tutorial import SNACK_TUTORIAL
 
 COMBO_WINDOW = 0.40  # slices this close together count as one swing
 COMBO_MIN = 3
@@ -75,7 +76,10 @@ class Effects:
 class FruitNinjaGame(Game):
     name = "fruitninja"
     title = "SNACK ATTACK"
+    board_id = "snack"  # its name on the shared leaderboard and in the browser build
     blurb = "Your hand is a raccoon. Gobble the snacks, dodge the trash bags."
+    tip = "Stand back so your upper body is in frame"
+    tutorial = SNACK_TUTORIAL  # the shell's how-to-play cards
 
     def __init__(
         self,

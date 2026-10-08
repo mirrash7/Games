@@ -29,6 +29,7 @@ import numpy as np
 from ...controls import ControlState
 from ..base import Game
 from .art import FlappyArt, load_art
+from .tutorial import FLAPPY_TUTORIAL
 
 
 class Phase(str, Enum):
@@ -222,6 +223,8 @@ class FlappyGame(Game):
     name = "flappy"
     title = "FLAPPY RACCOON"
     blurb = "Flap your arms to fly the raccoon. Don't touch the pipes."
+    tip = "Stand back so both arms are in frame - flap to fly"
+    tutorial = FLAPPY_TUTORIAL  # the shell's how-to-play cards
 
     # Session best. The arcade builds a fresh game for every PLAY AGAIN, so a
     # best kept on the instance would be forgotten on every restart; on the

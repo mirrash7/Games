@@ -11,6 +11,9 @@ When a round ends, the game's own game-over screen shows for a moment.
 
 Each welcome-screen tile also shows that game's current high score.
 
+The desktop app (`uv run kp play`) has the same screens and shares the same
+worldwide table; see "Desktop" below.
+
 ## Where scores are kept
 
 `web/js/config.js` decides where scores are kept:
@@ -107,6 +110,19 @@ npx wrangler@4.138.0 d1 execute kp-leaderboard --remote --command "DELETE FROM s
 
 Add its limits to `GAMES` in `leaderboard/src/rules.js`, with the reasoning
 from its rules, plus a test in `test/rules.test.mjs`. Then redeploy.
+
+## Desktop
+
+`src/kpapp/leaderboard.py` is the same client in Python. The render loop never
+waits on it: calls return futures that the shell polls. `--leaderboard`
+chooses where scores go:
+- `local` keeps them on this computer, in `~/.kp/leaderboard.json`, or the
+  file named by `KP_LEADERBOARD_FILE`.
+- A URL sends them to that server.
+- The default reads the URL from `web/js/config.js`, so once `deploy.sh` has
+  run, the desktop and the website share one table.
+
+Desktop game ids map to the site's through `board_id` (fruitninja -> snack).
 
 ## Develop locally
 

@@ -594,7 +594,7 @@ export class Shell {
     const w = this.width, Cls = this.registry[this.selected];
     const entries = this.scores[this.selected] ?? [];
     const px0 = w / 2 - 300, px1 = w / 2 + 300, y0 = 70, y1 = 548;
-    panel(ctx, [px0, y0, px1, y1], { alpha: 0.88, border: ACCENT });
+    panel(ctx, [px0, y0, px1, y1], { alpha: 0.96, border: ACCENT });
     centredText(ctx, `${Cls.title}  TOP ${BOARD_SIZE}`, w / 2, y0 + 50, 0.95, ACCENT);
     centredText(ctx, this.boardScope === "world" ? "WORLDWIDE" : "ON THIS DEVICE", w / 2, y0 + 78, 0.46, DIM,
       { body: true, shadow: false, weight: 700 });
