@@ -56,15 +56,51 @@ const gpuP = probeGpu();
 gpuP.then((gpu) => {
   const size = document.getElementById("model-size");
   if (size) size.textContent = gpu?.f16 ? "72 MB" : "143 MB";
+  const cpuForced = params.get("ep") === "wasm";
   if (gpu) {
-    ui.device.textContent = `Your graphics card will run the model (WebGPU). Expect a smooth 15-30 pose updates a second.`;
+    ui.device.textContent = "Your graphics card will run the model (WebGPU). Expect a smooth 15-30 pose updates a second.";
   } else {
     ui.device.classList.add("cpu");
-    ui.device.textContent = "No WebGPU in this browser, so the model runs on your CPU: about 6 pose updates a second on a fast laptop, slower elsewhere. Snack Attack is playable; Flappy Raccoon will feel sluggish. Chrome or Edge on a recent computer uses the GPU.";
+    ui.device.textContent = cpuForced
+      ? "CPU only (you asked for it): about 6 pose updates a second on a fast laptop, slower elsewhere. Snack Attack is playable; Flappy Raccoon will feel sluggish."
+      : "No WebGPU in this browser, so the model runs on your CPU: about 6 pose updates a second on a fast laptop, slower elsewhere. Snack Attack is playable; Flappy Raccoon will feel sluggish. Chrome or Edge on a recent computer uses the GPU.";
+  }
+  // A switch between the two paths, for comparing them.
+  const other = new URL(location.href);
+  if (cpuForced) other.searchParams.delete("ep");
+  else other.searchParams.set("ep", "wasm");
+  if (gpu || cpuForced) {
+    const a = document.createElement("a");
+    a.href = other.href;
+    a.className = "switch";
+    a.textContent = cpuForced ? "Use the GPU instead" : "Test on the CPU only";
+    ui.device.append(" ", a);
   }
   ui.go.disabled = false;
   ui.go.focus();
+  // Start the download now, so it is done (or nearly) by the time the player
+  // presses play. Not on a data-saver connection: there it waits for the click.
+  if (!navigator.connection?.saveData) beginModel();
 });
+
+// Art is small; fetch it straight away too.
+const artP = Promise.all(GAMES.map((g) => g.preload()));
+artP.catch(() => {});
+
+/** Download and start the model once; every caller shares the same promise. */
+let modelP = null;
+function beginModel() {
+  if (!modelP) {
+    ui.progress.hidden = false;
+    engine = new PoseEngine({ resolution: RESOLUTION, width: W, height: H });
+    modelP = gpuP.then(startModel);
+    modelP.then(
+      (info) => setProgress(1, info.ep === "webgpu" ? "Pose model ready on your graphics card" : "Pose model ready on your CPU"),
+      (err) => { if (!booting) fail(err); }, // shown at once, not on the next click
+    );
+  }
+  return modelP;
+}
 
 ui.go.addEventListener("click", () => boot().catch(fail));
 
@@ -80,10 +116,12 @@ function fail(err) {
   ui.failureText.textContent = String(err?.message ?? err);
 }
 
+let booting = false;
+
 async function boot() {
+  booting = true;
   ui.go.disabled = true;
-  ui.progress.hidden = false;
-  setProgress(0, "Asking for the camera...");
+  ui.go.textContent = "Waiting for the camera...";
 
   const sourceUrl = params.get("source");
   const camP = (sourceUrl ? new FileSource(sourceUrl, W, H) : new Camera(W, H)).open().catch((err) => {
@@ -93,14 +131,11 @@ async function boot() {
     if (name === "NotReadableError") throw new Error("The camera is busy in another app (Zoom, Teams, Photo Booth...). Close it and try again.");
     throw err;
   });
-  const artP = Promise.all(GAMES.map((g) => g.preload()));
-  engine = new PoseEngine({ resolution: RESOLUTION, width: W, height: H });
-  const modelP = startModel(await gpuP); // downloads while the camera prompt is up
-  modelP.catch(() => {}); // a camera error is reported first
+  const model = beginModel(); // usually already running since the page loaded
   source = await camP;
-  const info = await modelP;
+  ui.go.textContent = "Starting as soon as the model is ready...";
+  const info = await model;
   await artP;
-  setProgress(1, "Ready");
   console.info("[kp] model ready", info);
   variant = info.variant;
 

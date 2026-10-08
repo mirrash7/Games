@@ -17,9 +17,14 @@ The page picks the backend itself, in this order:
 3. **CPU (WASM) + fp32 model**, when there's no WebGPU (older browsers,
    some Firefox/Safari versions) or the GPU path fails.
 
-The intro screen says which one the player will get before anything
-downloads, and the menu warns when the model ended up on the CPU. `?ep=wasm`
-forces the CPU path, and `?model=fp32` forces the fp32 model.
+The intro screen says which path the player will get, and the menu warns
+when the model ended up on the CPU. The download starts as soon as the page
+opens, while the player reads the intro and answers the camera prompt. It
+waits for the click on a data-saver connection.
+
+To test the CPU path, use **https://mirrash7.github.io/Games/?ep=wasm**, or
+click "Test on the CPU only" on the intro card. `?model=fp32` forces the fp32
+model on the GPU.
 
 ## Measured (2026-10-07, Apple M5 Max, Chromium, onnxruntime-web 1.29)
 
