@@ -305,3 +305,18 @@ def test_power_tip_flags_low_power_mode(monkeypatch):
     assert "battery" in _power_tip().lower()
     _fake_pmset(monkeypatch, "Now drawing from 'AC Power'", " powermode            0\n")
     assert _power_tip() is None
+
+
+def test_cameras_are_numbered_the_way_opencv_numbers_them():
+    """OpenCV 5's AVFoundation backend sorts devices by uniqueID. Numbering them
+    in AVFoundation's own order opened the iPhone while reporting the MacBook."""
+    from kpapp.camera import describe_devices, resolve_camera
+
+    seen = [  # AVFoundation's order, as on the machine where this went wrong
+        ("6C707041-05AC-0011-0007-000000000001", "MacBook Pro Camera", "AVCaptureDeviceTypeBuiltInWideAngleCamera"),
+        ("6937CD42-A2C1-4271-8060-849F00000001", "Alex's iPhone Camera", "AVCaptureDeviceTypeExternal"),
+    ]
+    cams = describe_devices(seen)
+    assert [c.name for c in cams] == ["Alex's iPhone Camera", "MacBook Pro Camera"]
+    assert cams[0].phone and cams[1].builtin
+    assert resolve_camera(None, cams).index == 1, "the default is the built-in camera, wherever it sorts"

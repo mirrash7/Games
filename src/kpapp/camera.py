@@ -355,10 +355,12 @@ def list_cameras() -> list[CameraInfo]:
     """Cameras in the order OpenCV numbers them, with their names.
 
     On macOS camera numbers are not stable: with Continuity Camera the built-in
-    camera and an iPhone have swapped between 0 and 1 on this machine. OpenCV's
-    AVFoundation backend numbers devices by their position in AVFoundation's
-    video devices followed by muxed devices - so reading that same list gives
-    the names that go with each number.
+    camera and an iPhone swap between 0 and 1. OpenCV's AVFoundation backend
+    takes AVFoundation's video devices followed by its muxed devices, then
+    **sorts them by uniqueID**, so that is the order to reproduce. An iPhone's
+    uniqueID changes between connections, so it can sort before or after the
+    built-in camera from one day to the next. Using AVFoundation's own order
+    instead once opened the iPhone while reporting "MacBook Pro Camera (camera 0)".
     """
     if sys.platform != "darwin":
         return []
@@ -369,10 +371,15 @@ def list_cameras() -> list[CameraInfo]:
     devices = list(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeVideo)) + list(
         AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeMuxed)
     )
+    return describe_devices(
+        (str(d.uniqueID()), str(d.localizedName()), str(d.deviceType())) for d in devices)
+
+
+def describe_devices(devices) -> list[CameraInfo]:
+    """(uniqueID, name, deviceType) tuples -> CameraInfo numbered as OpenCV does."""
     out = []
-    for i, d in enumerate(devices):
-        name = str(d.localizedName())
-        kind = str(d.deviceType())
+    # NSString compare: on these ASCII IDs is a plain ordinal comparison.
+    for i, (_uid, name, kind) in enumerate(sorted(devices, key=lambda d: d[0])):
         phone = "Continuity" in kind or "iphone" in name.lower() or "ipad" in name.lower()
         out.append(CameraInfo(i, name, builtin="BuiltIn" in kind, phone=phone))
     return out
