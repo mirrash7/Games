@@ -223,6 +223,7 @@ function drawDebug(poses) {
     `${engine.info.ep} ${variant}${engine.info.adapter ? ` (${engine.info.adapter})` : ""}  threads ${engine.info.threads}`,
     `model ${engine.meter.meanMs.toFixed(1)} ms   ${engine.meter.fps.toFixed(1)} poses/s`,
     `lead ${extrapolator.lastLeadMs.toFixed(0)} ms   render ${render.toFixed(2)} ms   people ${poses.length}`,
+    `camera ${source.fps ? `${Math.round(source.fps)} fps` : "?"}  ${source.label.slice(0, 40)}`,
   ];
   panel(ctx, [W - 430, 12, W - 12, 24 + lines.length * 22], { alpha: 0.7, radius: 10 });
   lines.forEach((l, i) => text(ctx, l, W - 418, 34 + i * 22, 0.45, [235, 235, 235], { body: true, shadow: false }));

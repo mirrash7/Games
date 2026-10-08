@@ -40,7 +40,10 @@ export class Camera {
   async open(deviceId = null) {
     this.close();
     const saved = deviceId ?? safeGet(PREF_KEY);
-    const video = { width: { ideal: this.width }, height: { ideal: this.height }, frameRate: { ideal: 30 } };
+    // Ask for 60 fps: the camera's frame rate caps how often the model gets a
+    // new image, and the GPU path (~20-25 ms) can keep up with ~40. Cameras
+    // that only do 30 (most built-in webcams at 720p) just deliver 30.
+    const video = { width: { ideal: this.width }, height: { ideal: this.height }, frameRate: { ideal: 60 } };
     let stream = await getStream(saved ? { ...video, deviceId: { exact: saved } } : { ...video, facingMode: "user" })
       .catch((err) => (saved ? getStream({ ...video, facingMode: "user" }) : Promise.reject(err)));
 
@@ -61,6 +64,7 @@ export class Camera {
     const track = stream.getVideoTracks()[0];
     this.deviceId = track.getSettings().deviceId ?? null;
     this.label = track.label;
+    this.fps = track.getSettings().frameRate ?? null; // what the camera actually agreed to
     this.video.srcObject = stream;
     await this.video.play();
     if (this._rvfc) this._watch();
