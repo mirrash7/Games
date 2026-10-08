@@ -1,19 +1,22 @@
 // High-score tables, one per game, with arcade-style names of up to three
 // characters.
 //
-// Two backends with the same surface:
-//   LocalBoard     this browser only (localStorage). Always works.
-//   SupabaseBoard  one worldwide table, via Supabase's REST API. Used when
-//                  config.js has a project URL and public key (docs/LEADERBOARD.md).
-// createBoard() picks one, and falls back to the local board if the network
-// table can't be reached, so a flaky connection never blocks the game.
+// Two backends with the same surface (begin, top, submit):
+//   LocalBoard   this browser only (localStorage). Always works.
+//   ServerBoard  one worldwide table: the Cloudflare Worker in leaderboard/,
+//                used when config.js has its URL (docs/LEADERBOARD.md).
+// createBoard() picks one, and falls back to the local board if the server
+// can't be reached, so a flaky connection never blocks the game.
+//
+// begin(game) is called when a round starts. The server records the time and
+// later refuses scores the game couldn't produce in that time.
 
 export const NAME_MAX = 3;
 export const BOARD_SIZE = 10;
-export const MAX_SCORE = 100000; // matches the database check; anything above is not a real run
+export const MAX_SCORE = 100000; // matches the server's limit; anything above is not a real run
 
-// Three letters can still spell abuse on a public board. A short, obvious list;
-// the player is asked for another name.
+// Three letters can still spell abuse on a public board. A short, obvious list
+// (the server has the same one); the player is asked for another name.
 const BLOCKED = new Set([
   "ASS", "CUM", "FUK", "FUC", "FCK", "FKU", "DIK", "DIC", "COK", "KKK", "NIG", "NGR", "FAG", "TIT",
   "SHT", "CNT", "SEX", "XXX", "NAZ", "SS", "KYS", "PIS", "POO", "WTF",
@@ -70,6 +73,10 @@ export class LocalBoard {
     }
   }
 
+  async begin() {
+    return null; // nothing to verify locally
+  }
+
   async top(game) {
     return sortEntries(this._all()[game] ?? []).slice(0, BOARD_SIZE);
   }
@@ -89,32 +96,41 @@ export class LocalBoard {
   }
 }
 
-/** One worldwide table in a Supabase project (see docs/LEADERBOARD.md for the SQL). */
-export class SupabaseBoard {
-  constructor({ url, key, table = "scores", fetchImpl = globalThis.fetch?.bind(globalThis) }) {
+/** The worldwide table: the leaderboard Worker (leaderboard/src/worker.js). */
+export class ServerBoard {
+  constructor({ url, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
     this.scope = "world";
-    this._base = `${url.replace(/\/$/, "")}/rest/v1/${table}`;
-    this._headers = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+    this._base = url.replace(/\/$/, "");
     this._fetch = fetchImpl;
   }
 
-  async top(game) {
-    const q = `?select=id,name,score,created_at&game=eq.${encodeURIComponent(game)}`
-      + `&order=score.desc,created_at.asc&limit=${BOARD_SIZE}`;
-    const res = await this._fetch(this._base + q, { headers: this._headers });
-    if (!res.ok) throw new Error(`leaderboard ${res.status}`);
-    return (await res.json()).map((r) => ({ id: String(r.id), name: r.name, score: r.score, at: Date.parse(r.created_at) }));
+  async _call(method, path, body) {
+    const res = await this._fetch(this._base + path, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error ?? `leaderboard ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
   }
 
-  async submit(game, name, score) {
-    const res = await this._fetch(this._base, {
-      method: "POST",
-      headers: { ...this._headers, Prefer: "return=representation" },
-      body: JSON.stringify({ game, name: cleanName(name), score: Math.round(score) }),
-    });
-    if (!res.ok) throw new Error(`leaderboard ${res.status}`);
-    const [row] = await res.json();
-    return { entries: await this.top(game), id: String(row?.id ?? "") };
+  /** Tell the server a round started; returns the session to submit with. */
+  async begin(game) {
+    return (await this._call("POST", "/sessions", { game })).session;
+  }
+
+  async top(game) {
+    return (await this._call("GET", `/scores?game=${encodeURIComponent(game)}`)).entries;
+  }
+
+  async submit(game, name, score, session) {
+    const out = await this._call("POST", "/scores", { game, name: cleanName(name), score: Math.round(score), session });
+    return { entries: out.entries, id: out.id };
   }
 }
 
@@ -122,12 +138,19 @@ export class SupabaseBoard {
  * The worldwide board when configured, wrapped so any network failure falls
  * back to this device's board (and says so through `scope`).
  */
-export function createBoard(config = {}) {
-  const local = new LocalBoard();
-  if (!config.supabaseUrl || !config.supabaseKey) return local;
-  const remote = new SupabaseBoard({ url: config.supabaseUrl, key: config.supabaseKey });
+export function createBoard(config = {}, local = new LocalBoard(), fetchImpl = undefined) {
+  if (!config.url) return local;
+  const remote = new ServerBoard({ url: config.url, ...(fetchImpl ? { fetchImpl } : {}) });
   return {
     scope: "world",
+    async begin(game) {
+      try {
+        return await remote.begin(game);
+      } catch (err) {
+        console.warn("[kp] worldwide leaderboard unavailable for this round:", err);
+        return null; // the score will be kept on this device
+      }
+    },
     async top(game) {
       try {
         const entries = await remote.top(game);
@@ -139,13 +162,17 @@ export function createBoard(config = {}) {
         return local.top(game);
       }
     },
-    async submit(game, name, score) {
+    async submit(game, name, score, session) {
+      if (!session) {
+        this.scope = "device";
+        return local.submit(game, name, score);
+      }
       try {
-        const out = await remote.submit(game, name, score);
+        const out = await remote.submit(game, name, score, session);
         this.scope = "world";
         return out;
       } catch (err) {
-        console.warn("[kp] could not post to the worldwide leaderboard, saved on this device:", err);
+        console.warn("[kp] the worldwide leaderboard refused or missed the score; saved on this device:", err);
         this.scope = "device";
         return local.submit(game, name, score);
       }

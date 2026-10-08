@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  LocalBoard, SupabaseBoard, createBoard, qualifies, cleanName, nameAllowed, sortEntries, BOARD_SIZE,
+  LocalBoard, ServerBoard, createBoard, qualifies, cleanName, nameAllowed, sortEntries, BOARD_SIZE,
 } from "../js/leaderboard.js";
 import { Shell, ENTRY_DELAY, RESULTS_DELAY, KEY_DWELL } from "../js/shell.js";
 import { Game } from "../js/games/base.js";
@@ -59,24 +59,51 @@ test("local board works without storage (private mode) for the visit", async () 
   assert.equal((await b.top("snack"))[0].id, id);
 });
 
-test("supabase board: reads the top ten, posts a cleaned name", async () => {
+/** A stand-in for the leaderboard Worker: records calls, answers like it. */
+function fakeServer({ refuse = null } = {}) {
   const calls = [];
   const fetchImpl = async (url, opts = {}) => {
-    calls.push({ url, opts });
-    if (opts.method === "POST") return { ok: true, json: async () => [{ id: 7 }] };
-    return { ok: true, json: async () => [{ id: 7, name: "ACE", score: 9, created_at: "2026-10-08T00:00:00Z" }] };
+    calls.push({ url, method: opts.method ?? "GET", body: opts.body ? JSON.parse(opts.body) : null });
+    const json = (status, data) => ({ ok: status < 300, status, json: async () => data });
+    if (url.endsWith("/sessions")) return json(200, { session: "s-1" });
+    if (opts.method === "POST" && refuse) return json(422, { error: refuse });
+    if (opts.method === "POST") return json(200, { id: "9", entries: [{ id: "9", name: "ACE", score: 9, at: 1 }] });
+    return json(200, { entries: [{ id: "9", name: "ACE", score: 9, at: 1 }] });
   };
-  const b = new SupabaseBoard({ url: "https://x.supabase.co/", key: "pk", fetchImpl });
-  const out = await b.submit("flappy", "ace!", 9.4);
-  assert.equal(out.id, "7");
-  const post = calls.find((c) => c.opts.method === "POST");
-  assert.deepEqual(JSON.parse(post.opts.body), { game: "flappy", name: "ACE", score: 9 });
-  assert.equal(post.opts.headers.apikey, "pk");
-  const get = calls.find((c) => !c.opts.method);
-  assert.match(get.url, /^https:\/\/x\.supabase\.co\/rest\/v1\/scores\?/);
-  assert.match(get.url, /game=eq\.flappy/);
-  assert.match(get.url, /order=score\.desc,created_at\.asc/);
+  return { calls, fetchImpl };
+}
+
+test("server board: a round's session goes with its score", async () => {
+  const { calls, fetchImpl } = fakeServer();
+  const b = new ServerBoard({ url: "https://lb.example.dev/", fetchImpl });
+  const session = await b.begin("flappy");
+  assert.equal(session, "s-1");
+  const out = await b.submit("flappy", "ace!", 9.4, session);
+  assert.equal(out.id, "9");
+  const post = calls.find((c) => c.url.endsWith("/scores") && c.method === "POST");
+  assert.deepEqual(post.body, { game: "flappy", name: "ACE", score: 9, session: "s-1" });
+  assert.equal((await b.top("flappy"))[0].name, "ACE");
+  assert.ok(calls.some((c) => c.url === "https://lb.example.dev/scores?game=flappy"));
 });
+
+test("a score the server refuses is kept on this device instead", async () => {
+  const local = new LocalBoard(memoryStorage());
+  const board = createBoard({ url: "https://lb.example.dev" }, local, fakeServer({ refuse: "score too high" }).fetchImpl);
+  const session = await board.begin("snack");
+  await board.submit("snack", "ME", 5, session);
+  assert.equal(board.scope, "device");
+  assert.equal((await local.top("snack"))[0].name, "ME");
+});
+
+test("no session (server down when the round began): saved on this device", async () => {
+  const local = new LocalBoard(memoryStorage());
+  const { calls, fetchImpl } = fakeServer();
+  const board = createBoard({ url: "https://lb.example.dev" }, local, fetchImpl);
+  await board.submit("snack", "ME", 5, null);
+  assert.ok(!calls.some((c) => c.method === "POST"), "nothing posted without a round");
+  assert.equal((await local.top("snack"))[0].name, "ME");
+});
+
 
 test("no configuration: each browser keeps its own board", () => {
   assert.equal(createBoard({}).scope, "device");
@@ -192,4 +219,25 @@ test("letters can be typed by hovering the palm over the on-screen keys", async 
   step(sh, 0.5, none); // hand away first (the screen change blocks until it leaves)
   step(sh, KEY_DWELL + 0.6, controls);
   assert.equal(sh.entry.name, "K");
+});
+
+test("the shell starts a round on the server when play begins", async () => {
+  const { calls, fetchImpl } = fakeServer();
+  const board = createBoard({ url: "https://lb.example.dev" }, new LocalBoard(memoryStorage()), fetchImpl);
+  const sh = new Shell({ games: [Scored], board });
+  await sh.refreshScores();
+  sh.handleKey("1");
+  sh.handleKey("Enter"); // past the tutorial
+  assert.ok(!calls.some((c) => c.url.endsWith("/sessions")), "not during the countdown");
+  step(sh, 3.1);
+  assert.equal(calls.filter((c) => c.url.endsWith("/sessions")).length, 1);
+  sh.game.score = 12;
+  sh.game.phase = "game_over";
+  step(sh, ENTRY_DELAY + 0.1);
+  for (const k of "AB") sh.handleKey(k);
+  sh.handleKey("Enter");
+  await new Promise((r) => setTimeout(r, 0));
+  const post = calls.find((c) => c.url.endsWith("/scores") && c.method === "POST");
+  assert.deepEqual(post.body, { game: "scored", name: "AB", score: 12, session: "s-1" });
+  assert.equal(sh.screen, "results");
 });

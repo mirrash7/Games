@@ -146,6 +146,8 @@ export class Shell {
     if (this.hand !== "right" && this.game.swapHand) this.game.swapHand();
     this.countdown = COUNTDOWN_SECONDS;
     this.screen = countdown ? "countdown" : "playing";
+    this._session = null;
+    if (!countdown) this._beginPlay();
     // A player's first round of each game this visit starts with how to play it.
     if (countdown && Cls.tutorial?.length && !this._tutored.has(id)) {
       this.screen = "tutorial";
@@ -156,6 +158,12 @@ export class Shell {
     this.lastEntryId = null;
     this.dwell.reset();
     this.pauseDwell.reset();
+  }
+
+  /** Play starts: tell the leaderboard, which times the round on its side. */
+  _beginPlay() {
+    this.screen = "playing";
+    this._session = this.board?.begin ? this.board.begin(this.selected).catch(() => null) : null;
   }
 
   /** Leave the how-to-play cards for the countdown. */
@@ -197,7 +205,8 @@ export class Shell {
     }
     e.saving = true;
     const id = this.selected, game = this.game;
-    this.board.submit(id, e.name, this.score).then(({ entries, id: entryId }) => {
+    Promise.resolve(this._session).then((session) => this.board.submit(id, e.name, this.score, session))
+      .then(({ entries, id: entryId }) => {
       this.scores[id] = entries;
       if (this.game === game && this.screen === "entry") {
         this.lastEntryId = entryId;
@@ -355,7 +364,7 @@ export class Shell {
 
     if (this.screen === "countdown") {
       this.countdown -= dt;
-      if (this.countdown <= 0) this.screen = "playing";
+      if (this.countdown <= 0) this._beginPlay();
       return;
     }
     if (this.screen === "tutorial") this.tutorialT += dt;

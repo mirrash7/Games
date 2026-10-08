@@ -24,6 +24,14 @@ def test_web_suite_passes():
     assert run.returncode == 0, run.stdout[-4000:] + run.stderr[-2000:]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
+def test_leaderboard_server_rules_pass():
+    root = WEB.parent / "leaderboard"
+    files = sorted(str(p.relative_to(root)) for p in (root / "test").glob("*.test.mjs"))
+    run = subprocess.run(["node", "--test", *files], cwd=root, capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stdout[-4000:] + run.stderr[-2000:]
+
+
 def test_site_build_layout(tmp_path):
     """The Pages build mounts the game art and ships the model chunks."""
     import sys

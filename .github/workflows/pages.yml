@@ -5,7 +5,7 @@ name: Deploy browser arcade
 on:
   push:
     branches: [main]
-    paths: ["web/**", "assets/**", "tools/build_web.py", ".github/workflows/pages.yml"]
+    paths: ["web/**", "assets/**", "leaderboard/**", "tools/build_web.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -28,6 +28,8 @@ jobs:
       - name: Browser tests
         working-directory: web
         run: node --test tests/*.test.mjs
+      - name: Leaderboard server tests
+        run: node --test leaderboard/test/*.test.mjs
 
   deploy:
     needs: test

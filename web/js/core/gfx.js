@@ -11,14 +11,23 @@ export function makeCanvas(w, h) {
   return c;
 }
 
-export function loadImage(url) {
+export async function loadImage(url, attempts = 3) {
   // onload rather than img.decode(): decode() can stall while the tab is hidden.
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`could not load ${url}`));
-    img.src = url;
-  });
+  // Retried: an image occasionally fails once even though the server sent it,
+  // and one missing sprite would otherwise stop the whole arcade from starting.
+  for (let i = 1; ; i++) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error(`could not load ${url}`));
+        img.src = i === 1 ? url : `${url}${url.includes("?") ? "&" : "?"}retry=${i}`;
+      });
+    } catch (err) {
+      if (i >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, 250 * i));
+    }
+  }
 }
 
 export async function loadJSON(url) {

@@ -8,7 +8,8 @@
 // The render loop never waits on the camera or the model.
 //
 // URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy (preselect),
-// ?source=<image or video url> (stand-in for the webcam), ?debug=1 (skeleton + stats).
+// ?source=<image or video url> (stand-in for the webcam), ?debug=1 (skeleton + stats),
+// ?leaderboard=<url> (a different leaderboard server, e.g. a local `wrangler dev`).
 
 import { Camera, FileSource } from "./camera.js";
 import { loadModel } from "./model/loader.js";
@@ -119,6 +120,7 @@ function fail(err) {
 }
 
 let booting = false;
+let running = false; // the arcade loop is up; until then keys and clicks do nothing
 
 async function boot() {
   booting = true;
@@ -148,6 +150,7 @@ async function boot() {
   }
   await fillCameraPicker();
   engine.onResult = () => sendFrame();
+  running = true;
   requestAnimationFrame(tick);
 }
 
@@ -184,7 +187,8 @@ async function startModel(gpu) {
 // --- the loop ---
 
 const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, selected: params.get("game"),
-  board: createBoard(LEADERBOARD) });
+  // ?leaderboard=<url> points this browser at another leaderboard server (local testing).
+  board: createBoard(params.get("leaderboard") ? { url: params.get("leaderboard") } : LEADERBOARD) });
 const extrapolator = new PoseExtrapolator({ gain: 0.7, maxLead: 0.12 });
 const mapper = new ControlMapper(W, H);
 let last = performance.now() / 1000;
@@ -271,7 +275,7 @@ function drawDebug(poses) {
 // --- input and chrome ---
 
 window.addEventListener("keydown", (e) => {
-  if (!engine?.info || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!running || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target instanceof HTMLSelectElement) return;
   const k = e.key.toLowerCase();
   if (shell.screen === "entry") {
@@ -285,7 +289,7 @@ window.addEventListener("keydown", (e) => {
 });
 
 canvas.addEventListener("click", (e) => {
-  if (!engine?.info) return;
+  if (!running) return;
   const r = canvas.getBoundingClientRect();
   shell.handleClick(((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H);
 });

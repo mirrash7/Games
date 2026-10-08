@@ -12,3 +12,7 @@ build/
 /web/dev/*.jpg
 /web/dev/*.png
 /web/dev/*.mp4
+
+# leaderboard Worker build/cache
+/leaderboard/.wrangler/
+/leaderboard/node_modules/

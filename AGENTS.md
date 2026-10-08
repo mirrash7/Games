@@ -358,7 +358,8 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
 - **Browser-only screens:** each game's `static tutorial` (cards drawn with
   `core/figure.js`, shown before a player's first round per visit) and the
   leaderboards (`leaderboard.js`, `docs/LEADERBOARD.md`: name entry by hovering
-  over letters, per-game top 10, per browser or worldwide via Supabase). A new
-  game needs a `score` property and its id in the Supabase `check` constraint.
+  over letters, per-game top 10, per browser or worldwide via the Cloudflare
+  Worker in `leaderboard/`). A new game needs a `score` property and an entry in
+  `leaderboard/src/rules.js` (its fastest possible scoring rate, with a test).
 - **Pinned onnxruntime-web 1.29.** 1.22 silently returned no detections on WebGPU
   (broken `GridSample`). Check accuracy with `dev/pipeline.html` after any upgrade.
