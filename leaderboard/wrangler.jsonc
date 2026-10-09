@@ -1,12 +1,21 @@
 // Cloudflare Worker for the arcade's worldwide leaderboard. Deploy with ./deploy.sh.
 {
-  "name": "kp-leaderboard",
-  "main": "src/worker.js",
-  "compatibility_date": "2026-09-01",
-  "vars": {
-    // Pages allowed to call the API from a browser (comma-separated).
-    "ALLOWED_ORIGINS": "https://mirrash7.github.io,http://localhost:8765"
-  },
-  "observability": { "enabled": true }
-  // deploy.sh adds the "d1_databases" binding (DB) when it creates the database.
+	"name": "kp-leaderboard",
+	"main": "src/worker.js",
+	"compatibility_date": "2026-09-01",
+	"vars": {
+		// Pages allowed to call the API from a browser (comma-separated).
+		"ALLOWED_ORIGINS": "https://mirrash7.github.io,http://localhost:8765"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "kp-leaderboard",
+			"database_id": "f0b238b9-a024-43a9-8a8d-49e0fbed4460"
+		}
+	]
+	// deploy.sh adds the D1 database binding (DB) when it creates the database.
 }

@@ -4,5 +4,5 @@
 // deployed with leaderboard/deploy.sh, which fills this in). Left empty, each
 // browser keeps its own leaderboard. See docs/LEADERBOARD.md.
 export const LEADERBOARD = {
-  url: "",
+  url: "https://kp-leaderboard.alexei-alexandrovich.workers.dev",
 };

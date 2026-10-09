@@ -16,7 +16,8 @@ if ! "${WRANGLER[@]}" whoami 2>&1 | grep -q "associated with"; then
 fi
 
 echo "== 2/4 Database"
-if ! grep -q '"d1_databases"' wrangler.jsonc; then
+# Look for the database's id, not just the word: a comment mentions d1_databases.
+if ! grep -q '"database_id"' wrangler.jsonc; then
   "${WRANGLER[@]}" d1 create kp-leaderboard --binding DB --update-config
 fi
 
@@ -25,8 +26,19 @@ echo "== 3/4 Tables"
 
 echo "== 4/4 Deploy"
 log=$(mktemp)
-"${WRANGLER[@]}" deploy | tee "$log"
+"${WRANGLER[@]}" deploy 2>&1 | tee "$log" || true
 url=$(grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' "$log" | head -1 || true)
+if grep -q "register a workers.dev subdomain" "$log"; then
+  # A brand-new account has no workers.dev subdomain yet, and wrangler can't
+  # ask for one here (its output is piped). One click in the dashboard fixes it.
+  rm -f "$log"
+  echo
+  echo "One more step: this Cloudflare account needs a workers.dev subdomain."
+  echo "  1. Open https://dash.cloudflare.com -> Workers & Pages (left sidebar)."
+  echo "  2. Pick a subdomain when asked (e.g. your name) and confirm."
+  echo "  3. Run ./leaderboard/deploy.sh again."
+  exit 1
+fi
 rm -f "$log"
 if [ -z "$url" ]; then
   echo "Deployed, but couldn't read the URL above. Put it in web/js/config.js by hand." >&2
