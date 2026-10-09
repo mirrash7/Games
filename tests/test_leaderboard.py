@@ -72,10 +72,12 @@ class FakeServer:
 
     def __init__(self, refuse: str | None = None):
         self.calls = []
+        self.agents = []
         self.refuse = refuse
 
     def __call__(self, req, timeout=None):
         body = json.loads(req.data) if req.data else None
+        self.agents.append(req.get_header("User-agent"))
         self.calls.append((req.get_method(), req.full_url, body))
         if req.full_url.endswith("/sessions"):
             data = {"session": "s-1"}
@@ -100,6 +102,8 @@ def test_server_board_sends_the_rounds_session_with_its_score():
     assert post[2] == {"game": "flappy", "name": "ACE", "score": 9, "session": "s-1"}
     assert b.top("flappy").result()[0]["name"] == "ACE"
     assert ("GET", "https://lb.example.dev/scores?game=flappy", None) in fake.calls
+    # Cloudflare answers 403 to Python's default user agent.
+    assert all(ua.startswith("kp-arcade-desktop") for ua in fake.agents)
 
 
 def test_a_refused_score_is_kept_on_this_computer(tmp_path):

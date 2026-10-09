@@ -34,6 +34,7 @@ from pathlib import Path
 NAME_MAX = 3
 BOARD_SIZE = 10
 MAX_SCORE = 100_000  # matches the server's limit; anything above is not a real run
+USER_AGENT = "kp-arcade-desktop/1.0 (+https://github.com/mirrash7/Games)"
 
 # Three letters can still spell abuse on a public board. A short, obvious list
 # (the same as the site's and the server's); the player is asked for another name.
@@ -137,8 +138,12 @@ class ServerBoard:
 
     def _call(self, method: str, path: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(self.base + path, data=data, method=method,
-                                     headers={"Content-Type": "application/json"} if data else {})
+        # Cloudflare answers 403 to Python's default "Python-urllib/x.y" user
+        # agent (bot protection), so say who we are.
+        headers = {"User-Agent": USER_AGENT}
+        if data:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with self._open(req, timeout=self.timeout) as res:
                 return json.loads(res.read() or b"{}")
