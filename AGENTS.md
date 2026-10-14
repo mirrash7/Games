@@ -84,9 +84,11 @@ src/kpapp/
     template/      Touch Targets: the reference game to copy (tested, off-menu)
     fruitninja/    Snack Attack: a raccoon on the palm eats snacks, avoids trash (Fruit Ninja rules; Blade swept-segment cuts)
     flappy/        Flappy Raccoon: FlapDetector (gesture.py), physics, picture-in-picture camera
+    dance/         Raccoon Dance: Just Dance-style; songs = data (assets/dance), see docs/DANCE.md
     holeinwall/    full-body pose matching (off the menu, still runnable)
     demo.py        "catch": the first control-path demo
-tools/generate_<game>_*.py   procedural, deterministic asset generators
+  audio.py       music with a clock games sync to (sounddevice; SilentPlayer fallback)
+tools/generate_<game>_*.py   procedural, deterministic asset generators (incl. generate_dance_song.py)
 assets/<game>/generated/     their output (+ manifest.json)
 tests/test_<area>.py         one file per area; all run without a camera
 ```
@@ -151,6 +153,8 @@ Reusable primitives (prefer these over hand-rolled keypoint logic):
 | match a whole-body shape | `game.holeinwall.matching.evaluate` + `HoleCache` | torso-normalised, joint + silhouette blend |
 | smoothing any 2D signal | `hand.OneEuroFilter` | low jitter when slow, low lag when fast |
 | hover-to-press buttons | `shell.Dwell` | blocks firing until the hand leaves after a screen change |
+| "does the player match this pose?" | `game.dance.pose.measure` + `similarity` | torso-frame limb angles, mirror-aware, reach-only when elbows are missing |
+| music with a clock | `audio.open_player(path)` | `position()` is what was heard; SilentPlayer in tests/headless |
 
 Use your own clock (sum of clamped `dt`) for timestamps you pass to these.
 
@@ -315,6 +319,17 @@ re-run the model on offline. Analyse these before tuning anything.
   It shows STEP BACK when the player stands too close: wrists then leave the
   frame on every downstroke, and at a 15-20 Hz model rate up to ~30% of flaps
   are missed. Not yet tested with a live player.
+- **Raccoon Dance** (`dance`, docs/DANCE.md): the coach (the raccoon) dances
+  to a song and the player copies it like a mirror. Poses are torso-frame limb
+  angles (`dance/pose.py`), judged per beat with a late-skewed window and a
+  0.12 s hold (`dance/judge.py`). Songs are folders in `assets/dance/songs/`
+  (audio + `song.json` chart). The shell shows a song list for games with
+  `variants()`, with one leaderboard per song (`dance-<id>`). Add songs with
+  `kp dance-import` (from a recording) and check them with `kp dance-preview`.
+  The first song, "Neon Nights", is original and synthesised
+  (`tools/generate_dance_song.py`). Bots prove fairness: a perfect dancer
+  150 ms late scores 10000; idle, frozen and random players stay at 1 star or
+  below. Not yet tested with a live player.
 - **Off the menu:** Hole in the Wall (`--game holeinwall`), Catch (`--game catch`),
   Template (`--game template`).
 - Ideas the platform already supports: dodge games (`steer` / torso lean),

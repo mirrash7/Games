@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "size": [
+    1280,
+    720
+  ],
+  "light_scale": 4,
+  "stage": {
+    "horizon": 470,
+    "lights": [
+      [
+        170,
+        94
+      ],
+      [
+        345,
+        94
+      ],
+      [
+        520,
+        94
+      ],
+      [
+        695,
+        94
+      ],
+      [
+        870,
+        94
+      ]
+    ],
+    "spot": [
+      520,
+      652,
+      250,
+      56
+    ],
+    "coach": [
+      520,
+      660
+    ]
+  },
+  "head": {
+    "centre": [
+      0.5,
+      0.565
+    ],
+    "chin": [
+      0.5,
+      0.8
+    ],
+    "face_width": 0.67
+  },
+  "outfits": {
+    "neon": {
+      "fur": [
+        222,
+        118,
+        160
+      ],
+      "fur_dark": [
+        150,
+        58,
+        92
+      ],
+      "top": [
+        170,
+        46,
+        255
+      ],
+      "top_hi": [
+        215,
+        150,
+        255
+      ],
+      "pants": [
+        168,
+        48,
+        84
+      ],
+      "accent": [
+        255,
+        235,
+        70
+      ],
+      "glove": [
+        255,
+        246,
+        250
+      ],
+      "shoe": [
+        255,
+        248,
+        250
+      ],
+      "ink": [
+        46,
+        24,
+        34
+      ],
+      "rim": [
+        255,
+        245,
+        110
+      ],
+      "glow": [
+        255,
+        70,
+        200
+      ]
+    }
+  },
+  "ratings": {
+    "perfect": {
+      "text": "PERFECT",
+      "colour": [
+        70,
+        210,
+        255
+      ],
+      "sprite": "word_perfect.png"
+    },
+    "super": {
+      "text": "SUPER",
+      "colour": [
+        255,
+        220,
+        110
+      ],
+      "sprite": "word_super.png"
+    },
+    "good": {
+      "text": "GOOD",
+      "colour": [
+        140,
+        235,
+        150
+      ],
+      "sprite": "word_good.png"
+    },
+    "ok": {
+      "text": "OK",
+      "colour": [
+        255,
+        150,
+        200
+      ],
+      "sprite": "word_ok.png"
+    },
+    "x": {
+      "text": "X",
+      "colour": [
+        70,
+        70,
+        255
+      ],
+      "sprite": "word_x.png"
+    }
+  },
+  "words": {
+    "get_ready": "word_get_ready.png",
+    "count_3": "word_count_3.png",
+    "count_2": "word_count_2.png",
+    "count_1": "word_count_1.png",
+    "count_go": "word_count_go.png",
+    "superstar": "word_superstar.png"
+  },
+  "colours": {
+    "magenta": [
+      190,
+      50,
+      255
+    ],
+    "cyan": [
+      255,
+      235,
+      70
+    ],
+    "violet": [
+      255,
+      90,
+      150
+    ],
+    "gold": [
+      70,
+      205,
+      255
+    ]
+  }
+}

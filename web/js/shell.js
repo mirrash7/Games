@@ -97,7 +97,7 @@ export class Shell {
     this.hand = "right";
     this._trackers = { right: new HandTracker("right", mirrored), left: new HandTracker("left", mirrored) };
     this._clock = 0;
-    this.screen = "menu"; // menu | countdown | playing | paused
+    this.screen = "menu"; // menu | songs | tutorial | countdown | playing | paused | entry | results
     this.game = null;
     this.countdown = 0;
     this.cursor = null;
@@ -109,7 +109,7 @@ export class Shell {
     this.notice = null; // optional line under the menu (e.g. running on CPU)
 
     this.board = board;
-    this.scores = {}; // game id -> top entries, as last fetched
+    this.scores = {}; // leaderboard id -> top entries, as last fetched
     this.lastEntryId = null; // highlights the player's own row on the results screen
     this.keyDwell = new Dwell(KEY_DWELL);
     this.entry = null; // {name, message, saving} while entering a name
@@ -117,15 +117,58 @@ export class Shell {
     this._qualified = false;
     this._tutored = new Set(); // games whose how-to-play cards were seen this visit
     this.tutorialT = 0;
+    this.variant = null; // the song (or other variant) being played
+    this.boardKey = null; // the leaderboard this round goes to
+    this._picking = null; // game whose variants are on screen
     this.refreshScores();
   }
 
+  /** A game's variants ({id, title, subtitle, boardId}), e.g. songs; [] for most games. */
+  variants(id) {
+    try {
+      return this.registry[id]?.variants?.() ?? [];
+    } catch (err) {
+      console.warn(`[kp] ${id}: could not list variants`, err);
+      return [];
+    }
+  }
+
+  _variantBoard(id, v) {
+    return v.boardId ?? `${id}-${v.id}`;
+  }
+
+  /** Every leaderboard the menus show: one per game, or one per variant. */
+  boardKeys() {
+    return this.menuGames.flatMap((id) => {
+      const vs = this.variants(id);
+      if (vs.length) return vs.map((v) => this._variantBoard(id, v));
+      // A game with songs has no board of its own; before its songs are
+      // loaded it has none to show yet (main.js refreshes after preload).
+      return typeof this.registry[id]?.variants === "function" ? [] : [id];
+    });
+  }
+
   /** Fetch the boards again (on start-up, and when going back to the menu). */
-  refreshScores(ids = this.menuGames) {
+  refreshScores(keys = this.boardKeys()) {
     if (!this.board) return Promise.resolve();
-    return Promise.all(ids.map((id) => this.board.top(id).then((entries) => {
-      this.scores[id] = entries;
+    return Promise.all(keys.map((key) => this.board.top(key).then((entries) => {
+      this.scores[key] = entries;
     }).catch((err) => console.warn("[kp] leaderboard:", err))));
+  }
+
+  /** A game was picked on the welcome screen: its song list, or straight in. */
+  choose(id) {
+    if (this.variants(id).length) {
+      this._picking = id;
+      this.selected = id;
+      this.screen = "songs";
+      this.dwell.block();
+      this.refreshScores();
+    } else this.start(id);
+  }
+
+  _closeGame() {
+    this.game?.close?.(); // e.g. stop the music
   }
 
   get boardScope() {
@@ -138,16 +181,25 @@ export class Shell {
 
   // --- transitions ---
 
-  start(id, countdown = true) {
+  start(id, countdown = true, variant = null) {
     const Cls = this.registry[id];
     if (!Cls) return;
+    this._closeGame();
     this.selected = id;
-    this.game = new Cls({ width: this.width, height: this.height, mirrored: this.mirrored });
+    this.game = new Cls({ width: this.width, height: this.height, mirrored: this.mirrored,
+      ...(variant != null ? { variant } : {}) });
+    this.game.preload?.(); // heavy art now, on the screen change, not on the first frame of play
+    this.variant = variant;
+    const chosen = variant != null ? this.variants(id).find((v) => v.id === variant) : null;
+    this.boardKey = chosen ? this._variantBoard(id, chosen) : id;
     if (this.hand !== "right" && this.game.swapHand) this.game.swapHand();
     this.countdown = COUNTDOWN_SECONDS;
-    this.screen = countdown ? "countdown" : "playing";
+    // Games that count themselves in (Raccoon Dance counts 3-2-1 on the
+    // music) skip the shell's countdown: two in a row read as a glitch.
+    const counted = countdown && !Cls.ownCountdown;
+    this.screen = counted ? "countdown" : "playing";
     this._session = null;
-    if (!countdown) this._beginPlay();
+    if (!counted) this._beginPlay();
     // A player's first round of each game this visit starts with how to play it.
     if (countdown && Cls.tutorial?.length && !this._tutored.has(id)) {
       this.screen = "tutorial";
@@ -163,16 +215,20 @@ export class Shell {
   /** Play starts: tell the leaderboard, which times the round on its side. */
   _beginPlay() {
     this.screen = "playing";
-    this._session = this.board?.begin ? this.board.begin(this.selected).catch(() => null) : null;
+    this._session = this.board?.begin ? this.board.begin(this.boardKey).catch(() => null) : null;
   }
 
   /** Leave the how-to-play cards for the countdown. */
   endTutorial() {
     if (this.screen !== "tutorial") return;
     this._tutored.add(this.selected);
+    this.dwell.block();
+    if (this.registry[this.selected]?.ownCountdown) {
+      this._beginPlay();
+      return;
+    }
     this.screen = "countdown";
     this.countdown = COUNTDOWN_SECONDS;
-    this.dwell.block();
   }
 
   /** The name-entry screen, for a score that made the board. */
@@ -204,7 +260,7 @@ export class Shell {
       return;
     }
     e.saving = true;
-    const id = this.selected, game = this.game;
+    const id = this.boardKey, game = this.game;
     Promise.resolve(this._session).then((session) => this.board.submit(id, e.name, this.score, session))
       .then(({ entries, id: entryId }) => {
       this.scores[id] = entries;
@@ -228,13 +284,14 @@ export class Shell {
   }
 
   restart() {
-    if (this.selected) this.start(this.selected);
+    if (this.selected) this.start(this.selected, true, this.variant);
   }
 
   pause() {
     if (this.screen === "playing" && !this.gameOver) {
       this.screen = "paused";
       this.dwell.block();
+      this.game.onPause?.(); // e.g. pause the music
     }
   }
 
@@ -247,8 +304,11 @@ export class Shell {
   }
 
   toMenu() {
+    this._closeGame();
     this.screen = "menu";
     this.game = null;
+    this.variant = null;
+    this._picking = null;
     this.entry = null;
     this.dwell.block();
     this.refreshScores();
@@ -264,7 +324,8 @@ export class Shell {
   }
 
   _do(action) {
-    if (action.startsWith("start:")) this.start(action.slice(6));
+    if (action.startsWith("start:")) this.choose(action.slice(6));
+    else if (action.startsWith("song:")) this.start(this._picking, true, action.slice(5));
     else if (action === "resume") this.resume();
     else if (action === "menu") this.toMenu();
     else if (action === "again") this.restart();
@@ -295,13 +356,21 @@ export class Shell {
     if (this.screen === "menu") {
       if (k >= "1" && k <= "9" && k.length === 1) {
         const i = Number(k) - 1;
-        if (i < this.menuGames.length) this.start(this.menuGames[i]);
+        if (i < this.menuGames.length) this.choose(this.menuGames[i]);
         return true;
       }
       if ((enter || space) && this.selected) {
-        this.start(this.selected);
+        this.choose(this.selected);
         return true;
       }
+    } else if (this.screen === "songs") {
+      const songs = this.variants(this._picking);
+      if (k >= "1" && k <= "9" && k.length === 1 && Number(k) - 1 < songs.length) {
+        this.start(this._picking, true, songs[Number(k) - 1].id);
+      } else if ((enter || space) && songs.length) this.start(this._picking, true, songs[0].id);
+      else if (esc) this.toMenu();
+      else return false;
+      return true;
     } else if (this.screen === "tutorial") {
       if (enter || space) this.endTutorial();
       else if (esc) this.toMenu();
@@ -380,7 +449,7 @@ export class Shell {
         this._overT = 0;
         // A score good enough for the board: no PLAY AGAIN button to hit by
         // accident; the name entry follows the game's own game-over moment.
-        this._qualified = !!this.board && qualifies(this.scores[this.selected] ?? [], this.score);
+        this._qualified = !!this.board && qualifies(this.scores[this.boardKey] ?? [], this.score);
       }
       this._overT += dt;
       this.game.update(controls, dt); // let debris finish falling
@@ -423,6 +492,7 @@ export class Shell {
       });
     }
     if (this.screen === "entry") return this._keyboard();
+    if (this.screen === "songs") return this._songCards();
     const bw = Math.floor(w * 0.2), bh = 74, gap = Math.floor(w * 0.04);
     const y0 = this.screen === "paused" ? Math.floor(h * 0.56) : Math.floor(h * 0.8);
     let pair;
@@ -437,6 +507,26 @@ export class Shell {
       x += bw + gap;
       return b;
     });
+  }
+
+  /** The song list: up to three cards a row, and BACK. */
+  _songCards() {
+    const w = this.width, h = this.height;
+    const songs = this.variants(this._picking).slice(0, 9);
+    const perRow = Math.min(3, Math.max(1, songs.length));
+    const rows = Math.max(1, Math.ceil(songs.length / perRow));
+    const tw = Math.floor(w * 0.28), gap = Math.floor(w * 0.03);
+    const th = Math.floor(h * (rows === 1 ? 0.34 : 0.2));
+    const buttons = songs.map((v, i) => {
+      const r = Math.floor(i / perRow), c = i % perRow;
+      const n = Math.min(perRow, songs.length - r * perRow);
+      const x0 = Math.floor((w - (n * tw + (n - 1) * gap)) / 2) + c * (tw + gap);
+      const y0 = Math.floor(h * 0.3) + r * (th + gap);
+      return new Button(`song:${v.id}`, v.title ?? v.id, [x0, y0, x0 + tw, y0 + th], v.subtitle ?? "", String(i + 1));
+    });
+    const bw = Math.floor(w * 0.16), by = Math.floor(h * 0.8);
+    buttons.push(new Button("menu", "BACK", [w / 2 - bw / 2, by, w / 2 + bw / 2, by + 64], "", "ESC"));
+    return buttons;
   }
 
   /** A-Z, DEL and OK in a 7x4 grid, big enough to hit with a palm from 2 m; SKIP below. */
@@ -460,6 +550,7 @@ export class Shell {
   render(ctx, frame) {
     this._buttons = this._layout();
     if (this.screen === "menu") this._drawMenu(ctx);
+    else if (this.screen === "songs") this._drawSongs(ctx);
     else if (this.screen === "tutorial") this._drawTutorial(ctx);
     else {
       this.game.render(ctx, frame);
@@ -502,17 +593,15 @@ export class Shell {
       panel(ctx, b.rect, { colour: hot ? HOT_FILL : PANEL, alpha: 0.85, border: hot ? ACCENT : IDLE_BORDER,
         thickness: hot ? 3 : 2 });
       const cx = (x0 + x1) / 2;
-      if (tiles) {
-        centredText(ctx, b.label, cx, y0 + 62, 1.05, hot ? ACCENT : WHITE);
-        wrap(ctx, b.sub, x1 - x0 - 40, 0.58).forEach((line, i) =>
-          centredText(ctx, line, cx, y0 + 108 + i * 28, 0.58, DIM, { body: true, shadow: false }));
-        centredText(ctx, `hover to play  -  or press ${b.keyHint}`, cx, y1 - 24, 0.5, HINT,
+      if (tiles && /^(start|song):/.test(b.action)) {
+        const compact = y1 - y0 < 200; // a grid of song cards
+        centredText(ctx, b.label, cx, y0 + (compact ? 44 : 62), compact ? 0.9 : 1.05, hot ? ACCENT : WHITE);
+        wrap(ctx, b.sub, x1 - x0 - 40, 0.58).slice(0, compact ? 1 : 3).forEach((line, i) =>
+          centredText(ctx, line, cx, y0 + (compact ? 74 : 108) + i * 28, 0.58, DIM, { body: true, shadow: false }));
+        centredText(ctx, `hover to play  -  or press ${b.keyHint}`, cx, y1 - (compact ? 14 : 24), 0.5, HINT,
           { body: true, shadow: false });
-        if (this.board) {
-          const top = this.scores[b.action.slice(6)]?.[0];
-          centredText(ctx, top ? `HIGH SCORE   ${top.name}   ${top.score}` : "NO HIGH SCORES YET - SET ONE",
-            cx, y1 - 62, 0.56, top ? ACCENT : DIM, { shadow: false, weight: 700 });
-        }
+        const [line, colour] = this._tileScoreline(b.action);
+        if (line) centredText(ctx, line, cx, compact ? y0 + 104 : y1 - 62, 0.56, colour, { shadow: false, weight: 700 });
       } else {
         centredText(ctx, b.label, cx, y0 + 46, 0.85, hot ? ACCENT : WHITE);
         if (b.keyHint) centredText(ctx, b.keyHint, cx, y1 + 24, 0.45, HINT, { body: true, shadow: false });
@@ -558,10 +647,10 @@ export class Shell {
 
   _drawEntry(ctx) {
     dim(ctx, 0.88); // the game's own GAME OVER text would show through the slots
-    const w = this.width, e = this.entry, Cls = this.registry[this.selected];
-    const rank = 1 + (this.scores[this.selected] ?? []).filter((x) => x.score >= this.score).length;
+    const w = this.width, e = this.entry;
+    const rank = 1 + (this.scores[this.boardKey] ?? []).filter((x) => x.score >= this.score).length;
     centredText(ctx, "NEW HIGH SCORE!", w / 2, 76, 1.35, ACCENT);
-    centredText(ctx, `${Cls.title}   ${this.score}   #${rank}`, w / 2, 116, 0.65, WHITE, { weight: 700 });
+    centredText(ctx, `${this._roundTitle()}   ${this.score}   #${rank}`, w / 2, 116, 0.65, WHITE, { weight: 700 });
     // Three slots; the next one to fill blinks.
     const sw = 78, sg = 16, sx = w / 2 - (NAME_MAX * sw + (NAME_MAX - 1) * sg) / 2;
     for (let i = 0; i < NAME_MAX; i++) {
@@ -591,11 +680,11 @@ export class Shell {
 
   _drawResults(ctx) {
     dim(ctx, 0.8);
-    const w = this.width, Cls = this.registry[this.selected];
-    const entries = this.scores[this.selected] ?? [];
+    const w = this.width;
+    const entries = this.scores[this.boardKey] ?? [];
     const px0 = w / 2 - 300, px1 = w / 2 + 300, y0 = 70, y1 = 548;
     panel(ctx, [px0, y0, px1, y1], { alpha: 0.96, border: ACCENT });
-    centredText(ctx, `${Cls.title}  TOP ${BOARD_SIZE}`, w / 2, y0 + 50, 0.95, ACCENT);
+    centredText(ctx, `${this._roundTitle()}  TOP ${BOARD_SIZE}`, w / 2, y0 + 50, 0.95, ACCENT);
     centredText(ctx, this.boardScope === "world" ? "WORLDWIDE" : "ON THIS DEVICE", w / 2, y0 + 78, 0.46, DIM,
       { body: true, shadow: false, weight: 700 });
     if (!entries.length) {
@@ -620,6 +709,42 @@ export class Shell {
       centredText(ctx, `YOUR SCORE   ${this.score}`, w / 2, y1 - 18, 0.62, WHITE, { weight: 700, shadow: false });
     }
     this._drawButtons(ctx, this.dwell);
+    this._drawCursor(ctx, this.dwell);
+  }
+
+  /** The game's title, or the song's for a game with variants. */
+  _roundTitle() {
+    if (this.variant != null) {
+      const v = this.variants(this.selected).find((x) => x.id === this.variant);
+      if (v) return String(v.title ?? v.id).toUpperCase();
+    }
+    return this.registry[this.selected]?.title ?? this.selected.toUpperCase();
+  }
+
+  /** The high-score line on a game tile or song card. */
+  _tileScoreline(action) {
+    if (!this.board) return ["", DIM];
+    const [kind, name] = [action.slice(0, action.indexOf(":")), action.slice(action.indexOf(":") + 1)];
+    if (kind === "start" && this.variants(name).length) {
+      const n = this.variants(name).length;
+      return [`${n} SONG${n === 1 ? "" : "S"}`, CYAN];
+    }
+    let key = name;
+    if (kind === "song") {
+      const v = this.variants(this._picking).find((x) => x.id === name) ?? { id: name };
+      key = this._variantBoard(this._picking, v);
+    }
+    const top = this.scores[key]?.[0];
+    return top ? [`HIGH SCORE   ${top.name}   ${top.score}`, ACCENT] : ["NO HIGH SCORES YET - SET ONE", DIM];
+  }
+
+  _drawSongs(ctx) {
+    dim(ctx, 0.62);
+    const w = this.width, h = this.height, Cls = this.registry[this._picking];
+    centredText(ctx, Cls.title || this._picking.toUpperCase(), w / 2, Math.floor(h * 0.14), 1.6, ACCENT);
+    centredText(ctx, "Choose a song - hover over it, or press its number", w / 2, Math.floor(h * 0.22), 0.72, WHITE,
+      { body: true });
+    this._drawButtons(ctx, this.dwell, true);
     this._drawCursor(ctx, this.dwell);
   }
 
@@ -688,6 +813,7 @@ export class Shell {
     const keys = {
       menu: `1-${n} or click to start   H switch hand`,
       countdown: "ESC menu",
+      songs: "1-9 or click a song   ESC back",
       tutorial: "ENTER play   ESC menu",
       entry: "type your name   BACKSPACE delete   ENTER save   ESC skip",
       results: "R play again   ESC menu",

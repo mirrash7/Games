@@ -52,6 +52,7 @@ _HINT = (150, 150, 165)
 
 class Screen(str, Enum):
     MENU = "menu"
+    SONGS = "songs"  # pick a variant (a song) of a game that offers several
     TUTORIAL = "tutorial"  # how-to-play cards, before a player's first round of a game
     COUNTDOWN = "countdown"
     PLAYING = "playing"
@@ -158,7 +159,7 @@ class Shell:
         self._was_over = False
 
         self.board = board
-        self.scores: dict[str, list[dict]] = {}  # game -> top entries, as last fetched
+        self.scores: dict[str, list[dict]] = {}  # leaderboard id -> top entries, as last fetched
         self._fetching: dict[str, object] = {}  # game -> pending Future
         self.last_entry_id: str | None = None  # the player's own row on the results screen
         self.key_dwell = Dwell(KEY_DWELL)
@@ -168,6 +169,10 @@ class Shell:
         self._over_t = 0.0
         self._qualified = False
         self._tutored: set[str] = set()  # games whose cards were seen this run
+        self.variant: str | None = None  # the song (or other variant) being played
+        self.board_key: str | None = None  # the leaderboard this round goes to
+        self._picking: str | None = None  # game whose variants are on screen
+        self._variant_cache: dict[str, list[dict]] = {}
         self.tutorial_t = 0.0
         self.refresh_scores()
 
@@ -176,18 +181,59 @@ class Shell:
 
     # --- transitions ---
 
-    def start(self, name: str, countdown: bool = True) -> None:
+    def variants(self, name: str) -> list[dict]:
+        """The game's variants ({id, title, subtitle, board_id}), e.g. songs; [] for most games."""
+        if name not in self._variant_cache:
+            fn = getattr(self.registry[name], "variants", None)
+            try:
+                self._variant_cache[name] = list(fn()) if fn else []
+            except Exception as exc:  # noqa: BLE001 - a broken song list must not break the menu
+                print(f"[kp] {name}: could not list variants: {exc}")
+                self._variant_cache[name] = []
+        return self._variant_cache[name]
+
+    def choose(self, name: str) -> None:
+        """A game was picked on the welcome screen: its song list, or straight in."""
+        if self.variants(name):
+            self._picking = name
+            self.selected = name
+            self.screen = Screen.SONGS
+            self.dwell.block()
+            self.refresh_scores()
+        else:
+            self.start(name)
+
+    def _close_game(self) -> None:
+        close = getattr(self.game, "close", None)
+        if close is not None:
+            close()  # e.g. stop the music
+
+    def start(self, name: str, countdown: bool = True, variant: str | None = None) -> None:
+        self._close_game()
         self.selected = name
-        self.game = self.registry[name]((self.width, self.height), mirrored=self.mirrored)
+        cls = self.registry[name]
+        if variant is None and self.variants(name):
+            # Started without the song list (--autostart): the first song, and its board.
+            variant = self.variants(name)[0]["id"]
+        kwargs = {"variant": variant} if variant is not None else {}
+        self.game = cls((self.width, self.height), mirrored=self.mirrored, **kwargs)
+        preload = getattr(self.game, "preload", None)
+        if preload is not None:
+            preload()  # heavy art now, on the screen change, not on the countdown's first frame
+        self.variant = variant
+        chosen = next((v for v in self.variants(name) if v["id"] == variant), None) if variant else None
+        self.board_key = chosen.get("board_id", f"{self._board_name(name)}-{variant}") if chosen else self._board_name(name)
         if self.hand != "right" and hasattr(self.game, "swap_hand"):
             self.game.swap_hand()
         self.countdown = COUNTDOWN_SECONDS
-        self.screen = Screen.COUNTDOWN if countdown else Screen.PLAYING
+        # Games that count themselves in (Raccoon Dance counts 3-2-1 on the
+        # music) skip the shell's countdown: two in a row read as a glitch.
+        counted = countdown and not getattr(cls, "own_countdown", False)
+        self.screen = Screen.COUNTDOWN if counted else Screen.PLAYING
         self._session = None
-        if not countdown:
+        if not counted:
             self._begin_play()
         # A player's first round of each game starts with how to play it.
-        cls = self.registry[name]
         if countdown and getattr(cls, "tutorial", None) and name not in self._tutored:
             self.screen = Screen.TUTORIAL
             self.tutorial_t = 0.0
@@ -201,26 +247,38 @@ class Shell:
     def _begin_play(self) -> None:
         """Play starts: tell the leaderboard, which times the round on its side."""
         self.screen = Screen.PLAYING
-        self._session = self.board.begin(self._board_name(self.selected)) if self.board is not None else None
+        self._session = self.board.begin(self.board_key) if self.board is not None else None
 
     def end_tutorial(self) -> None:
         """Leave the how-to-play cards for the countdown."""
         if self.screen is not Screen.TUTORIAL:
             return
         self._tutored.add(self.selected)
+        self.dwell.block()
+        if getattr(self.registry[self.selected], "own_countdown", False):
+            self._begin_play()
+            return
         self.screen = Screen.COUNTDOWN
         self.countdown = COUNTDOWN_SECONDS
-        self.dwell.block()
 
     # --- leaderboard ---
 
-    def refresh_scores(self, names: list[str] | None = None) -> None:
+    def board_keys(self) -> list[str]:
+        """Every leaderboard the menus show: one per game, or one per variant."""
+        keys = []
+        for name in self.menu_games:
+            vs = self.variants(name)
+            keys += [v.get("board_id", f"{self._board_name(name)}-{v['id']}") for v in vs] if vs \
+                else [self._board_name(name)]
+        return keys
+
+    def refresh_scores(self, keys: list[str] | None = None) -> None:
         """Fetch the boards again (on start-up and when going back to the menu)."""
         if self.board is None:
             return
-        for name in names or self.menu_games:
-            if name not in self._fetching:
-                self._fetching[name] = self.board.top(self._board_name(name))
+        for key in keys or self.board_keys():
+            if key not in self._fetching:
+                self._fetching[key] = self.board.top(key)
 
     def _poll_board(self) -> None:
         """Collect finished leaderboard work. Never blocks."""
@@ -241,12 +299,12 @@ class Shell:
                         session = self._session.result()
                     except Exception:  # noqa: BLE001
                         session = None
-                self._saving = self.board.submit(self._board_name(self.selected), e["name"], self.score, session)
+                self._saving = self.board.submit(self.board_key, e["name"], self.score, session)
         if self._saving is not None and self._saving.done():
             fut, self._saving = self._saving, None
             try:
                 entries, entry_id = fut.result()
-                self.scores[self.selected] = entries
+                self.scores[self.board_key] = entries
                 if self.screen is Screen.ENTRY:
                     self.last_entry_id = entry_id
                     self.show_results()
@@ -300,12 +358,15 @@ class Shell:
 
     def restart(self) -> None:
         if self.selected:
-            self.start(self.selected)
+            self.start(self.selected, variant=self.variant)
 
     def pause(self) -> None:
         if self.screen is Screen.PLAYING and not self.game_over:
             self.screen = Screen.PAUSED
             self.dwell.block()
+            on_pause = getattr(self.game, "on_pause", None)
+            if on_pause is not None:
+                on_pause()  # e.g. pause the music
 
     def resume(self) -> None:
         if self.screen is Screen.PAUSED:
@@ -314,8 +375,11 @@ class Shell:
             self.game.on_resume()
 
     def to_menu(self) -> None:
+        self._close_game()
         self.screen = Screen.MENU
         self.game = None
+        self.variant = None
+        self._picking = None
         self.entry = None
         self.dwell.block()
         self.refresh_scores()
@@ -332,7 +396,9 @@ class Shell:
 
     def _do(self, action: str) -> None:
         if action.startswith("start:"):
-            self.start(action.split(":", 1)[1])
+            self.choose(action.split(":", 1)[1])
+        elif action.startswith("song:"):
+            self.start(self._picking, variant=action.split(":", 1)[1])
         elif action == "resume":
             self.resume()
         elif action == "menu":
@@ -372,9 +438,17 @@ class Shell:
             if ord("1") <= key <= ord("9"):
                 i = key - ord("1")
                 if i < len(self.menu_games):
-                    self.start(self.menu_games[i])
+                    self.choose(self.menu_games[i])
             elif key in (KEY_ENTER, KEY_SPACE) and self.selected:
-                self.start(self.selected)
+                self.choose(self.selected)
+        elif self.screen is Screen.SONGS:
+            songs = self.variants(self._picking)
+            if ord("1") <= key <= ord("9") and key - ord("1") < len(songs):
+                self.start(self._picking, variant=songs[key - ord("1")]["id"])
+            elif key in (KEY_ENTER, KEY_SPACE) and songs:
+                self.start(self._picking, variant=songs[0]["id"])
+            elif key == KEY_ESC:
+                self.to_menu()
         elif self.screen is Screen.TUTORIAL:
             if key in (KEY_ENTER, KEY_SPACE):
                 self.end_tutorial()
@@ -462,7 +536,7 @@ class Shell:
                 # A score good enough for the board: no PLAY AGAIN button to hit
                 # by accident; the name entry follows the game's own game-over moment.
                 self._qualified = (self.board is not None
-                                   and qualifies(self.scores.get(self.selected, []), self.score))
+                                   and qualifies(self.scores.get(self.board_key, []), self.score))
             self._over_t += dt
             self.game.update(controls, dt)  # let debris finish falling
             if self.board is not None and self._over_t >= (ENTRY_DELAY if self._qualified else RESULTS_DELAY):
@@ -506,6 +580,8 @@ class Shell:
             return buttons
         if self.screen is Screen.ENTRY:
             return self._keyboard()
+        if self.screen is Screen.SONGS:
+            return self._song_cards()
         bw, bh, gap = int(w * 0.20), 74, int(w * 0.04)
         y0 = int(h * 0.56) if self.screen is Screen.PAUSED else int(h * 0.80)
         if self.screen is Screen.PAUSED:
@@ -523,6 +599,27 @@ class Shell:
             out.append(Button(action, label, (x, y0, x + bw, y0 + bh), key_hint=key))
             x += bw + gap
         return out
+
+    def _song_cards(self) -> list[Button]:
+        """The song list: up to three cards a row, and BACK."""
+        w, h = self.width, self.height
+        songs = self.variants(self._picking)[:9]
+        per_row = min(3, max(1, len(songs)))
+        rows = max(1, -(-len(songs) // per_row))
+        tw, gap = int(w * 0.28), int(w * 0.03)
+        th = int(h * (0.34 if rows == 1 else 0.2))
+        buttons = []
+        for i, v in enumerate(songs):
+            r, c = divmod(i, per_row)
+            n = min(per_row, len(songs) - r * per_row)
+            x0 = (w - (n * tw + (n - 1) * gap)) // 2 + c * (tw + gap)
+            y0 = int(h * 0.30) + r * (th + gap)
+            buttons.append(Button(f"song:{v['id']}", v.get("title", v["id"]), (x0, y0, x0 + tw, y0 + th),
+                                  v.get("subtitle", ""), str(i + 1)))
+        bw = int(w * 0.16)
+        buttons.append(Button("menu", "BACK", (w // 2 - bw // 2, int(h * 0.80), w // 2 + bw // 2, int(h * 0.80) + 64),
+                              key_hint="ESC"))
+        return buttons
 
     def _keyboard(self) -> list[Button]:
         """A-Z, DEL and OK in a 7x4 grid, big enough to hit with a palm from 2 m; SKIP below."""
@@ -545,6 +642,8 @@ class Shell:
         self._buttons = self._layout()
         if self.screen is Screen.MENU:
             self._draw_menu(canvas)
+        elif self.screen is Screen.SONGS:
+            self._draw_songs(canvas)
         elif self.screen is Screen.TUTORIAL:
             self._draw_tutorial(canvas)
         else:
@@ -594,17 +693,18 @@ class Shell:
             _panel(canvas, b.rect, colour=(46, 38, 34) if hot else _PANEL, alpha=0.85,
                    border=_ACCENT if hot else (110, 110, 120), thickness=3 if hot else 2)
             cx = (x0 + x1) // 2
-            if tiles:
-                _text(canvas, b.label, cx, y0 + 62, 1.05, _ACCENT if hot else _WHITE, 2)
-                for i, line in enumerate(_wrap(b.sub, x1 - x0 - 40, 0.58)):
-                    _text(canvas, line, cx, y0 + 108 + i * 28, 0.58, _DIM, 1,
+            if tiles and b.action.startswith(("start:", "song:")):
+                compact = (y1 - y0) < 200  # a grid of song cards
+                _text(canvas, b.label, cx, y0 + (44 if compact else 62), 0.9 if compact else 1.05,
+                      _ACCENT if hot else _WHITE, 2)
+                for i, line in enumerate(_wrap(b.sub, x1 - x0 - 40, 0.58)[: 1 if compact else 3]):
+                    _text(canvas, line, cx, y0 + (74 if compact else 108) + i * 28, 0.58, _DIM, 1,
                           cv2.FONT_HERSHEY_SIMPLEX, shadow=False)
-                _text(canvas, f"hover to play  -  or press {b.key_hint}", cx, y1 - 24, 0.5,
+                _text(canvas, f"hover to play  -  or press {b.key_hint}", cx, y1 - (14 if compact else 24), 0.5,
                       (150, 150, 165), 1, cv2.FONT_HERSHEY_SIMPLEX, shadow=False)
-                if self.board is not None:
-                    top = (self.scores.get(b.action.split(":", 1)[1]) or [None])[0]
-                    line = f"HIGH SCORE   {top['name']}   {top['score']}" if top else "NO HIGH SCORES YET - SET ONE"
-                    _text(canvas, line, cx, y1 - 62, 0.56, _ACCENT if top else _DIM, 1, shadow=False)
+                line, colour = self._tile_scoreline(b.action)
+                if line:
+                    _text(canvas, line, cx, y0 + 104 if compact else y1 - 62, 0.56, colour, 1, shadow=False)
             else:
                 _text(canvas, b.label, cx, y0 + 44, 0.85, _ACCENT if hot else _WHITE, 2)
                 if b.key_hint:
@@ -613,6 +713,42 @@ class Shell:
             if hot and dwell.progress > 0:
                 fill = int((x1 - x0 - 24) * min(1.0, dwell.progress))
                 cv2.rectangle(canvas, (x0 + 12, y1 - 10), (x0 + 12 + fill, y1 - 5), _ACCENT, -1)
+
+    def _round_title(self) -> str:
+        """The game's title, or the song's for a game with variants."""
+        if self.variant:
+            v = next((v for v in self.variants(self.selected) if v["id"] == self.variant), None)
+            if v:
+                return v.get("title", self.variant).upper()
+        return getattr(self.registry[self.selected], "title", self.selected.upper())
+
+    def _tile_scoreline(self, action: str) -> tuple[str, tuple]:
+        """The high-score line on a game tile or song card."""
+        if self.board is None:
+            return "", _DIM
+        kind, name = action.split(":", 1)
+        if kind == "start" and self.variants(name):
+            n = len(self.variants(name))
+            return f"{n} SONG{'S' if n != 1 else ''}", _CYAN
+        if kind == "song":
+            v = next((v for v in self.variants(self._picking) if v["id"] == name), {})
+            key = v.get("board_id", f"{self._board_name(self._picking)}-{name}")
+        else:
+            key = self._board_name(name)
+        top = (self.scores.get(key) or [None])[0]
+        if top:
+            return f"HIGH SCORE   {top['name']}   {top['score']}", _ACCENT
+        return "NO HIGH SCORES YET - SET ONE", _DIM
+
+    def _draw_songs(self, canvas) -> None:
+        self._dim(canvas, 0.62)
+        w, h = self.width, self.height
+        cls = self.registry[self._picking]
+        _text(canvas, getattr(cls, "title", self._picking.upper()), w // 2, int(h * 0.14), 1.6, _ACCENT, 3)
+        _text(canvas, "Choose a song - hover over it, or press its number", w // 2, int(h * 0.22), 0.72, _WHITE, 1,
+              cv2.FONT_HERSHEY_SIMPLEX)
+        self._draw_buttons(canvas, self.dwell, tiles=True)
+        self._draw_cursor(canvas, self.dwell)
 
     def _draw_cursor(self, canvas, dwell: Dwell) -> None:
         if self.cursor is None:
@@ -660,9 +796,9 @@ class Shell:
         self._dim(canvas, 0.88)  # the game's own GAME OVER text would show through the slots
         w, e = self.width, self.entry
         cls = self.registry[self.selected]
-        rank = 1 + sum(1 for x in self.scores.get(self.selected, []) if x["score"] >= self.score)
+        rank = 1 + sum(1 for x in self.scores.get(self.board_key, []) if x["score"] >= self.score)
         _text(canvas, "NEW HIGH SCORE!", w // 2, 76, 1.35, _ACCENT, 3)
-        _text(canvas, f"{cls.title}   {self.score}   #{rank}", w // 2, 116, 0.65, _WHITE, 2)
+        _text(canvas, f"{self._round_title()}   {self.score}   #{rank}", w // 2, 116, 0.65, _WHITE, 2)
         # Three slots; the next one to fill blinks.
         sw, sg = 78, 16
         sx = w // 2 - (NAME_MAX * sw + (NAME_MAX - 1) * sg) // 2
@@ -694,10 +830,10 @@ class Shell:
         self._dim(canvas, 0.8)
         w = self.width
         cls = self.registry[self.selected]
-        entries = self.scores.get(self.selected, [])
+        entries = self.scores.get(self.board_key, [])
         px0, px1, y0, y1 = w // 2 - 300, w // 2 + 300, 70, 548
         _panel(canvas, (px0, y0, px1, y1), alpha=0.96, border=_ACCENT)
-        _text(canvas, f"{cls.title}  TOP {BOARD_SIZE}", w // 2, y0 + 50, 0.95, _ACCENT, 2)
+        _text(canvas, f"{self._round_title()}  TOP {BOARD_SIZE}", w // 2, y0 + 50, 0.95, _ACCENT, 2)
         _text(canvas, "WORLDWIDE" if self.board_scope == "world" else "ON THIS DEVICE", w // 2, y0 + 78, 0.46,
               _DIM, 1, cv2.FONT_HERSHEY_SIMPLEX, shadow=False)
         if not entries:
@@ -760,6 +896,7 @@ class Shell:
         keys = {
             Screen.MENU: "1-%d or click to start   H switch hand   ESC quit" % max(1, len(self.menu_games)),
             Screen.COUNTDOWN: "ESC menu",
+            Screen.SONGS: "1-9 or click a song   ESC back",
             Screen.TUTORIAL: "ENTER play   ESC menu",
             Screen.ENTRY: "type your name   BACKSPACE delete   ENTER save   ESC skip",
             Screen.RESULTS: "R play again   ESC menu",

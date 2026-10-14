@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raccoon Dance harness</title>
+<style>
+  :root { --bg: #15161a; --fg: #e8e6e3; --dim: #9a978f; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 10px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+  header b { font-size: 15px; }
+  #perf, #status { color: var(--dim); font-variant-numeric: tabular-nums; }
+  nav a { color: #ffd246; margin-right: 10px; }
+  button { font: inherit; padding: 6px 14px; }
+  canvas#sheet { display: block; width: 100%; max-width: 1280px; height: auto; margin: 0 auto; }
+</style>
+</head>
+<body>
+<!-- Dev-only harness (not published). Plays the real Neon Nights chart through
+     the real game: a scripted bot dances it (poses at 20 Hz, 150 ms late,
+     projected by the site's PoseExtrapolator) on a SilentPlayer clock, and the
+     page renders a contact sheet of key moments plus the render cost.
+       ?bot=sloppy      every limb 25-30 degrees off and 250 ms late
+       ?moment=N        one moment at full 1280x720
+       ?audio=1         real time with the real music (click to start), shown live
+       ?song=<id>       another song -->
+<header>
+  <b>Raccoon Dance harness</b>
+  <span id="status">loading...</span>
+  <span id="perf"></span>
+  <nav id="nav"></nav>
+  <button id="go" hidden>Start with music</button>
+</header>
+<canvas id="sheet" width="1280" height="720"></canvas>
+<script type="module">
+import { DanceRaccoonGame, loadedSongs } from "../js/games/dance/game.js";
+import { keypointsFor, normalizePose } from "../js/games/dance/pose.js";
+import { SilentPlayer, unlockAudio } from "../js/core/audio.js";
+import { emptyControls } from "../js/core/controls.js";
+import { PoseExtrapolator } from "../js/core/extrapolate.js";
+import { KP } from "../js/core/pose.js";
+import { Rng } from "../js/core/random.js";
+
+const W = 1280, H = 720, FPS = 60, MODEL_HZ = 20, LAG = 0.15;
+const params = new URLSearchParams(location.search);
+const status = document.getElementById("status");
+const perf = document.getElementById("perf");
+const sheet = document.getElementById("sheet");
+
+// --- the player ------------------------------------------------------------
+
+/**
+ * What the bot does at song time st: the coach's pose a little late, except for
+ * a stretch of arms down (X ratings) and a stretch with only the shoulders in
+ * view (the STEP BACK notice). null = nobody in frame.
+ */
+function botPose(song, st, sloppy) {
+  if (st >= 41.0 && st < 42.6) return { pose: {}, visible: null }; // arms down: misses
+  if (st >= 62.0 && st < 64.0) return { pose: song.coachPose(song.beatOf(st)), visible: ["shoulder"] };
+  const late = sloppy ? 0.25 : 0.1;
+  const b = song.beatOf(st - late);
+  const p = normalizePose(song.coachPose(b));
+  if (sloppy) {
+    const r = new Rng(700021 + Math.trunc(b));
+    for (const k of ["la", "ra", "ll", "rl"]) p[k] = p[k].map((a) => a + r.choice([-1, 1]) * r.uniform(25, 30));
+  }
+  return { pose: p, visible: null };
+}
+
+/** The "camera": a dim room and a person drawn from the keypoints (already mirrored). */
+const cam = document.createElement("canvas");
+cam.width = W;
+cam.height = H;
+const camCtx = cam.getContext("2d");
+function drawCamera(pose) {
+  const g = camCtx;
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#4a4f5c");
+  grad.addColorStop(1, "#262830");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "#3a3d47";
+  g.fillRect(0, H * 0.7, W, H * 0.3);
+  g.fillStyle = "#6b5f4c";
+  g.fillRect(90, 140, 220, 330);
+  if (!pose) return;
+  const vis = (n) => pose.confidence[KP[n]] >= 0.4;
+  const p = (n) => [pose.x(KP[n]), pose.y(KP[n])];
+  g.lineCap = g.lineJoin = "round";
+  g.strokeStyle = "#3f7fbf";
+  g.lineWidth = 40;
+  for (const s of ["left", "right"]) {
+    if (vis(`${s}_hip`) && vis(`${s}_knee`) && vis(`${s}_ankle`)) {
+      g.strokeStyle = "#2c3e5a";
+      g.beginPath();
+      g.moveTo(...p(`${s}_hip`));
+      g.lineTo(...p(`${s}_knee`));
+      g.lineTo(...p(`${s}_ankle`));
+      g.stroke();
+    }
+  }
+  if (vis("left_shoulder") && vis("right_shoulder") && vis("left_hip") && vis("right_hip")) {
+    g.fillStyle = "#3f7fbf";
+    g.beginPath();
+    g.moveTo(...p("left_shoulder"));
+    g.lineTo(...p("right_shoulder"));
+    g.lineTo(...p("right_hip"));
+    g.lineTo(...p("left_hip"));
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = "#d9a07e";
+  g.beginPath();
+  g.arc(...p("nose"), 48, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = "#3f7fbf";
+  g.lineWidth = 30;
+  for (const s of ["left", "right"]) {
+    if (!vis(`${s}_shoulder`) || !vis(`${s}_wrist`)) continue;
+    g.beginPath();
+    g.moveTo(...p(`${s}_shoulder`));
+    if (vis(`${s}_elbow`)) g.lineTo(...p(`${s}_elbow`));
+    g.lineTo(...p(`${s}_wrist`));
+    g.stroke();
+  }
+}
+
+/** The input path: model results at MODEL_HZ, LAG late, projected to each frame. */
+class Input {
+  constructor(song, sloppy) {
+    this.song = song;
+    this.sloppy = sloppy;
+    this.extrap = new PoseExtrapolator();
+    this.pending = [];
+    this.next = 0;
+    this.rng = new Rng(5);
+    this.lastKp = null;
+  }
+
+  step(now, st) {
+    if (now >= this.next) {
+      this.next = now + 1 / MODEL_HZ;
+      const { pose, visible } = botPose(this.song, st, this.sloppy);
+      const kp = keypointsFor(pose, { visible, centrePx: [640, 300], shoulderPx: 120 });
+      for (let i = 0; i < kp.xy.length; i++) kp.xy[i] += this.rng.uniform(-4, 4);
+      this.pending.push([now + LAG, [kp], now + 0.05]);
+    }
+    while (this.pending.length && this.pending[0][0] <= now) {
+      const [, poses, ts] = this.pending.shift();
+      this.extrap.update(poses, ts, now);
+      this.lastKp = poses[0];
+    }
+    const pose = this.extrap.posesAt(now)[0] ?? null;
+    return { ...emptyControls(pose), present: pose != null, stepPose: this.extrap.held[0] ?? null };
+  }
+}
+
+// --- the moments -----------------------------------------------------------
+
+/** The newest popup is `rating`, between `lo` and `hi` seconds old. */
+const newest = (g, rating, lo = 0.2, hi = 0.45) => {
+  const f = g.feedback[g.feedback.length - 1];
+  return f != null && f.rating === rating && f.age >= lo && f.age <= hi;
+};
+
+const MOMENTS = [
+  ["intro title (beat 2)", (g) => g.phase === "intro" && g.beat >= 2],
+  ["get ready (beat 9)", (g) => g.beat >= 9],
+  ["count-in 3 (beat 12.1)", (g) => g.beat >= 12.1],
+  ["mid-verse + pictograms", (g) => g.beat >= 21 && newest(g, "perfect")],
+  ["PERFECT popup + combo", (g) => g.combo >= 6 && newest(g, "perfect")],
+  ["gold move burst", (g) => g.goldFlash > 0.7 && g.goldFlash < 0.8],
+  ["X feedback", (g) => newest(g, "x", 0.12)],
+  ["notice", (g) => g.notice != null],
+  ["outro bow", (g) => g.phase === "outro" && g.ratings.length && g.songTime > g.song.lastJudgeTime + 2.4],
+  ["results t=3", (g) => g.phase === "game_over" && g.resultsT >= 3.0],
+];
+
+async function contactSheet(song, sloppy) {
+  const clock = { t: 0 };
+  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder,
+    player: new SilentPlayer(song.duration + 2, { clock: () => clock.t }) });
+  const input = new Input(song, sloppy);
+  const screen = document.createElement("canvas");
+  screen.width = W;
+  screen.height = H;
+  const ctx = screen.getContext("2d");
+  const one = params.has("moment") ? Number(params.get("moment")) : null;
+  const cols = one == null ? 2 : 1, cw = W / cols, ch = H / cols, label = one == null ? 22 : 0;
+  const rows = one == null ? Math.ceil(MOMENTS.length / cols) : 1;
+  // Below the moments: the lane on every beat from 77 to 83 (one card per judge
+  // point: Point Up shows two), and a PERFECT -> PERFECT hand-over frame by frame.
+  const LANE_BEATS = [77, 78, 79, 80, 81, 82, 83];
+  const LANE_CROP = [700, 530, 1270, 690], POP_CROP = [210, 30, 830, 270];
+  const laneH = 26 + Math.ceil(LANE_BEATS.length / 2) * (160 + 20);
+  const popH = 26 + 2 * (240 + 20);
+  const top = rows * (ch + label);
+  sheet.width = W;
+  sheet.height = top + (one == null ? laneH + popH : 0);
+  const out = sheet.getContext("2d");
+  out.fillStyle = "#000";
+  out.fillRect(0, 0, sheet.width, sheet.height);
+  const times = [];
+  let m = 0;
+  const parts = {};
+  let lane = 0, pops = 0, popFrames = 0;
+  const heading = (txt, y) => {
+    out.fillStyle = "#e8e6e3";
+    out.font = "bold 16px -apple-system, system-ui, sans-serif";
+    out.fillText(txt, 8, y + 18);
+  };
+  const crop = ([x0, y0, x1, y1], x, y, txt) => {
+    out.drawImage(screen, x0, y0, x1 - x0, y1 - y0, x, y + 20, x1 - x0, y1 - y0);
+    out.fillStyle = "#c8c6c3";
+    out.font = "13px -apple-system, system-ui, sans-serif";
+    out.fillText(txt, x + 4, y + 15);
+  };
+  if (one == null) {
+    heading("lane, beats 77-83 (one card per judge point)", top);
+    heading("PERFECT -> PERFECT hand-over, consecutive frames (the older word must be gone by the 3rd)", top + laneH);
+  }
+  for (let f = 0; f < (song.duration + 12) * FPS && m < MOMENTS.length; f++) {
+    clock.t += 1 / FPS;
+    const controls = input.step(clock.t, game.songTime);
+    game.update(controls, 1 / FPS);
+    const hit = MOMENTS[m][1](game);
+    const laneHit = one == null && lane < LANE_BEATS.length && game.beat >= LANE_BEATS[lane];
+    const fb = game.feedback, newest = fb[fb.length - 1], older = fb[fb.length - 2];
+    if (one == null && pops === 0 && game.beat > 70 && newest && older && newest.rating === "perfect"
+        && older.rating === "perfect" && newest.age < 1.5 / FPS) pops = 1;
+    const popHit = pops > 0 && popFrames < 4;
+    if (hit || laneHit || popHit || f % 4 === 0) {
+      drawCamera(input.lastKp);
+      ctx.drawImage(cam, 0, 0);
+      if (game._renderer) game._renderer.timings = parts;
+      const t0 = performance.now();
+      game.render(ctx, cam);
+      times.push(performance.now() - t0);
+    }
+    if (laneHit) {
+      crop(LANE_CROP, (lane % 2) * 640, top + 26 + Math.floor(lane / 2) * 180, `beat ${game.beat.toFixed(2)}`);
+      lane += 1;
+    }
+    if (popHit) {
+      const ages = game.feedback.slice(-2).map((x) => `${(x.age * 1000).toFixed(0)} ms`).join(" / ");
+      crop(POP_CROP, (popFrames % 2) * 640, top + laneH + 26 + Math.floor(popFrames / 2) * 260,
+        `frame ${popFrames + 1}: ages ${ages}`);
+      popFrames += 1;
+    }
+    if (hit) {
+      if (one == null || one === m) {
+        const k = one == null ? m : 0;
+        const x = (k % cols) * cw, y = Math.floor(k / cols) * (ch + label);
+        out.drawImage(screen, x, y + label, cw, ch);
+        if (label) {
+          out.fillStyle = "#e8e6e3";
+          out.font = "15px -apple-system, system-ui, sans-serif";
+          out.fillText(`${MOMENTS[m][0]}  (beat ${game.beat.toFixed(1)}, score ${game.score})`, x + 6, y + 16);
+        }
+      }
+      m += 1;
+    }
+  }
+  times.sort((a, b) => a - b);
+  const mean = times.slice(10).reduce((a, b) => a + b, 0) / Math.max(1, times.length - 10);
+  const n = Math.max(1, times.length);
+  perf.textContent = `render: mean ${mean.toFixed(2)} ms, p95 ${times[Math.floor(n * 0.95)]?.toFixed(2)} ms over ${n} frames; `
+    + Object.entries(parts).map(([k, v]) => `${k} ${(v / n).toFixed(2)}`).join(", ");
+  status.textContent = `${song.title}, ${sloppy ? "sloppy" : "perfect"} bot: score ${game.score}, ${game.starCount} stars, `
+    + `${JSON.stringify(game.counts)}, unseen ${game.judge.unseen}; ${m}/${MOMENTS.length} moments`;
+  window.__dance = { score: game.score, counts: game.counts, moments: m, mean, parts };
+}
+
+async function live(song, sloppy) {
+  const go = document.getElementById("go");
+  go.hidden = false;
+  status.textContent = "click to start (browsers only play audio after a click)";
+  await new Promise((r) => go.addEventListener("click", r, { once: true }));
+  go.hidden = true;
+  unlockAudio();
+  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder });
+  const input = new Input(song, sloppy);
+  const ctx = sheet.getContext("2d");
+  sheet.width = W;
+  sheet.height = H;
+  let last = performance.now() / 1000;
+  const times = [];
+  const frame = () => {
+    const now = performance.now() / 1000;
+    const dt = now - last;
+    last = now;
+    game.update(input.step(now, game.songTime), dt);
+    drawCamera(input.lastKp);
+    ctx.drawImage(cam, 0, 0);
+    const t0 = performance.now();
+    game.render(ctx, cam);
+    times.push(performance.now() - t0);
+    if (times.length > 120) times.shift();
+    const mean = times.reduce((a, b) => a + b, 0) / times.length;
+    perf.textContent = `render ${mean.toFixed(2)} ms`;
+    status.textContent = `${game.loading ? "loading the music..." : game.audio?.constructor?.name ?? ""} `
+      + `t ${game.songTime.toFixed(2)} s, ${game.phase}, score ${game.score}`;
+    window.__dance = { phase: game.phase, songTime: game.songTime, audio: game.audio?.constructor?.name,
+      playing: game.audio?.playing, loading: game.loading, mean };
+    if (game.phase !== "game_over" || game.resultsT < 6) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+(async () => {
+  await DanceRaccoonGame.preload();
+  const songs = loadedSongs()?.songs ?? [];
+  const song = songs.find((s) => s.folder === (params.get("song") ?? "neon_nights")) ?? songs[0];
+  if (!song) {
+    status.textContent = "no songs loaded";
+    return;
+  }
+  const nav = document.getElementById("nav");
+  nav.innerHTML = MOMENTS.map((mm, i) => `<a href="?moment=${i}${params.get("bot") ? `&bot=${params.get("bot")}` : ""}">${i}</a>`).join("")
+    + ' <a href="?">sheet</a> <a href="?bot=sloppy">sloppy</a> <a href="?audio=1">music</a>';
+  const sloppy = params.get("bot") === "sloppy";
+  status.textContent = "dancing...";
+  await new Promise((r) => setTimeout(r, 0));
+  if (params.get("audio") === "1") await live(song, sloppy);
+  else await contactSheet(song, sloppy);
+})().catch((err) => {
+  status.textContent = `error: ${err.message}`;
+  console.error(err);
+});
+</script>
+</body>
+</html>

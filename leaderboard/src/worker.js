@@ -9,7 +9,7 @@
 // rules couldn't produce in that time (rules.js). Players are rate-limited
 // by a daily-rotating hash of their address; raw IPs are never stored.
 
-import { BOARD_SIZE, GAMES, SCORES_PER_HOUR, SESSIONS_PER_HOUR, nameError, scoreError } from "./rules.js";
+import { BOARD_SIZE, SCORES_PER_HOUR, SESSIONS_PER_HOUR, gameRules, nameError, scoreError } from "./rules.js";
 
 export default {
   async fetch(request, env) {
@@ -72,7 +72,7 @@ async function body(request) {
 }
 
 function checkGame(game) {
-  if (!Object.hasOwn(GAMES, game ?? "")) throw new HttpError(400, "unknown game");
+  if (!gameRules(game)) throw new HttpError(400, "unknown game");
   return game;
 }
 

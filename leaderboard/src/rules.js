@@ -21,6 +21,25 @@ export const GAMES = {
   flappy: { perSecond: 1 / 1.5, slack: 3, max: 100000 },
 };
 
+// Raccoon Dance has one board per song: "dance-<song id>" (docs/DANCE.md
+// section 9), so new songs need no server change. Every song scores 0..10000,
+// and 10000 needs every judge point resolved, which happens only after the
+// last one (at the song's last judged beat) has been danced. Songs run at
+// least ~30 s, so a perfect run earns at most 10000 / 30 = 333 points per
+// second of play; 400/s with no slack refuses nothing real as long as a
+// song's last judged move is 25 s (10000 / 400) or more into it, which
+// test/rules.test.mjs checks for every song in assets/dance/songs/.
+export const DANCE_ID = /^dance-[a-z0-9_]{1,40}$/;
+export const DANCE = { perSecond: 400, slack: 0, max: 10000 };
+
+/** The rules for a board id, or null if the server doesn't know it. */
+export function gameRules(game) {
+  if (typeof game !== "string") return null;
+  if (Object.hasOwn(GAMES, game)) return GAMES[game];
+  if (DANCE_ID.test(game)) return DANCE;
+  return null;
+}
+
 export const MIN_ROUND = 3; // seconds: nothing scores before the countdown ends
 export const MAX_ROUND = 2 * 60 * 60; // a session older than this is stale
 export const SESSIONS_PER_HOUR = 120; // per player address
@@ -40,7 +59,7 @@ export function nameError(name) {
 
 /** Why `score` after `seconds` of play can't be real, or null if it could be. */
 export function scoreError(game, score, seconds) {
-  const g = GAMES[game];
+  const g = gameRules(game);
   if (!g) return "unknown game";
   if (!Number.isInteger(score) || score < 1 || score > g.max) return "score out of range";
   if (seconds < MIN_ROUND) return "round too short";

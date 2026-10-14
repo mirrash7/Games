@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "moves": {
+    "step_r": {
+      "label": "Step Swing",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"shift": 0.35, "ra": [100, 105], "la": [-55, -75], "rl": [14, 6], "ll": [-4, 0], "lean": -4}},
+        {"beat": 1, "pose": {"shift": 0.35, "ra": [40, 30], "la": [-5, -15], "rl": [8, 4], "ll": [6, 4], "squat": 0.15}}
+      ],
+      "judge": [0]
+    },
+    "step_l": {"mirror_of": "step_r"},
+
+    "sway_r": {
+      "label": "Sway",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [135, 140], "la": [200, 210], "lean": 10, "head": 6}},
+        {"beat": 1, "pose": {"ra": [140, 150], "la": [195, 200], "lean": 5, "head": 3, "squat": 0.12}}
+      ],
+      "judge": [0]
+    },
+    "sway_l": {"mirror_of": "sway_r"},
+
+    "shimmy": {
+      "label": "Shimmy",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [55, 90], "ra": [55, 90]}},
+        {"beat": 1, "pose": {"la": [62, 100], "ra": [48, 80], "lean": 6, "squat": 0.15}}
+      ],
+      "judge": [0]
+    },
+
+    "roof": {
+      "label": "Raise the Roof",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [110, 178], "ra": [110, 178]}},
+        {"beat": 1, "pose": {"la": [150, 182], "ra": [150, 182], "squat": 0.12}}
+      ],
+      "judge": [0]
+    },
+
+    "clap_up": {
+      "label": "Clap Up",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [20, -90], "ra": [20, -90], "squat": 0.2}},
+        {"beat": 1, "pose": {"la": [165, 212], "ra": [165, 212]}}
+      ]
+    },
+
+    "disco_r": {
+      "label": "Disco",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [150, 155], "la": [-30, -40], "lean": 6, "head": 6}},
+        {"beat": 1, "pose": {"ra": [-35, -45], "la": [85, 75], "lean": -4, "head": -4}}
+      ]
+    },
+    "disco_l": {"mirror_of": "disco_r"},
+
+    "pump": {
+      "label": "Pump It",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [175, 180], "la": [35, -20], "lean": -4}},
+        {"beat": 1, "pose": {"la": [175, 180], "ra": [35, -20], "lean": 4}}
+      ]
+    },
+
+    "robot": {
+      "label": "Robot",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [110, 180], "la": [70, 0]}},
+        {"beat": 1, "pose": {"ra": [70, 0], "la": [110, 180]}}
+      ]
+    },
+
+    "plane_r": {
+      "label": "Airplane",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [135, 135], "la": [45, 45], "lean": -6}},
+        {"beat": 1, "pose": {"ra": [45, 45], "la": [135, 135], "lean": 6}}
+      ]
+    },
+    "plane_l": {"mirror_of": "plane_r"},
+
+    "flex": {
+      "label": "Flex",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [80, -75], "ra": [80, -75]}},
+        {"beat": 1, "pose": {"la": [115, 190], "ra": [115, 190], "squat": 0.25}}
+      ]
+    },
+
+    "point_r": {
+      "label": "Point Up",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [95, 95], "la": [20, -90], "head": 8}},
+        {"beat": 1, "pose": {"ra": [175, 180], "la": [35, -20], "head": -4}}
+      ]
+    },
+    "point_l": {"mirror_of": "point_r"},
+
+    "bolt_r": {
+      "label": "Lightning",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [150, 75], "la": [60, -30], "lean": -8, "head": 8}},
+        {"beat": 1, "pose": {"ra": [150, 75], "la": [60, -30], "lean": -4, "head": 4, "squat": 0.15}}
+      ],
+      "judge": [0]
+    },
+    "bolt_l": {"mirror_of": "bolt_r"},
+
+    "shine": {
+      "label": "Shine",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [140, 145], "ra": [140, 145], "ll": [20, 18], "rl": [20, 18]}},
+        {"beat": 1, "pose": {"la": [132, 138], "ra": [132, 138], "ll": [20, 18], "rl": [20, 18], "squat": 0.1}}
+      ],
+      "judge": [0]
+    },
+
+    "knee_r": {
+      "label": "Knee Up",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [135, 140], "ra": [200, 210], "lean": -6}},
+        {"beat": 1, "pose": {"ra": [70, 60], "la": [-70, -60], "rl": [70, 0], "lean": 4, "head": 6}}
+      ]
+    },
+    "knee_l": {"mirror_of": "knee_r"},
+
+    "squat": {
+      "label": "Squat",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [90, 90], "ra": [90, 90], "squat": 0.7}},
+        {"beat": 1, "pose": {"la": [170, 175], "ra": [170, 175]}}
+      ]
+    },
+
+    "star": {
+      "label": "Star Jump",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [130, 135], "ra": [130, 135], "ll": [28, 25], "rl": [28, 25]}},
+        {"beat": 1, "pose": {"la": [20, -95], "ra": [20, -95], "squat": 0.15}}
+      ]
+    },
+
+    "rainbow_r": {
+      "label": "Rainbow",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [100, 105], "ra": [-60, -75], "lean": -10, "shift": -0.2}},
+        {"beat": 1, "pose": {"la": [170, 180], "ra": [170, 180]}},
+        {"beat": 2, "pose": {"ra": [100, 105], "la": [-60, -75], "lean": 10, "shift": 0.2}}
+      ],
+      "judge": [0, 2]
+    },
+    "rainbow_l": {"mirror_of": "rainbow_r"},
+
+    "heart": {
+      "label": "Big Heart",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [140, 235], "ra": [140, 235]}},
+        {"beat": 2, "pose": {"la": [20, -95], "ra": [20, -95], "head": 8}}
+      ]
+    },
+
+    "rise": {
+      "label": "Rise Up",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [55, 150], "ra": [55, 150], "squat": 0.6}},
+        {"beat": 2, "pose": {"la": [172, 178], "ra": [172, 178]}}
+      ]
+    },
+
+    "finale": {
+      "label": "Superstar",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [168, 172], "la": [35, -20], "lean": -8, "head": 8, "ll": [18, 14]}}
+      ]
+    },
+
+    "bow": {
+      "label": "Bow",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [-30, -80], "la": [55, 40], "head": 14, "squat": 0.3}},
+        {"beat": 2, "pose": {"ra": [-30, -80], "la": [55, 40], "head": 18, "squat": 0.35}}
+      ],
+      "judge": []
+    }
+  }
+}

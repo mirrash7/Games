@@ -19,7 +19,7 @@ from kpapp.leaderboard import (
     BOARD_SIZE, FallbackBoard, LocalBoard, ServerBoard, clean_name, create_board, name_allowed,
     qualifies, site_url, sort_entries,
 )
-from kpapp.shell import ENTRY_DELAY, KEY_DWELL, KEY_ENTER, KEY_ESC, RESULTS_DELAY, Screen, Shell
+from kpapp.shell import ENTRY_DELAY, KEY_DWELL, KEY_ENTER, KEY_ESC, KEY_SPACE, RESULTS_DELAY, Screen, Shell
 
 W, H = 1280, 720
 
@@ -330,16 +330,133 @@ def test_new_screens_render(tmp_path, screen):
 
 def test_desktop_games_share_the_browser_and_server_leaderboard_ids():
     """A desktop score must land on the same board as the site's, or the
-    server refuses it as an unknown game and it stays on this computer."""
+    server refuses it as an unknown game and it stays on this computer.
+    Games with songs have one board per song: those ids must match the
+    server's pattern for them (rules.js)."""
     import re
     from pathlib import Path
 
     from kpapp.game import REGISTRY
 
     root = Path(__file__).resolve().parents[1]
-    server = set(re.findall(r"^\s+(\w+): \{ perSecond", (root / "leaderboard/src/rules.js").read_text(), re.M))
+    rules = (root / "leaderboard/src/rules.js").read_text()
+    server_fixed = set(re.findall(r"^\s+(\w+): \{ perSecond", rules, re.M))
+    server_dance = re.compile(re.search(r"DANCE_ID = /(.+)/;", rules).group(1))
     web = set(re.findall(r'static id = "(\w+)"', "".join(
         p.read_text() for p in (root / "web/js/games").glob("*/game.js"))))
     sh = Shell((W, H), REGISTRY)
-    ids = {sh._board_name(n) for n in sh.menu_games}
-    assert ids == web == server, (ids, web, server)
+    fixed = {sh._board_name(n) for n in sh.menu_games if not sh.variants(n)}
+    per_song = [k for n in sh.menu_games if sh.variants(n) for k in sh.board_keys() if k.startswith(sh._board_name(n))]
+    assert fixed == server_fixed, (fixed, server_fixed)
+    assert fixed <= web, (fixed, web)
+    assert per_song, "the dance game lists its songs"
+    assert all(server_dance.fullmatch(k) for k in per_song), per_song
+
+
+
+# --- variants (songs) ---
+
+
+class Songs(Scored):
+    name = "songs"
+    title = "SONGS"
+    board_id = "songs"
+    tutorial = []
+    calls: list = []
+
+    @classmethod
+    def variants(cls):
+        return [{"id": "a", "title": "Alpha", "subtitle": "first", "board_id": "songs-a"},
+                {"id": "b", "title": "Beta", "subtitle": "second", "board_id": "songs-b"}]
+
+    def __init__(self, size, variant=None, **options):
+        super().__init__(size, **options)
+        self.variant = variant
+
+    def on_pause(self):
+        Songs.calls.append(("pause", self.variant))
+
+    def on_resume(self):
+        Songs.calls.append(("resume", self.variant))
+
+    def close(self):
+        Songs.calls.append(("close", self.variant))
+
+
+def test_a_game_with_songs_opens_a_song_list_and_each_song_has_its_board(tmp_path):
+    board = LocalBoard(tmp_path / "s.json")
+    board.submit("songs-b", "BBB", 50).result()
+    Songs.calls = []
+    sh = Shell((W, H), {"songs": Songs}, board=board)
+    settle(sh, 0.05)
+    assert sh.scores.get("songs-b")[0]["name"] == "BBB", "every song's board is fetched"
+    sh.handle_key(ord("1"))
+    assert sh.screen is Screen.SONGS
+    assert [b.action for b in sh._layout()] == ["song:a", "song:b", "menu"]
+    sh.handle_key(ord("2"))
+    assert sh.screen is Screen.COUNTDOWN and sh.game.variant == "b" and sh.board_key == "songs-b"
+    step(sh, 3.1)
+    sh.handle_key(KEY_SPACE)  # pause
+    assert ("pause", "b") in Songs.calls
+    sh.handle_key(KEY_SPACE)
+    assert ("resume", "b") in Songs.calls
+    sh.game.score = 60
+    sh.game.phase.value = "game_over"
+    step(sh, ENTRY_DELAY + 0.1)
+    assert sh.screen is Screen.ENTRY, "60 beats BBB on this song's board"
+    for k in "new":
+        sh.handle_key(ord(k))
+    sh.handle_key(KEY_ENTER)
+    settle(sh)
+    assert [e["name"] for e in board.top("songs-b").result()] == ["NEW", "BBB"]
+    assert board.top("songs-a").result() == []
+    sh.handle_key(ord("r"))
+    assert sh.game.variant == "b", "play again keeps the song"
+    assert ("close", "b") in Songs.calls, "the old round's music stops"
+    sh.handle_key(KEY_ESC)
+    sh.handle_key(KEY_ESC)
+    assert sh.screen is Screen.MENU
+
+
+def test_song_list_escape_and_click(tmp_path):
+    sh = Shell((W, H), {"songs": Songs}, board=LocalBoard(tmp_path / "s.json"))
+    sh.handle_key(ord("1"))
+    sh.handle_key(KEY_ESC)
+    assert sh.screen is Screen.MENU
+    sh.handle_key(ord("1"))
+    x0, y0, _, _ = sh._layout()[0].rect
+    sh.handle_click(x0 + 5, y0 + 5)
+    assert sh.screen is Screen.COUNTDOWN and sh.game.variant == "a"
+    frame = np.full((H, W, 3), 60, np.uint8)
+    sh.to_menu()
+    sh.handle_key(ord("1"))
+    step(sh, 0.2)
+    sh.render(frame)  # the song list draws
+    assert frame.std() > 5
+
+
+def test_autostarting_a_game_with_songs_plays_the_first_song_on_its_board():
+    """`kp game --game dance --autostart` skips the song list: the round must
+    still be a song's, or its score goes to "dance", a board the server refuses."""
+    Songs.calls = []
+    sh = Shell((W, H), {"songs": Songs}, selected="songs", autostart=True)
+    assert sh.screen is Screen.PLAYING
+    assert sh.game.variant == "a" and sh.variant == "a" and sh.board_key == "songs-a"
+    sh.restart()
+    assert sh.game.variant == "a" and sh.board_key == "songs-a"
+
+
+def test_games_with_their_own_count_in_skip_the_shell_countdown(tmp_path):
+    """Raccoon Dance counts 3-2-1 on the music; a second countdown before it read as a glitch."""
+    class Counted(Songs):
+        own_countdown = True
+        tutorial = [type("Step", (), {"title": "T", "text": "t", "draw": staticmethod(lambda *a: None)})()]
+
+    sh = Shell((W, H), {"songs": Counted}, board=LocalBoard(tmp_path / "s.json"))
+    sh.handle_key(ord("1"))
+    sh.handle_key(ord("1"))
+    assert sh.screen is Screen.TUTORIAL
+    sh.handle_key(KEY_ENTER)
+    assert sh.screen is Screen.PLAYING, "straight into the song after the cards"
+    sh.handle_key(ord("r"))
+    assert sh.screen is Screen.PLAYING, "and on play again"

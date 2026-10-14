@@ -21,6 +21,7 @@ WEB = REPO / "web"
 MOUNTS = {
     "assets/snack": REPO / "assets" / "fruitninja" / "generated",
     "assets/flappy": REPO / "assets" / "flappy" / "generated",
+    "assets/dance": REPO / "assets" / "dance",
 }
 
 # Development-only files that should not be published.

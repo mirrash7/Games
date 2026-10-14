@@ -242,7 +242,9 @@ export class SnackAttackGame extends Game {
       }
       // A dropped snack costs a life; a dropped bomb is a relief, not a loss.
       if (!f.sliced && !f.isBomb) {
-        this.lives -= 1;
+        // Clamped: two snacks can fall away in the same frame (about 3% of
+        // unattended games), which used to end the game on -1 lives.
+        this.lives = Math.max(0, this.lives - 1);
         if (this.lives <= 0) {
           this.phase = "game_over";
           this.deathReason = "TOO MANY SNACKS GOT AWAY";

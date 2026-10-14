@@ -390,6 +390,29 @@ sideways. The fairness proof flies the shipped collision circle, read from the
 art manifest. All art is original and procedural:
 `uv run python tools/generate_flappy_assets.py`.
 
+### Raccoon Dance (Just Dance-style)
+
+Pick **RACCOON DANCE**, then a song. A raccoon coach dances on a neon stage;
+copy it **like a mirror** (when its arm on the screen's right goes up, raise
+the arm on the screen's right: your real right arm). Every move is judged
+PERFECT / SUPER / GOOD / OK / X from your keypoints. Gold moves count double,
+the star bar fills to five, and each song has its own leaderboard. Stand back
+far enough that your arms stay in view when raised. Music plays through your
+speakers (`sounddevice`); with no audio device it plays silently on the same
+clock.
+
+Songs are data: `assets/dance/songs/<id>/` holds the audio and a `song.json`
+chart built from the move library (`assets/dance/moves.json`). To add one,
+record someone dancing to the track and import it:
+
+```bash
+uv run kp dance-import --song <id> --video take.mp4 --start <seconds of beat 0>
+uv run kp dance-preview --song <id> --out sheet.png
+```
+
+Then add the id to `songs/index.json`. The format, the judging rules and the
+layout are in [docs/DANCE.md](docs/DANCE.md).
+
 ### Hole in the Wall (off the menu)
 
 Still in the code: `uv run kp game --game holeinwall`.

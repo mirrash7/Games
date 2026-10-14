@@ -245,6 +245,15 @@ test("three dropped snacks end the game", () => {
   assert.match(game.deathReason, /GOT AWAY/);
 });
 
+test("two snacks dropping together never leave negative lives", () => {
+  // Found as a 3% "flaky" test: two misses in one frame took the last life twice.
+  const game = newGame({ rules: { lives: 1 } });
+  for (const x of [500, 780]) game.fruits.push(new Fruit({ pos: [x, H], vel: [0, 600], radius: 52 }));
+  for (let i = 0; i < 12; i++) game.update(nobody(), DT);
+  assert.equal(game.phase, "game_over");
+  assert.equal(game.lives, 0);
+});
+
 test("dropping a bomb is not punished", () => {
   const game = newGame({ rules: { lives: 3 } });
   game.fruits.push(new Fruit({ pos: [640, H], vel: [0, 600], radius: 52, isBomb: true }));

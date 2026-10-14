@@ -247,7 +247,9 @@ class FruitNinjaGame(Game):
                 continue
             # Dropped fruit costs a life; a dropped bomb is a relief, not a loss.
             if not f.sliced and not f.is_bomb:
-                self.lives -= 1
+                # Clamped: two snacks can fall away in the same frame (about 3% of
+                # unattended games), which used to end the game on -1 lives.
+                self.lives = max(0, self.lives - 1)
                 if self.lives <= 0:
                     self.phase = Phase.GAME_OVER
                     self._death_reason = "TOO MANY SNACKS GOT AWAY"

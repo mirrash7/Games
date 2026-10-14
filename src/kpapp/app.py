@@ -242,6 +242,10 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
     duration = getattr(args, "duration", None)
     if headless and not duration:
         duration = 10.0
+    if headless:  # a benchmark run makes no sound (games still get a music clock)
+        from . import audio
+
+        audio.SILENT = True
 
     try:
         camera, choice = _begin_camera(args, cfg)
@@ -439,6 +443,8 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
     except KeyboardInterrupt:
         pass
     finally:
+        if shell is not None and shell.game is not None:
+            shell._close_game()  # stop the music (Raccoon Dance) before the window goes
         worker.stop()
         camera.stop()
         cv2.destroyAllWindows()
@@ -533,6 +539,124 @@ def cmd_game(args: argparse.Namespace) -> int:
     return _run_loop(args, game_name=args.game)
 
 
+def cmd_dance_preview(args: argparse.Namespace) -> int:
+    """Contact sheet of a song's chart (or the move library) for review."""
+    from pathlib import Path
+
+    from .game.dance import chart as dance_chart
+    from .game.dance.preview import chart_sheet, library_sheet
+
+    try:
+        if args.library:
+            img = library_sheet(dance_chart.load_library())
+        else:
+            img = chart_sheet(dance_chart.load_song(dance_chart.SONGS / args.song))
+    except dance_chart.ChartError as exc:
+        print(f"[kp] {exc}", file=sys.stderr)
+        return 1
+    out = Path(args.out or f"{'moves' if args.library else args.song}_chart.png")
+    cv2.imwrite(str(out), img)
+    print(f"[kp] wrote {out} ({img.shape[1]}x{img.shape[0]})")
+    return 0
+
+
+def _live_dance_samples(args: argparse.Namespace, cfg: Config, detector, song, end_time: float):
+    """Play the song and record the camera: (audio time, Pose) samples (beat 0 at song.offset)."""
+    from .audio import open_player
+    from .overlay import outlined_text
+
+    camera, choice = _begin_camera(args, cfg)
+    camera = _ensure_streaming(camera, choice, cfg)
+    player = open_player(song.audio, song.duration)
+    camera_lag = 0.04  # a frame reaches us ~40 ms after it was captured (AGENTS.md section 2)
+    samples, seq = [], -1
+    player.play(0.0)
+    try:
+        while not player.finished:
+            frame, seq = camera.wait_for_frame(seq, timeout=1.0)
+            if frame is None:
+                continue
+            # On the audio's clock (beat 0 at song.offset), like video_samples:
+            # chart_from_poses and end_time both count from the start of the audio.
+            t = player.position() - camera_lag
+            if t > end_time:
+                break
+            result = detector.infer(frame)
+            pose = result.poses[0] if result.poses else None
+            samples.append((t, pose))
+            view = frame.copy()
+            if pose is not None:
+                draw_pose(view, pose)
+            beat = song.beat_of(t - song.offset)
+            outlined_text(view, f"{song.title}  beat {beat:5.1f}  {song.section_at(beat)}   q stops", (24, 44),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.9, (70, 210, 255))
+            cv2.imshow(cfg.window_name, view)
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                break
+    finally:
+        player.stop()
+        camera.stop()
+        cv2.destroyAllWindows()
+    return samples
+
+
+def cmd_dance_import(args: argparse.Namespace) -> int:
+    """Recording of someone dancing to a song -> draft chart (docs/DANCE.md section 11)."""
+    import json
+    from pathlib import Path
+
+    from .game.dance import chart as dance_chart
+    from .game.dance import importer
+
+    if not args.video and not args.live:
+        print("[kp] give --video take.mp4 or --live", file=sys.stderr)
+        return 2
+    path, data = importer.load_song_data(args.song)
+    bpm, offset, duration = float(data["bpm"]), float(data.get("offset", 0.0)), float(data["duration"])
+    start_beat = args.from_beat
+    end_beat = args.to_beat if args.to_beat is not None else float(int(duration * bpm / 60.0))
+    cfg = build_config(args)
+    detector = _prepare(cfg, (cfg.capture_width, cfg.capture_height), optimize=False)
+
+    if args.live:
+        song = dance_chart.load_song(path.parent)
+        samples = _live_dance_samples(args, cfg, detector, song, offset + end_beat * 60.0 / bpm)
+        mirrored = cfg.mirror
+    else:
+        wanted = importer.beat_times(bpm, offset, start_beat, end_beat, args.every)
+        video_start = args.start if args.start is not None else offset
+
+        def detect(frame):
+            result = detector.infer(frame)
+            return result.poses[0] if result.poses else None
+
+        def progress(i, n):
+            print(f"\r[kp] analysing beat {i + 1}/{n}", end="", flush=True)
+
+        samples = importer.video_samples(args.video, detect, wanted, video_start, offset,
+                                         mirror=not args.no_mirror, progress=progress)
+        print()
+        mirrored = not args.no_mirror
+    imported = importer.chart_from_poses(samples, bpm, offset, start_beat, end_beat, every=args.every,
+                                         mirrored=mirrored, merge=args.merge)
+    print(f"[kp] {len(samples)} poses -> {len(imported['moves'])} moves")
+    out_path = Path(args.out) if args.out else path
+    if args.out and out_path.exists():
+        base = json.loads(out_path.read_text())
+    else:
+        base = data
+    merged = importer.merge_into_song(base, imported, start_beat, end_beat)
+    importer.write_song_json(out_path, merged)
+    if out_path.name == "song.json":
+        try:
+            dance_chart.load_song(out_path.parent)
+        except dance_chart.ChartError as exc:
+            print(f"[kp] warning: the imported chart doesn't validate: {exc}", file=sys.stderr)
+    print(f"[kp] wrote {out_path}" + (f" (backup {out_path.with_suffix('.json.bak')})" if out_path == path else ""))
+    print(f"[kp] review it: uv run kp dance-preview --song {args.song}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="kp", description="Real-time RF-DETR keypoint app")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -595,6 +719,29 @@ def main() -> int:
                         help="skip the welcome screen and countdown")
     p_game.add_argument("--game", choices=sorted(REGISTRY), default="catch")
     p_game.set_defaults(func=cmd_game)
+
+    p_dimp = sub.add_parser("dance-import", help="turn a recording of someone dancing to a song into a chart")
+    common(p_dimp)
+    p_dimp.add_argument("--song", required=True, help="song id: a folder in assets/dance/songs with a song.json")
+    p_dimp.add_argument("--video", type=str, help="recording of the dance (anything OpenCV can read)")
+    p_dimp.add_argument("--live", action="store_true", help="play the song and record from the camera instead")
+    p_dimp.add_argument("--camera", type=str, help="for --live: camera index or name")
+    p_dimp.add_argument("--start", type=float, metavar="SECONDS",
+                        help="where beat 0 falls in the video (default: the song's offset)")
+    p_dimp.add_argument("--every", type=float, choices=[1.0, 0.5], default=1.0, help="beats per keyframe")
+    p_dimp.add_argument("--from-beat", type=float, default=16.0, dest="from_beat",
+                        help="first beat to import (default 16, after a 4-bar intro)")
+    p_dimp.add_argument("--to-beat", type=float, dest="to_beat", help="import up to this beat (default: the end)")
+    p_dimp.add_argument("--merge", action="store_true", help="merge held poses into longer moves")
+    p_dimp.add_argument("--no-mirror", action="store_true", help="the recording is already a mirror view")
+    p_dimp.add_argument("--out", type=str, help="write here instead of the song's song.json")
+    p_dimp.set_defaults(func=cmd_dance_import, resolution=336)
+
+    p_dprev = sub.add_parser("dance-preview", help="contact sheet of a song's chart, for review")
+    p_dprev.add_argument("--song", default="neon_nights", help="song id (default neon_nights)")
+    p_dprev.add_argument("--library", action="store_true", help="draw the whole move library instead")
+    p_dprev.add_argument("--out", type=str, help="image path (default <song>_chart.png)")
+    p_dprev.set_defaults(func=cmd_dance_preview)
 
     args = parser.parse_args()
     return args.func(args)

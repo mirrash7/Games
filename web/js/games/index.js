@@ -3,5 +3,6 @@
 
 import { SnackAttackGame } from "./snack/game.js";
 import { FlappyRaccoonGame } from "./flappy/game.js";
+import { DanceRaccoonGame } from "./dance/game.js";
 
-export const GAMES = [SnackAttackGame, FlappyRaccoonGame];
+export const GAMES = [SnackAttackGame, FlappyRaccoonGame, DanceRaccoonGame];

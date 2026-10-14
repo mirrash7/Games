@@ -22,6 +22,7 @@ import { Shell } from "./shell.js";
 import { GAMES } from "./games/index.js";
 import { createBoard } from "./leaderboard.js";
 import { LEADERBOARD } from "./config.js";
+import { unlockAudio } from "./core/audio.js";
 
 const W = 1280, H = 720;
 const RESOLUTION = 336;
@@ -89,6 +90,9 @@ gpuP.then((gpu) => {
 // Art is small; fetch it straight away too.
 const artP = Promise.all(GAMES.map((g) => g.preload()));
 artP.catch(() => {});
+// Games with songs only know their songs (and so their leaderboards) once
+// preloaded; the shell was built before that, so fetch the boards again.
+artP.then(() => shell.refreshScores(), () => {});
 
 /** Download and start the model once; every caller shares the same promise. */
 let modelP = null;
@@ -105,7 +109,10 @@ function beginModel() {
   return modelP;
 }
 
-ui.go.addEventListener("click", () => boot().catch(fail));
+ui.go.addEventListener("click", () => {
+  unlockAudio(); // inside the gesture: browsers only start audio from one
+  boot().catch(fail);
+});
 
 function setProgress(fraction, message) {
   ui.bar.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;

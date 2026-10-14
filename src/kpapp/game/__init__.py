@@ -1,4 +1,5 @@
 from .base import Game
+from .dance.game import DanceGame
 from .demo import CatchGame
 from .flappy.game import FlappyGame
 from .fruitninja.game import FruitNinjaGame
@@ -10,5 +11,6 @@ REGISTRY: dict[str, type[Game]] = {
     "holeinwall": HoleInWallGame,
     "fruitninja": FruitNinjaGame,
     "flappy": FlappyGame,
+    "dance": DanceGame,
     "template": TouchTargetsGame,  # reference for new games; off the menu
 }

@@ -241,3 +241,74 @@ test("the shell starts a round on the server when play begins", async () => {
   assert.deepEqual(post.body, { game: "scored", name: "AB", score: 12, session: "s-1" });
   assert.equal(sh.screen, "results");
 });
+
+// --- variants (songs) ---
+
+class Songs extends Game {
+  static id = "songs";
+  static title = "SONGS";
+  static tutorial = [];
+  static calls = [];
+  static variants() {
+    return [{ id: "a", title: "Alpha", subtitle: "first", boardId: "songs-a" },
+      { id: "b", title: "Beta", subtitle: "second", boardId: "songs-b" }];
+  }
+  constructor(o) {
+    super(o);
+    this.variant = o.variant ?? null;
+    this.score = 0;
+  }
+  onPause() { Songs.calls.push(["pause", this.variant]); }
+  onResume() { Songs.calls.push(["resume", this.variant]); }
+  close() { Songs.calls.push(["close", this.variant]); }
+}
+
+test("a game with songs opens a song list, and each song has its own board", async () => {
+  const board = new LocalBoard(memoryStorage());
+  await board.submit("songs-b", "BBB", 50);
+  Songs.calls = [];
+  const sh = new Shell({ games: [Songs], board });
+  await sh.refreshScores();
+  assert.equal(sh.scores["songs-b"][0].name, "BBB", "every song's board is fetched");
+  sh.handleKey("1");
+  assert.equal(sh.screen, "songs");
+  assert.deepEqual(sh._layout().map((b) => b.action), ["song:a", "song:b", "menu"]);
+  sh.handleKey("2");
+  assert.equal(sh.screen, "countdown");
+  assert.equal(sh.game.variant, "b");
+  assert.equal(sh.boardKey, "songs-b");
+  step(sh, 3.1);
+  sh.handleKey(" ");
+  sh.handleKey(" ");
+  assert.deepEqual(Songs.calls.slice(0, 2), [["pause", "b"], ["resume", "b"]]);
+  sh.game.score = 60;
+  sh.game.phase = "game_over";
+  step(sh, ENTRY_DELAY + 0.1);
+  assert.equal(sh.screen, "entry");
+  for (const k of "new") sh.handleKey(k);
+  sh.handleKey("Enter");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual((await board.top("songs-b")).map((e) => e.name), ["NEW", "BBB"]);
+  assert.deepEqual(await board.top("songs-a"), []);
+  sh.handleKey("r");
+  assert.equal(sh.game.variant, "b", "play again keeps the song");
+  assert.ok(Songs.calls.some((c) => c[0] === "close" && c[1] === "b"), "the old round's music stops");
+  sh.handleKey("Escape");
+  sh.handleKey("Escape");
+  assert.equal(sh.screen, "menu");
+});
+
+test("games with their own count-in skip the shell countdown", () => {
+  class Counted extends Songs {
+    static ownCountdown = true;
+    static tutorial = [{ title: "T", text: "t", draw() {} }];
+  }
+  const sh = new Shell({ games: [Counted] });
+  sh.handleKey("1");
+  sh.handleKey("1");
+  assert.equal(sh.screen, "tutorial");
+  sh.handleKey("Enter");
+  assert.equal(sh.screen, "playing", "straight into the song after the cards");
+  sh.handleKey("r");
+  assert.equal(sh.screen, "playing", "and on play again");
+});

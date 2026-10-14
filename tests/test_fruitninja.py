@@ -182,6 +182,17 @@ def test_dropping_a_bomb_is_not_punished():
     assert game.phase is Phase.PLAYING
 
 
+def test_two_snacks_dropping_together_never_leave_negative_lives():
+    """Found as a 3% "flaky" test: two misses in one frame took the last life twice."""
+    game = new_game(rules=Rules(lives=1))
+    for x in (500, 780):
+        game.fruits.append(Fruit(pos=np.float32([x, float(H)]), vel=np.float32([0, 600]), radius=52))
+    for _ in range(12):
+        game.update(ControlState(present=False), DT)
+    assert game.phase is Phase.GAME_OVER
+    assert game.lives == 0
+
+
 def test_slicing_a_bomb_ends_the_run():
     game = new_game()
     game.fruits.append(Fruit(pos=np.float32([640, 360]), vel=np.float32([0, 0]),
