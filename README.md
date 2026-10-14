@@ -392,11 +392,15 @@ art manifest. All art is original and procedural:
 
 ### Raccoon Dance (Just Dance-style)
 
-Pick **RACCOON DANCE**, then a song. A raccoon coach dances on a neon stage;
-copy it **like a mirror** (when its arm on the screen's right goes up, raise
-the arm on the screen's right: your real right arm). Every move is judged
-PERFECT / SUPER / GOOD / OK / X from your keypoints. Gold moves count double,
-the star bar fills to five, and each song has its own leaderboard. Stand back
+Pick **RACCOON DANCE**, then a song and a difficulty. A raccoon coach dances
+on a neon stage; copy it **like a mirror** (when its arm on the screen's right
+goes up, raise the arm on the screen's right: your real right arm). Every move
+is judged PERFECT / SUPER / GOOD / OK / X from your keypoints. Gold moves count
+double, the star bar fills to five, and each song has a leaderboard per
+difficulty. **EASY** asks for about one pose a bar (the coach holds each one)
+and judges more forgivingly; **NORMAL** is the full routine; **HARD** is the
+full routine judged strictly (a longer hold, tighter angles). EASY is derived
+from each song's chart automatically, so every song has all three. Stand back
 far enough that your arms stay in view when raised. Music plays through your
 speakers (`sounddevice`); with no audio device it plays silently on the same
 clock.
@@ -407,7 +411,7 @@ record someone dancing to the track and import it:
 
 ```bash
 uv run kp dance-import --song <id> --video take.mp4 --start <seconds of beat 0>
-uv run kp dance-preview --song <id> --out sheet.png
+uv run kp dance-preview --song <id> --out sheet.png   # --difficulty easy shows the derived EASY chart
 ```
 
 Then add the id to `songs/index.json`. The format, the judging rules and the

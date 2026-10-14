@@ -9,6 +9,9 @@ from a SilentPlayer on a fake clock, so runs are fast and deterministic.
 
 from __future__ import annotations
 
+import re
+
+import dataclasses
 import json
 import random
 from collections import deque
@@ -345,7 +348,7 @@ def test_a_good_but_imprecise_dancer_on_a_slow_model_is_still_a_superstar(songs)
 def test_holding_the_pose_is_what_separates_sloppy_from_perfect(songs, monkeypatch):
     """Pins HOLD: judged by its best single frame, the sloppy dancer's limbs
     sweep through the targets between poses and it scores like a superstar."""
-    monkeypatch.setattr(judge, "HOLD", 0.0)
+    monkeypatch.setitem(judge.DIFFICULTY, "normal", dataclasses.replace(judge.DIFFICULTY["normal"], hold=0.0))
     game, clock = new_game(songs)
     simulate(game, clock, sloppy(game))
     assert game.score >= 9200, report(game)
@@ -515,8 +518,10 @@ def test_variants_list_the_songs_and_the_game_builds_each(tmp_path):
     root = make_songs(tmp_path, [song_json("groove", "Test Groove"), song_json("slow_jam", "Slow Jam", first=12)])
     vs = DanceGame.variants(songs_dir=root, library=LIB)
     assert [v["id"] for v in vs] == ["groove", "slow_jam"]
-    assert vs[1] == {"id": "slow_jam", "title": "Slow Jam", "subtitle": "KP Arcade - difficulty 1",
-                     "board_id": "dance-slow_jam"}
+    assert vs[1]["subtitle"].startswith("KP Arcade - ") and re.fullmatch(r"KP Arcade - \d+:\d\d", vs[1]["subtitle"]), \
+        "the song's length, not a rating that reads like the difficulty picker"
+    assert {k: vs[1][k] for k in ("id", "title", "board_id")} == {"id": "slow_jam", "title": "Slow Jam",
+                                                                  "board_id": "dance-slow_jam"}
     game, _ = new_game(root, variant="slow_jam")
     assert game.song.title == "Slow Jam" and game.board_id == "dance-slow_jam"
     game, _ = new_game(root)
@@ -565,3 +570,119 @@ def test_real_song_end_to_end():
         assert game.star_count <= 1, report(game)
     # Not wrong_side: a third of Neon Nights' points are symmetric poses
     # (Clap Up, Shine, Star Jump...), where the mirror image is the move itself.
+
+
+# --- difficulties (docs/DANCE.md section 7a) ---------------------------------------
+
+def test_difficulty_interface_the_shell_relies_on(songs):
+    assert DanceGame.difficulties == [
+        {"id": "easy", "label": "EASY", "hint": "fewer moves, held longer"},
+        {"id": "normal", "label": "NORMAL", "hint": "the full routine"},
+        {"id": "hard", "label": "HARD", "hint": "every move, judged strictly"},
+    ]
+    assert DanceGame.default_difficulty == "normal"
+    game, _ = new_game(songs)
+    assert game.difficulty == "normal" and game.board_id == "dance-groove"
+    for level in ("easy", "hard"):
+        game, _ = new_game(songs, difficulty=level)
+        assert game.difficulty == level and game.board_id == f"dance-groove_{level}"
+        assert game.judge.rules is judge.DIFFICULTY[level]
+    game, _ = new_game(songs, difficulty="nightmare")
+    assert game.difficulty == "normal" and game.board_id == "dance-groove", "unknown ids fall back to normal"
+    assert [v["board_id"] for v in DanceGame.variants(songs_dir=songs, library=LIB)] == ["dance-groove"], \
+        "the song list names the normal board; the shell adds the difficulty"
+
+
+def test_board_ids_fit_the_servers_pattern():
+    import re
+
+    from kpapp.game.dance.game import board_id_for
+
+    for sid in chart.song_ids():
+        for level in chart.DIFFICULTIES:
+            assert re.fullmatch(r"dance-[a-z0-9_]{1,40}", board_id_for(sid, level)), (sid, level)
+    assert board_id_for("neon_nights") == board_id_for("neon_nights", "normal") == "dance-neon_nights"
+    assert board_id_for("neon_nights", "easy") == "dance-neon_nights_easy"
+
+
+def test_one_rules_table_easy_forgives_more_and_hard_less():
+    t = judge.DIFFICULTY
+    assert set(t) == {"easy", "normal", "hard"}
+    n = t["normal"]
+    # NORMAL is the game as tuned before difficulties existed.
+    assert (n.early, n.late, n.hold) == (0.20, 0.50, 0.12)
+    assert [r[1] for r in n.ratings] == [0.90, 0.74, 0.60, 0.42]
+    assert (judge.WINDOW_EARLY, judge.WINDOW_LATE, judge.HOLD, judge.RATINGS) == (n.early, n.late, n.hold, n.ratings)
+    for name in ("easy", "normal", "hard"):
+        assert [r[0] for r in t[name].ratings] == ["perfect", "super", "good", "ok"]
+        assert [r[2] for r in t[name].ratings] == [1.0, 0.8, 0.55, 0.3], "same values: score is 0..10000 everywhere"
+    e, h = t["easy"], t["hard"]
+    assert all(a[1] < b[1] < c[1] for a, b, c in zip(e.ratings, n.ratings, h.ratings))
+    assert e.late > n.late and e.early >= n.early >= h.early and h.hold > n.hold
+    assert rate(0.88, e.ratings)[0] == "perfect" and rate(0.88, n.ratings)[0] == "super"
+    assert rate(0.88, h.ratings)[0] == "super" and rate(0.80, h.ratings)[0] == "good"
+
+
+def _neon(level, make_bot, **kw):
+    lib = chart.load_library()
+    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib, difficulty=level)
+    simulate(game, clock, make_bot(game), **kw)
+    print(f"neon_nights {level} {getattr(make_bot, '__name__', 'bot')}:", report(game))
+    return game
+
+
+def precise(game):
+    """Every limb within 10 degrees, 200 ms behind the coach."""
+    return sloppy(game, late=0.2, off=(0.0, 10.0))
+
+
+def test_normal_is_exactly_the_game_before_difficulties():
+    """Pins NORMAL: the same chart, windows and thresholds as before, so the
+    same scores to the point (and the same leaderboard, dance-neon_nights)."""
+    game = _neon("normal", sloppy)
+    assert len(game.song.judge_points()) == 145
+    assert (game.score, game.counts) == (7859, {"perfect": 7, "super": 124, "good": 14, "ok": 0, "x": 0})
+    game = _neon("normal", lambda g: sloppy(g, late=0.2, off=(10, 20)), rate_hz=15, lag=0.2, noise=6)
+    assert (game.score, game.counts["perfect"], game.counts["super"]) == (9352, 98, 46)
+
+
+@pytest.mark.parametrize("level", ["easy", "normal", "hard"])
+def test_fairness_on_every_difficulty(level):
+    """Perfect is 10000 on every difficulty; a precise dancer (within 10
+    degrees, 200 ms late) is a 5-star dancer even on hard; lazy players stay
+    at a star or less, easy included (the freeze rule holds on its chart)."""
+    game = _neon(level, perfect)
+    assert game.score == 10000 and game.judge.unseen == 0, report(game)
+    n = len(game.song.judge_points())
+    assert n == {"easy": 49, "normal": 145, "hard": 145}[level]
+    game = _neon(level, precise)
+    assert game.star_count == 5, report(game)
+    for bot in (frozen, idle, random_arms):
+        game = _neon(level, bot)
+        assert game.star_count <= 1, report(game)
+    game = _neon(level, sloppy)  # every limb 25-30 degrees off, 250 ms late
+    assert game.star_count == {"easy": 4, "normal": 3, "hard": 2}[level], report(game)
+
+
+def test_easy_forgives_a_beginner_that_normal_rules_would_not():
+    """Pins EASY's thresholds and wider late window: a beginner 30-40 degrees
+    off and 400 ms behind the coach scores 3 stars on easy, where the normal
+    rules on the same chart gave 1."""
+    def beginner(g):
+        return sloppy(g, late=0.4, off=(30.0, 40.0))
+    game = _neon("easy", beginner)
+    assert game.star_count == 3, report(game)
+    lib = chart.load_library()
+    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib, difficulty="easy")
+    game.judge = Judge(game.song, judge.DIFFICULTY["normal"])
+    simulate(game, clock, beginner(game))
+    assert game.star_count <= 1, report(game)
+
+
+def test_hard_needs_the_longer_hold():
+    """Pins HARD's 0.15 s hold: at normal's 0.12 the sloppy dancer made 3 stars on hard."""
+    lib = chart.load_library()
+    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib, difficulty="hard")
+    game.judge = Judge(game.song, dataclasses.replace(judge.DIFFICULTY["hard"], hold=0.12))
+    simulate(game, clock, sloppy(game))
+    assert game.star_count >= 3, report(game)

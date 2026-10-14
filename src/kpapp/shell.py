@@ -43,7 +43,7 @@ ENTRY_DELAY = 1.6  # seconds of the game's own game-over art before asking for a
 RESULTS_DELAY = 2.2  # ...or before showing the leaderboard
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-KEY_ESC, KEY_ENTER, KEY_SPACE = 27, 13, 32
+KEY_ESC, KEY_ENTER, KEY_SPACE, KEY_TAB = 27, 13, 32, 9
 KEY_BACKSPACE = (8, 127)
 _HOT_FILL = (46, 38, 34)
 _IDLE_BORDER = (110, 110, 120)
@@ -172,6 +172,8 @@ class Shell:
         self.variant: str | None = None  # the song (or other variant) being played
         self.board_key: str | None = None  # the leaderboard this round goes to
         self._picking: str | None = None  # game whose variants are on screen
+        self.difficulty: str | None = None  # the difficulty being played, for games that have them
+        self._difficulty_choice: dict[str, str] = {}  # game -> last difficulty picked (kept for the run)
         self._variant_cache: dict[str, list[dict]] = {}
         self.tutorial_t = 0.0
         self.refresh_scores()
@@ -208,7 +210,32 @@ class Shell:
         if close is not None:
             close()  # e.g. stop the music
 
-    def start(self, name: str, countdown: bool = True, variant: str | None = None) -> None:
+    def difficulties(self, name: str) -> list[dict]:
+        """The game's difficulty levels ({id, label, hint}); [] for most games."""
+        return list(getattr(self.registry[name], "difficulties", None) or [])
+
+    def difficulty_of(self, name: str) -> str | None:
+        """The difficulty that game will start on: the last one picked, else its default."""
+        levels = self.difficulties(name)
+        if not levels:
+            return None
+        ids = [d["id"] for d in levels]
+        chosen = self._difficulty_choice.get(name)
+        if chosen in ids:
+            return chosen
+        default = getattr(self.registry[name], "default_difficulty", None)
+        return default if default in ids else ids[0]
+
+    def _song_board(self, name: str, v: dict, difficulty: str | None) -> str:
+        """A song's leaderboard on a difficulty. The default difficulty keeps the
+        song's own board (so scores from before difficulties existed stay put);
+        the others get their own, as their scores aren't comparable."""
+        base = v.get("board_id", f"{self._board_name(name)}-{v['id']}")
+        default = getattr(self.registry[name], "default_difficulty", None)
+        return base if difficulty in (None, default) else f"{base}_{difficulty}"
+
+    def start(self, name: str, countdown: bool = True, variant: str | None = None,
+              difficulty: str | None = None) -> None:
         self._close_game()
         self.selected = name
         cls = self.registry[name]
@@ -216,13 +243,17 @@ class Shell:
             # Started without the song list (--autostart): the first song, and its board.
             variant = self.variants(name)[0]["id"]
         kwargs = {"variant": variant} if variant is not None else {}
+        difficulty = difficulty or self.difficulty_of(name)
+        if difficulty is not None:
+            kwargs["difficulty"] = difficulty
+        self.difficulty = difficulty
         self.game = cls((self.width, self.height), mirrored=self.mirrored, **kwargs)
         preload = getattr(self.game, "preload", None)
         if preload is not None:
             preload()  # heavy art now, on the screen change, not on the countdown's first frame
         self.variant = variant
         chosen = next((v for v in self.variants(name) if v["id"] == variant), None) if variant else None
-        self.board_key = chosen.get("board_id", f"{self._board_name(name)}-{variant}") if chosen else self._board_name(name)
+        self.board_key = self._song_board(name, chosen, difficulty) if chosen else self._board_name(name)
         if self.hand != "right" and hasattr(self.game, "swap_hand"):
             self.game.swap_hand()
         self.countdown = COUNTDOWN_SECONDS
@@ -268,7 +299,8 @@ class Shell:
         keys = []
         for name in self.menu_games:
             vs = self.variants(name)
-            keys += [v.get("board_id", f"{self._board_name(name)}-{v['id']}") for v in vs] if vs \
+            levels = [d["id"] for d in self.difficulties(name)] or [None]
+            keys += [self._song_board(name, v, d) for v in vs for d in levels] if vs \
                 else [self._board_name(name)]
         return keys
 
@@ -358,7 +390,7 @@ class Shell:
 
     def restart(self) -> None:
         if self.selected:
-            self.start(self.selected, variant=self.variant)
+            self.start(self.selected, variant=self.variant, difficulty=self.difficulty)
 
     def pause(self) -> None:
         if self.screen is Screen.PLAYING and not self.game_over:
@@ -399,6 +431,8 @@ class Shell:
             self.choose(action.split(":", 1)[1])
         elif action.startswith("song:"):
             self.start(self._picking, variant=action.split(":", 1)[1])
+        elif action.startswith("diff:"):
+            self._difficulty_choice[self._picking] = action.split(":", 1)[1]
         elif action == "resume":
             self.resume()
         elif action == "menu":
@@ -447,6 +481,10 @@ class Shell:
                 self.start(self._picking, variant=songs[key - ord("1")]["id"])
             elif key in (KEY_ENTER, KEY_SPACE) and songs:
                 self.start(self._picking, variant=songs[0]["id"])
+            elif key == KEY_TAB and self.difficulties(self._picking):
+                ids = [d["id"] for d in self.difficulties(self._picking)]
+                now = self.difficulty_of(self._picking)
+                self._difficulty_choice[self._picking] = ids[(ids.index(now) + 1) % len(ids)]
             elif key == KEY_ESC:
                 self.to_menu()
         elif self.screen is Screen.TUTORIAL:
@@ -607,13 +645,25 @@ class Shell:
         per_row = min(3, max(1, len(songs)))
         rows = max(1, -(-len(songs) // per_row))
         tw, gap = int(w * 0.28), int(w * 0.03)
-        th = int(h * (0.34 if rows == 1 else 0.2))
+        levels = self.difficulties(self._picking)
         buttons = []
+        top = int(h * 0.30)
+        if levels:
+            # A row of difficulty buttons above the songs; the cards move down.
+            dw, dh, dg = 196, 58, 18
+            dx = (w - (len(levels) * dw + (len(levels) - 1) * dg)) // 2
+            dy = int(h * 0.27)
+            for d in levels:
+                buttons.append(Button(f"diff:{d['id']}", d.get("label", d["id"].upper()), (dx, dy, dx + dw, dy + dh),
+                                      d.get("hint", "")))
+                dx += dw + dg
+            top = dy + dh + 26
+        th = int(h * (0.30 if rows == 1 else 0.18)) if levels else int(h * (0.34 if rows == 1 else 0.2))
         for i, v in enumerate(songs):
             r, c = divmod(i, per_row)
             n = min(per_row, len(songs) - r * per_row)
             x0 = (w - (n * tw + (n - 1) * gap)) // 2 + c * (tw + gap)
-            y0 = int(h * 0.30) + r * (th + gap)
+            y0 = top + r * (th + gap)
             buttons.append(Button(f"song:{v['id']}", v.get("title", v["id"]), (x0, y0, x0 + tw, y0 + th),
                                   v.get("subtitle", ""), str(i + 1)))
         bw = int(w * 0.16)
@@ -719,7 +769,9 @@ class Shell:
         if self.variant:
             v = next((v for v in self.variants(self.selected) if v["id"] == self.variant), None)
             if v:
-                return v.get("title", self.variant).upper()
+                title = v.get("title", self.variant).upper()
+                level = next((d for d in self.difficulties(self.selected) if d["id"] == self.difficulty), None)
+                return f"{title} - {level.get('label', level['id'].upper())}" if level else title
         return getattr(self.registry[self.selected], "title", self.selected.upper())
 
     def _tile_scoreline(self, action: str) -> tuple[str, tuple]:
@@ -731,8 +783,8 @@ class Shell:
             n = len(self.variants(name))
             return f"{n} SONG{'S' if n != 1 else ''}", _CYAN
         if kind == "song":
-            v = next((v for v in self.variants(self._picking) if v["id"] == name), {})
-            key = v.get("board_id", f"{self._board_name(self._picking)}-{name}")
+            v = next((v for v in self.variants(self._picking) if v["id"] == name), {"id": name})
+            key = self._song_board(self._picking, v, self.difficulty_of(self._picking))
         else:
             key = self._board_name(name)
         top = (self.scores.get(key) or [None])[0]
@@ -745,10 +797,34 @@ class Shell:
         w, h = self.width, self.height
         cls = self.registry[self._picking]
         _text(canvas, getattr(cls, "title", self._picking.upper()), w // 2, int(h * 0.14), 1.6, _ACCENT, 3)
-        _text(canvas, "Choose a song - hover over it, or press its number", w // 2, int(h * 0.22), 0.72, _WHITE, 1,
-              cv2.FONT_HERSHEY_SIMPLEX)
+        levels = self.difficulties(self._picking)
+        hint = ("Pick a difficulty, then a song - hover, or press TAB and the song's number" if levels
+                else "Choose a song - hover over it, or press its number")
+        _text(canvas, hint, w // 2, int(h * 0.22), 0.72, _WHITE, 1, cv2.FONT_HERSHEY_SIMPLEX)
+        everything = self._buttons
+        self._buttons = [b for b in everything if not b.action.startswith("diff:")]
         self._draw_buttons(canvas, self.dwell, tiles=True)
+        self._buttons = everything
+        self._draw_difficulties(canvas)
         self._draw_cursor(canvas, self.dwell)
+
+    def _draw_difficulties(self, canvas) -> None:
+        """The difficulty row: the chosen one lit up, a hint for it underneath."""
+        chosen = self.difficulty_of(self._picking) if self._picking else None
+        for b in self._buttons:
+            if not b.action.startswith("diff:"):
+                continue
+            x0, y0, x1, y1 = b.rect
+            on = b.action == f"diff:{chosen}"
+            hot = self.dwell.target == b.action
+            _panel(canvas, b.rect, colour=_HOT_FILL if (on or hot) else _PANEL, alpha=0.9, radius=14,
+                   border=_ACCENT if on else _CYAN if hot else _IDLE_BORDER, thickness=3 if on or hot else 2)
+            _text(canvas, b.label, (x0 + x1) // 2, y0 + 39, 0.78, _ACCENT if on else _WHITE, 2)
+            if on and b.sub:
+                _text(canvas, b.sub, (x0 + x1) // 2, y1 + 18, 0.45, _DIM, 1, cv2.FONT_HERSHEY_SIMPLEX, shadow=False)
+            if hot and self.dwell.progress > 0:
+                fill = int((x1 - x0 - 24) * min(1.0, self.dwell.progress))
+                cv2.rectangle(canvas, (x0 + 12, y1 - 8), (x0 + 12 + fill, y1 - 4), _ACCENT, -1)
 
     def _draw_cursor(self, canvas, dwell: Dwell) -> None:
         if self.cursor is None:
@@ -896,7 +972,7 @@ class Shell:
         keys = {
             Screen.MENU: "1-%d or click to start   H switch hand   ESC quit" % max(1, len(self.menu_games)),
             Screen.COUNTDOWN: "ESC menu",
-            Screen.SONGS: "1-9 or click a song   ESC back",
+            Screen.SONGS: "1-9 or click a song   TAB difficulty   ESC back",
             Screen.TUTORIAL: "ENTER play   ESC menu",
             Screen.ENTRY: "type your name   BACKSPACE delete   ENTER save   ESC skip",
             Screen.RESULTS: "R play again   ESC menu",

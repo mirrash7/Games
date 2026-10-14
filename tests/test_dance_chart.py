@@ -7,6 +7,8 @@ or imported chart that breaks a rule fails loudly (docs/DANCE.md sections 4-6, 1
 from __future__ import annotations
 
 import json
+import math
+import re
 import sys
 
 import cv2
@@ -23,6 +25,8 @@ from kpapp.game.dance.pose import REST, keypoints_for, measure, normalize_pose, 
 LIB = load_library()
 SONGS = load_songs(library=LIB)
 NEON = next(s for s in SONGS if s.id == "neon_nights")
+# Every song on every difficulty: the rules below hold for all of them.
+LEVELS = [s.for_difficulty(d) for s in SONGS for d in chart.DIFFICULTIES]
 
 ELBOWS_HIDDEN = {"shoulder", "wrist", "hip"}
 FREEZE_MAX = 0.55  # a player frozen in the previous pose must score below this
@@ -53,10 +57,12 @@ def test_audio_is_delivered(song):
     assert song.audio.stat().st_size > 10_000
 
 
-@pytest.mark.parametrize("song", SONGS, ids=lambda s: s.id)
+@pytest.mark.parametrize("song", LEVELS, ids=lambda s: f"{s.id}-{s.level}")
 def test_a_frozen_player_cannot_score(song):
     """Consecutive judged poses differ enough that holding the previous one
-    earns less than 0.55 on the next, with or without elbows in view."""
+    earns less than 0.55 on the next, with or without elbows in view. On
+    every difficulty: EASY's derived chart must not let a player stand still."""
+    assert FREEZE_MAX == chart.FREEZE_MAX
     jp = song.judge_points()
     for a, b in zip(jp, jp[1:]):
         full = sim(b.pose, a.pose)
@@ -66,7 +72,7 @@ def test_a_frozen_player_cannot_score(song):
                                     f"scores {reach:.2f} on beat {b.beat:g}")
 
 
-@pytest.mark.parametrize("song", SONGS, ids=lambda s: s.id)
+@pytest.mark.parametrize("song", LEVELS, ids=lambda s: f"{s.id}-{s.level}")
 def test_a_perfect_player_matches_every_judged_pose(song):
     for p in song.judge_points():
         assert sim(p.pose, p.pose) > 0.97, f"{p.label} at {p.beat:g}"
@@ -132,6 +138,134 @@ def test_sides_alternate():
     for i, n in enumerate(names):
         if n.endswith("_r") and f"{n[:-2]}_l" in names:
             assert f"{n[:-2]}_l" in names[i + 1:i + 3] or f"{n[:-2]}_l" in names[max(0, i - 2):i], n
+
+
+# --- difficulties (docs/DANCE.md section 7a) ---------------------------------------
+
+def test_difficulty_ids_fall_back_to_normal():
+    assert chart.DIFFICULTIES == ("easy", "normal", "hard")
+    assert [chart.difficulty_id(d) for d in ("easy", "HARD", "normal", None, "expert", "")] == \
+        ["easy", "hard", "normal", "normal", "normal", "normal"]
+    assert NEON.level == "normal" and NEON.for_difficulty("normal") is NEON
+    assert load_song(NEON.folder, LIB, difficulty="nightmare").level == "normal"
+
+
+def test_hard_dances_the_normal_chart():
+    hard = NEON.for_difficulty("hard")
+    assert hard.level == "hard"
+    assert [(p.beat, p.label, p.gold) for p in hard.judge_points()] == \
+        [(p.beat, p.label, p.gold) for p in NEON.judge_points()]
+    assert load_song(NEON.folder, LIB, difficulty="hard").judge_points() == hard.judge_points()
+
+
+@pytest.mark.parametrize("song", SONGS, ids=lambda s: s.id)
+def test_easy_judges_about_one_pose_per_bar(song):
+    """EASY: fewer moves, held longer. At least two beats between judged poses,
+    at most one per bar where the normal chart's moves are short, and far
+    fewer points overall."""
+    easy, normal = song.for_difficulty("easy"), song.judge_points()
+    pts = easy.judge_points()
+    assert pts and len(pts) <= 0.4 * len(normal), (len(pts), len(normal))
+    beats = [p.beat for p in pts]
+    assert all(b - a >= chart.EASY_MIN_GAP for a, b in zip(beats, beats[1:]))
+    short = {p.beat for p in pts if easy.chart[p.placed].move.name.endswith("~held")}
+    bars = [math.floor(b / chart.BAR_BEATS) for b in sorted(short)]
+    assert len(bars) == len(set(bars)), "one held pose per bar"
+    if "easy" not in song.charts:  # derived, not hand-made
+        assert all(any(abs(p.beat - q.beat) < 1e-9 and p.pose == q.pose for q in normal) for p in pts), \
+            "easy only asks for poses the normal chart asks for, on the same beats"
+    # The score still tops out at 10000, and the server's rate limit (400 points
+    # a second) still lets a perfect run through.
+    assert easy.last_judge_time >= 25.0
+
+
+@pytest.mark.parametrize("song", SONGS, ids=lambda s: s.id)
+def test_easy_coach_holds_the_kept_pose(song):
+    """What the player sees is what is asked: a held move is one keyframe, so
+    between two kept poses the coach holds the first and eases into the next
+    (no in-between poses that aren't judged)."""
+    easy = song.for_difficulty("easy")
+    for p in easy.chart:
+        if p.move.name.endswith("~held"):
+            assert len(p.move.keyframes) == 1 and p.move.judge == (0,)
+    pts = easy.judge_points()
+    for a, b in zip(pts, pts[1:]):
+        if not easy.chart[a.placed].move.name.endswith("~held"):
+            continue
+        for u in (0.0, 0.5, 1.0):  # held from its beat until the ease into the next
+            t = a.beat + u * max(0.0, b.beat - a.beat - chart.EASE_BEATS)
+            assert sim(a.pose, easy.coach_pose(t)) > 0.97, f"coach left {a.label} at beat {t:g}"
+
+
+def test_neon_nights_easy():
+    easy = NEON.for_difficulty("easy")
+    pts = easy.judge_points()
+    assert len(NEON.judge_points()) == 145 and len(pts) == 49
+    # Every section with gold keeps gold.
+    for name, lo in SECTIONS:
+        hi = next((b for _, b in SECTIONS if b > lo), 212)
+        if any(p.gold for p in NEON.judge_points() if lo <= p.beat < hi):
+            assert any(p.gold for p in pts if lo <= p.beat < hi), f"{name} lost its gold"
+    # The bridge's 4-beat moves stay whole (the coach dances them in full), judged as in normal.
+    bridge = section_moves(easy, 144, 160)
+    assert [p.move for p in bridge] == [p.move for p in section_moves(NEON, 144, 160)]
+    # The final pose and the bow stay.
+    outro = section_moves(easy, 192, 212)
+    assert [(p.beat, p.move.name) for p in outro] == [(192, "finale"), (196, "bow")]
+    assert pts[-1].beat == 192
+    # Verse 1 goes from a pose every 2 beats to one a bar.
+    assert sum(1 for p in pts if 16 <= p.beat < 48) == 8
+
+
+def _write_song(tmp_path, **extra):
+    folder = tmp_path / "s"
+    folder.mkdir(exist_ok=True)
+    data = {"title": "T", "bpm": 120, "duration": 40.0,
+            "moves": [{"move": "shine", "beat": 16}, {"move": "rise", "beat": 20}, {"move": "star", "beat": 24}],
+            **extra}
+    (folder / "song.json").write_text(json.dumps(data))
+    return folder
+
+
+def test_a_song_can_hand_make_its_easy_and_hard_charts(tmp_path):
+    folder = _write_song(tmp_path, charts={"easy": [{"move": "rise", "beat": 20, "gold": True}],
+                                           "hard": [{"move": "shine", "beat": 16}, {"move": "star", "beat": 18},
+                                                    {"move": "rise", "beat": 20}]})
+    easy = load_song(folder, LIB, difficulty="easy")
+    assert [(p.move.name, p.beat, p.gold) for p in easy.chart] == [("rise", 20.0, True)]
+    hard = load_song(folder, LIB, difficulty="hard")
+    assert [p.move.name for p in hard.chart] == ["shine", "star", "rise"]
+    normal = load_song(folder, LIB)
+    assert [p.move.name for p in normal.chart] == ["shine", "rise", "star"]
+    assert normal.for_difficulty("easy").chart == easy.chart, "the hand-made chart wins over the derived one"
+
+
+@pytest.mark.parametrize("charts, message", [
+    ({"easy": [{"move": "nope", "beat": 16}]}, "charts.easy: chart entry 0 at beat 16.0: unknown move 'nope'"),
+    ({"hard": [{"move": "rise", "beat": 16}, {"move": "shine", "beat": 18}]}, "charts.hard: move 'shine' at beat 18"),
+    ({"hard": [{"move": "rise", "beat": 78}]}, "runs past the song's end"),
+    ({"normal": []}, "only 'easy' and 'hard' charts can be hand-made"),
+    ({"expert": []}, "only 'easy' and 'hard'"),
+    ({"easy": {"move": "rise"}}, "charts.easy: expected a list"),
+    ([], "'charts' must be an object"),
+])
+def test_hand_made_charts_are_validated_like_the_normal_one(tmp_path, charts, message):
+    folder = _write_song(tmp_path, charts=charts)
+    with pytest.raises(chart.ChartError, match=re.escape(message)):
+        load_song(folder, LIB)  # whichever difficulty is asked for
+
+
+def test_easy_moves_gold_to_the_kept_pose_when_the_gold_one_would_freeze():
+    """A gold point that a player frozen in the previous kept pose would score
+    on can't be kept, but its bar keeps gold: the kept pose turns gold."""
+    up, out = {"la": [170, 175], "ra": [170, 175]}, {"la": [90, 90], "ra": [90, 90]}
+    moves = chart.parse_moves({"up": {"beats": 2, "keyframes": [{"beat": 0, "pose": up}]},
+                               "out": {"beats": 2, "keyframes": [{"beat": 0, "pose": out}]}}, "t")
+    normal = [chart.Placed(moves["up"], 16), chart.Placed(moves["out"], 18),
+              chart.Placed(moves["up"], 20, gold=True), chart.Placed(moves["out"], 22)]
+    easy = chart.derive_easy(normal)
+    assert [(p.beat, p.move.label, p.gold) for p in easy] == [(16, "Up", False), (22, "Out", True)]
+    assert easy[0].end == 20 and easy[1].end == 24, "held to the end of the bar's moves"
 
 
 # --- the move library ----------------------------------------------------------
@@ -297,3 +431,12 @@ def test_cli_dance_preview_writes_a_contact_sheet(monkeypatch, tmp_path):
     assert run_cli(monkeypatch, "dance-preview", "--song", "neon_nights", "--out", str(out)) == 0
     img = cv2.imread(str(out))
     assert img is not None and img.shape[1] >= 1200 and img.shape[0] > 1000
+
+
+def test_cli_dance_preview_draws_a_difficulty(monkeypatch, tmp_path):
+    out = tmp_path / "easy.png"
+    assert run_cli(monkeypatch, "dance-preview", "--song", "neon_nights", "--difficulty", "easy", "--out", str(out)) == 0
+    easy = cv2.imread(str(out))
+    normal = tmp_path / "normal.png"
+    assert run_cli(monkeypatch, "dance-preview", "--song", "neon_nights", "--out", str(normal)) == 0
+    assert easy is not None and easy.shape[0] < cv2.imread(str(normal)).shape[0], "fewer moves, a shorter sheet"

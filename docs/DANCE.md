@@ -176,15 +176,23 @@ renderer and pictograms draw from this.
  "preview": [32, 48],                  // beats looped on the song-select card (optional)
  "sections": [{"name": "intro", "beat": 0}, {"name": "verse", "beat": 16}, ...],
  "moves": [{"move": "disco_point_r", "beat": 16}, {"move": "clap_up", "beat": 18, "gold": true}, ...],
- "custom_moves": {}                    // same schema as the library; overrides by name
+ "custom_moves": {},                   // same schema as the library; overrides by name
+ "charts": {"easy": [...], "hard": [...]}   // optional hand-made charts per difficulty (section 7a)
 }
 ```
+
+`moves` is the NORMAL chart. `charts` is optional: a list under `easy` or
+`hard`, in the same format as `moves`, replaces that difficulty's chart
+(otherwise EASY is derived from `moves` and HARD dances `moves`). Only `easy`
+and `hard` are allowed there.
 
 - **Validation:** `chart.load_song` rejects overlapping moves, unknown move
   names, keyframes outside a move, non-ascending beats, a chart running past
   the duration, and bad pose keys, with a clear message naming the song,
-  move and beat. `tests/test_dance_chart.py` validates every song in
-  `assets/dance/songs/`.
+  move and beat. Hand-made `charts` are validated the same way, whichever
+  difficulty is being loaded. `tests/test_dance_chart.py` validates every song
+  in `assets/dance/songs/`, on every difficulty (including the freeze rule
+  of section 7a).
 - **Gold moves:** a judged point counts double, flashes gold, and earns a
   gold burst when rated SUPER or better. Use one or two per chorus.
 
@@ -210,6 +218,10 @@ Beat 0 is at `offset` seconds into the audio. The generator must put the first d
 chart is authored against these beats.
 
 ## 7. Judging (`judge.py`)
+
+The numbers in this section are NORMAL's. EASY and HARD change the window,
+the hold and the rating thresholds, and EASY judges a derived chart
+(section 7a).
 
 - **Judge points:** each judged keyframe becomes a judge point at
   `t = time_of(move.beat + keyframe.beat)`, with weight 2 if gold, else 1.
@@ -289,6 +301,94 @@ the mirror image *is* the move.
 | arms straight up / T-pose all song | 2879 / 1977 | 1 / 0 |
 | frozen, idle, random | 1416, 906, 1950 | 0 |
 
+## 7a. Difficulty: EASY / NORMAL / HARD
+
+The shell offers a difficulty picker for games that declare
+`difficulties` (section 9). Every song plays on all three:
+
+| | chart | judging (`judge.DIFFICULTY`) |
+|---|---|---|
+| **EASY** "fewer moves, held longer" | derived from the normal chart: about one judged pose per bar, each held (Neon Nights: 49 points) | window [-0.25, +0.60], hold 0.12 s, PERFECT 0.86 / SUPER 0.72 / GOOD 0.56 / OK 0.40 |
+| **NORMAL** "the full routine" | `moves` (Neon Nights: 145 points) | window [-0.20, +0.50], hold 0.12 s, 0.90 / 0.74 / 0.60 / 0.42 (section 7, unchanged) |
+| **HARD** "every move, judged strictly" | `moves` | window [-0.15, +0.50], hold 0.15 s, 0.93 / 0.84 / 0.68 / 0.50 |
+
+Rating values (1.0 / 0.8 / 0.55 / 0.3 / 0), gold weights, star thresholds and
+the 0..10000 score are the same on every difficulty. All judging numbers live
+in one table, `judge.DIFFICULTY` (`Rules(early, late, hold, ratings)`); the
+old module constants (`WINDOW_LATE`, `HOLD`, `RATINGS`...) are NORMAL's.
+
+**Deriving EASY** (`chart.derive_easy`, `Song.for_difficulty("easy")`), so
+every song gets it for free:
+
+- **Short moves** (under a bar, `BAR_BEATS` = 4) are grouped by the bar they
+  start in. Each group becomes one *held* move (`<name>~held`): one keyframe,
+  the kept pose, from its beat to the group's end. The coach holds it and
+  eases into the next kept pose (`EASE_BEATS`), so it does no in-between
+  poses the judge doesn't ask for.
+- **Which pose:** a gold one first, else the earliest. A candidate is skipped
+  if it is under `EASY_MIN_GAP` (2) beats after the previous kept pose, or if
+  a player frozen in the previous kept pose would score on it
+  (`chart.freeze_score >= FREEZE_MAX`, 0.55, with and without elbows). A
+  group whose candidates all fail adds nothing; the coach holds on.
+- **Gold:** a group that had a gold point keeps a gold point (the kept pose
+  turns gold if the gold one had to be skipped), so every section with gold
+  keeps gold.
+- **Moves a bar or longer** (the bridge's 4-beat moves, the final pose) and
+  **unjudged moves** (the bow) stay as they are, judges included: they are
+  slow already, and judging only one pose of them left the coach visibly
+  hitting poses that no longer counted. The same gap and freeze checks apply.
+- On Neon Nights: verse 1 goes from 16 poses to 8, each chorus from 32 to 8,
+  the bridge keeps its 8, plus the final pose: 49 points. The last one is at
+  96 s, well past the leaderboard's 400-points-a-second cap.
+
+**The freeze rule on every difficulty:** consecutive judged poses must differ
+enough that holding the previous one scores below 0.55 on the next
+(`tests/test_dance_chart.py::test_a_frozen_player_cannot_score`, run for
+every song on every difficulty).
+
+**Hand-made charts** (`"charts": {"easy": [...]}` in song.json, section 5)
+replace the derivation. Give EASY at least two beats between judged poses;
+the tests check the freeze rule and perfect-match rules on them too.
+
+**Leaderboards:** NORMAL keeps each song's board, `dance-<song id>`, so
+scores from before difficulties stay put. EASY and HARD get
+`dance-<song id>_easy` / `dance-<song id>_hard` (`game.board_id_for`),
+inside the server's `/^dance-[a-z0-9_]{1,40}$/`.
+
+**Tuned in simulation** on Neon Nights, through the same input path as
+section 7 (keypoints with ±4 px noise, 20 Hz, 150 ms lag, `PoseExtrapolator`;
+`tests/test_dance_game.py::test_fairness_on_every_difficulty`):
+
+| player | EASY (49) | NORMAL (145) | HARD (145) |
+|---|---|---|---|
+| perfect | 10000 | 10000 | 10000 |
+| perfect, 250 ms behind the coach | 10000 | 10000 | 9352 (5 stars) |
+| precise: within 10 degrees, 200 ms late | 10000 | 10000 | 9987 |
+| 10-20 degrees off, 200 ms late, 15 Hz / 200 ms | 9925 | 9352 | 7903 (3 stars) |
+| sloppy: 25-30 degrees off, 250 ms late | 8274 (4 stars) | 7859 (3 stars) | 5279 (2 stars) |
+| frozen on the first pose | 2000 (1 star) | 1416 | 1121 |
+| idle, arms down | 623 | 906 | 342 |
+| random arms | 2755 (1 star) | 2040 (1 star) | 919 |
+| wrong side (mirror image) | 4708 (2 stars) | 4872 (2 stars) | 3685 (1 star) |
+
+Why these numbers:
+
+- **EASY's thresholds and late edge:** a beginner 30-40 degrees off and 400 ms
+  behind the coach scores 7009 (3 stars) on EASY; the normal rules on the same
+  chart gave it 2811 (1 star), and a flawless dancer 400 ms late 3094.
+  EASY points are at least 2 beats (1 s) apart, so the wider window never
+  reaches into the next point's pose. EASY is not free: frozen, idle and random
+  players stay at a star or less. (Without the freeze rule the frozen player
+  made 2415.)
+- **HARD's hold 0.15 s** is the main lever: at 0.12 the sloppy dancer still
+  made 3 stars on HARD. The thresholds (PERFECT "every limb within ~25
+  degrees") put that dancer in SUPER and GOOD: 5150-5380 over six seeds.
+- **HARD keeps the late edge at 0.50.** At the spec's first 0.40, separating
+  precise from sloppy came down to 50 ms of lateness: the precise dancer fell
+  to 3 stars (6020) and a flawless one 250 ms late to 1 star. HARD judges the
+  pose, not the camera's lag. On a slow model (15 Hz, 200 ms) it does cost a
+  star or two.
+
 ## 8. Game flow (`game.py`)
 
 The shell starts the game with a chosen song (section 9). The game's phases,
@@ -323,7 +423,8 @@ The shell starts the game with a chosen song (section 9). The game's phases,
 **State the renderer reads.** Read-only; the renderer never mutates the game:
 
 ```
-game.song             Song (title, artist, bpm, sections, coach outfit, duration)
+game.song             Song (title, artist, bpm, sections, coach outfit, duration; .level, the difficulty's chart)
+game.difficulty       "easy" | "normal" | "hard" (the badges)
 game.phase            Phase
 game.song_time        seconds since beat 0 (negative before it)
 game.beat             fractional beat (song_time * bpm / 60)
@@ -349,9 +450,14 @@ game's tile on the welcome screen opens a **variant picker**: hover-to-press
 song cards, using the same `Dwell` and keys 1-9. The game is then built with
 `variant=<id>`.
 
-- **Leaderboard:** one board per variant, `board_id` = `"dance-<song id>"`.
-  The server accepts any `dance-*` id under one rule set
-  (`leaderboard/src/rules.js`).
+- **Leaderboard:** one board per variant and difficulty. `variants()` gives
+  the normal board, `"dance-<song id>"`; the shell appends `_easy` / `_hard`
+  for the other difficulties, and the game's own `board_id` agrees. The
+  server accepts any `dance-*` id under one rule set (`leaderboard/src/rules.js`).
+- **Difficulty:** `DanceGame.difficulties` = `[{"id", "label", "hint"}]` for
+  easy / normal / hard, and `default_difficulty = "normal"`. The shell builds
+  the game with `difficulty=<id>`; unknown ids fall back to normal
+  (section 7a).
 - **New hooks:** the shell calls `game.on_pause()`, `game.close()` and
   `game.preload()` when present, so audio stops and starts with the shell's
   screens and the art loads on the song pick.
@@ -365,19 +471,31 @@ Numbers from `render.py`:
 - **Coach:** centre-left, standing in a spotlight. About 520 px tall (head
   to feet), shoulder width 114 px (`COACH_SCALE`), centred on x = 520, feet
   at y = 660, never drawn outside `COACH_ROI` (110, 56)-(930, 704).
-- **Pictogram lane:** bottom-right, `LANE_RECT` x 748-1262, y 544-642. Cards
-  scroll right to left at 112 px per beat onto a target ring at (806, 593);
-  the move's name sits under the ring at y 672. Cards come as often as every
-  beat; a card's size goes by distance alone (`card_width`): 76 px until a
-  beat out, growing to 108 px on the ring, full size while it slides through
-  and fades. Two cards a beat apart keep a gap of at least 8 px. Gold cards
-  have gold frames. x 1090+ below y 646 is the shell's
-  PAUSE button.
-- **Player PiP:** top-right, (944, 16)-(1264, 196), 320 x 180: the camera
-  frame as the game received it (already mirrored), with the measured
-  skeleton tinted by the last rating.
+- **Pictogram lane:** bottom-right, `LANE_RECT` x 740-1262, y 513-631. Cards
+  scroll right to left at 128 px per beat onto a 146 px target ring at
+  (812, 572); the move's name sits under the ring at y 670 (scale 0.72).
+  Cards come as often as every beat; a card's size goes by distance alone
+  (`card_width`): 92 px until a beat out, growing to 132 px on the ring, full
+  size while it slides through and fades (both about 20% bigger than the
+  first 76 / 108). Two cards a beat apart keep a gap of at least 16 px. Gold
+  cards have gold frames. Cards are clipped above y 645: the shell's PAUSE
+  button is x 1090-1258, y 646-698 (`PAUSE_RECT`), and only small cards
+  (bottom y 622) ever reach x 1090. The footer starts at y 700.
+- **Player PiP:** top-right, (880, 16)-(1264, 232), 384 x 216 (16:9): the
+  camera frame as the game received it (already mirrored), with the measured
+  skeleton tinted by the last rating. The frame is shrunk by a 2x box filter
+  then a bilinear step: `INTER_AREA` straight to 384 px took 4.5 ms.
+- **Intro:** the title card ("NOW DANCING", title, artist, difficulty badge)
+  and GET READY centre on (958, 352), the 3-2-1-GO words on y 366, all under
+  the PiP once popped in.
+- **Difficulty badge:** a pill in the difficulty's colour (EASY green
+  `theme.GOOD`, NORMAL the manifest's cyan, HARD its magenta; overridable in
+  the art manifest as `"difficulty"`): on the intro card under the artist, in
+  the HUD right of the score (left edge x 262, centred on y 58), and beside
+  "RESULTS" on the results card.
 - **Feedback:** the rating word pops just above the coach's ears, following
-  its head (x clamped to 260-780, y at least 108). A newer word whisks the
+  its head (x clamped to 260-660, so the widest word stays left of the PiP;
+  y at least 108). A newer word whisks the
   older one up and out within 0.04 s (`SUPERSEDE_FADE`; 0.12 s read as
   "PERFECT" stacked over "PERFECT"). Words are hidden while a notice shows.
 - **Notice:** a panel centred at (600, 96).
@@ -404,7 +522,9 @@ Numbers from `render.py`:
    it, rename the moves and mark gold ones.
 3. **Add the id** to `songs/index.json`.
 4. **Check it:** run `uv run --with pytest pytest tests/test_dance_chart.py`
-   (it validates every song in `index.json`). The browser picks the song up
+   (it validates every song in `index.json`, on every difficulty). Look at
+   the derived EASY chart with `uv run kp dance-preview --song <id> --difficulty easy`;
+   if it reads wrong, hand-make one under `"charts": {"easy": [...]}`. The browser picks the song up
    from the same folder. Followed end to end in QA with a 20 s cut of Neon
    Nights and a synthetic dancer: 15 imported moves, the song on the song
    list with its own board (`dance-<id>`), and a perfect bot at 10000.

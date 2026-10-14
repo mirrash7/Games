@@ -120,6 +120,8 @@ export class Shell {
     this.variant = null; // the song (or other variant) being played
     this.boardKey = null; // the leaderboard this round goes to
     this._picking = null; // game whose variants are on screen
+    this.difficulty = null; // the difficulty being played, for games that have them
+    this._difficultyChoice = {}; // game -> last difficulty picked (also kept in localStorage)
     this.refreshScores();
   }
 
@@ -141,7 +143,8 @@ export class Shell {
   boardKeys() {
     return this.menuGames.flatMap((id) => {
       const vs = this.variants(id);
-      if (vs.length) return vs.map((v) => this._variantBoard(id, v));
+      const levels = this.difficulties(id).map((d) => d.id);
+      if (vs.length) return vs.flatMap((v) => (levels.length ? levels : [null]).map((d) => this._songBoard(id, v, d)));
       // A game with songs has no board of its own; before its songs are
       // loaded it has none to show yet (main.js refreshes after preload).
       return typeof this.registry[id]?.variants === "function" ? [] : [id];
@@ -181,17 +184,61 @@ export class Shell {
 
   // --- transitions ---
 
-  start(id, countdown = true, variant = null) {
+  /** The game's difficulty levels ({id, label, hint}); [] for most games. */
+  difficulties(id) {
+    return this.registry[id]?.difficulties ?? [];
+  }
+
+  /** The difficulty that game will start on: the last one picked, else its default. */
+  difficultyOf(id) {
+    const ids = this.difficulties(id).map((d) => d.id);
+    if (!ids.length) return null;
+    let chosen = this._difficultyChoice[id];
+    if (chosen == null) {
+      try {
+        chosen = localStorage.getItem(`kp.difficulty.${id}`);
+      } catch {
+        chosen = null;
+      }
+    }
+    if (ids.includes(chosen)) return chosen;
+    const fallback = this.registry[id]?.defaultDifficulty;
+    return ids.includes(fallback) ? fallback : ids[0];
+  }
+
+  _chooseDifficulty(id, level) {
+    this._difficultyChoice[id] = level;
+    try {
+      localStorage.setItem(`kp.difficulty.${id}`, level);
+    } catch {
+      /* private mode: remembered for this visit */
+    }
+  }
+
+  /**
+   * A song's leaderboard on a difficulty. The default difficulty keeps the
+   * song's own board (scores from before difficulties existed stay put); the
+   * others get their own, as their scores aren't comparable.
+   */
+  _songBoard(id, v, difficulty) {
+    const base = this._variantBoard(id, v);
+    return difficulty == null || difficulty === this.registry[id]?.defaultDifficulty ? base : `${base}_${difficulty}`;
+  }
+
+  start(id, countdown = true, variant = null, difficulty = null) {
     const Cls = this.registry[id];
     if (!Cls) return;
     this._closeGame();
     this.selected = id;
+    if (variant == null && this.variants(id).length) variant = this.variants(id)[0].id;
+    difficulty = difficulty ?? this.difficultyOf(id);
+    this.difficulty = difficulty;
     this.game = new Cls({ width: this.width, height: this.height, mirrored: this.mirrored,
-      ...(variant != null ? { variant } : {}) });
+      ...(variant != null ? { variant } : {}), ...(difficulty != null ? { difficulty } : {}) });
     this.game.preload?.(); // heavy art now, on the screen change, not on the first frame of play
     this.variant = variant;
     const chosen = variant != null ? this.variants(id).find((v) => v.id === variant) : null;
-    this.boardKey = chosen ? this._variantBoard(id, chosen) : id;
+    this.boardKey = chosen ? this._songBoard(id, chosen, difficulty) : id;
     if (this.hand !== "right" && this.game.swapHand) this.game.swapHand();
     this.countdown = COUNTDOWN_SECONDS;
     // Games that count themselves in (Raccoon Dance counts 3-2-1 on the
@@ -284,7 +331,7 @@ export class Shell {
   }
 
   restart() {
-    if (this.selected) this.start(this.selected, true, this.variant);
+    if (this.selected) this.start(this.selected, true, this.variant, this.difficulty);
   }
 
   pause() {
@@ -326,6 +373,7 @@ export class Shell {
   _do(action) {
     if (action.startsWith("start:")) this.choose(action.slice(6));
     else if (action.startsWith("song:")) this.start(this._picking, true, action.slice(5));
+    else if (action.startsWith("diff:")) this._chooseDifficulty(this._picking, action.slice(5));
     else if (action === "resume") this.resume();
     else if (action === "menu") this.toMenu();
     else if (action === "again") this.restart();
@@ -368,7 +416,11 @@ export class Shell {
       if (k >= "1" && k <= "9" && k.length === 1 && Number(k) - 1 < songs.length) {
         this.start(this._picking, true, songs[Number(k) - 1].id);
       } else if ((enter || space) && songs.length) this.start(this._picking, true, songs[0].id);
-      else if (esc) this.toMenu();
+      else if (k === "Tab" && this.difficulties(this._picking).length) {
+        const ids = this.difficulties(this._picking).map((d) => d.id);
+        const now = this.difficultyOf(this._picking);
+        this._chooseDifficulty(this._picking, ids[(ids.indexOf(now) + 1) % ids.length]);
+      } else if (esc) this.toMenu();
       else return false;
       return true;
     } else if (this.screen === "tutorial") {
@@ -516,13 +568,26 @@ export class Shell {
     const perRow = Math.min(3, Math.max(1, songs.length));
     const rows = Math.max(1, Math.ceil(songs.length / perRow));
     const tw = Math.floor(w * 0.28), gap = Math.floor(w * 0.03);
-    const th = Math.floor(h * (rows === 1 ? 0.34 : 0.2));
-    const buttons = songs.map((v, i) => {
+    const levels = this.difficulties(this._picking);
+    const buttons = [];
+    let top = Math.floor(h * 0.3);
+    if (levels.length) {
+      // A row of difficulty buttons above the songs; the cards move down.
+      const dw = 196, dh = 58, dg = 18, dy = Math.floor(h * 0.27);
+      let dx = Math.floor((w - (levels.length * dw + (levels.length - 1) * dg)) / 2);
+      for (const d of levels) {
+        buttons.push(new Button(`diff:${d.id}`, d.label ?? d.id.toUpperCase(), [dx, dy, dx + dw, dy + dh], d.hint ?? ""));
+        dx += dw + dg;
+      }
+      top = dy + dh + 26;
+    }
+    const th = levels.length ? Math.floor(h * (rows === 1 ? 0.3 : 0.18)) : Math.floor(h * (rows === 1 ? 0.34 : 0.2));
+    songs.forEach((v, i) => {
       const r = Math.floor(i / perRow), c = i % perRow;
       const n = Math.min(perRow, songs.length - r * perRow);
       const x0 = Math.floor((w - (n * tw + (n - 1) * gap)) / 2) + c * (tw + gap);
-      const y0 = Math.floor(h * 0.3) + r * (th + gap);
-      return new Button(`song:${v.id}`, v.title ?? v.id, [x0, y0, x0 + tw, y0 + th], v.subtitle ?? "", String(i + 1));
+      const y0 = top + r * (th + gap);
+      buttons.push(new Button(`song:${v.id}`, v.title ?? v.id, [x0, y0, x0 + tw, y0 + th], v.subtitle ?? "", String(i + 1)));
     });
     const bw = Math.floor(w * 0.16), by = Math.floor(h * 0.8);
     buttons.push(new Button("menu", "BACK", [w / 2 - bw / 2, by, w / 2 + bw / 2, by + 64], "", "ESC"));
@@ -716,7 +781,11 @@ export class Shell {
   _roundTitle() {
     if (this.variant != null) {
       const v = this.variants(this.selected).find((x) => x.id === this.variant);
-      if (v) return String(v.title ?? v.id).toUpperCase();
+      if (v) {
+        const title = String(v.title ?? v.id).toUpperCase();
+        const level = this.difficulties(this.selected).find((d) => d.id === this.difficulty);
+        return level ? `${title} - ${level.label ?? level.id.toUpperCase()}` : title;
+      }
     }
     return this.registry[this.selected]?.title ?? this.selected.toUpperCase();
   }
@@ -732,7 +801,7 @@ export class Shell {
     let key = name;
     if (kind === "song") {
       const v = this.variants(this._picking).find((x) => x.id === name) ?? { id: name };
-      key = this._variantBoard(this._picking, v);
+      key = this._songBoard(this._picking, v, this.difficultyOf(this._picking));
     }
     const top = this.scores[key]?.[0];
     return top ? [`HIGH SCORE   ${top.name}   ${top.score}`, ACCENT] : ["NO HIGH SCORES YET - SET ONE", DIM];
@@ -742,10 +811,34 @@ export class Shell {
     dim(ctx, 0.62);
     const w = this.width, h = this.height, Cls = this.registry[this._picking];
     centredText(ctx, Cls.title || this._picking.toUpperCase(), w / 2, Math.floor(h * 0.14), 1.6, ACCENT);
-    centredText(ctx, "Choose a song - hover over it, or press its number", w / 2, Math.floor(h * 0.22), 0.72, WHITE,
-      { body: true });
+    const levels = this.difficulties(this._picking);
+    const hint = levels.length ? "Pick a difficulty, then a song - hover, or press TAB and the song's number"
+      : "Choose a song - hover over it, or press its number";
+    centredText(ctx, hint, w / 2, Math.floor(h * 0.22), 0.72, WHITE, { body: true });
+    const everything = this._buttons;
+    this._buttons = everything.filter((b) => !b.action.startsWith("diff:"));
     this._drawButtons(ctx, this.dwell, true);
+    this._buttons = everything;
+    this._drawDifficulties(ctx);
     this._drawCursor(ctx, this.dwell);
+  }
+
+  /** The difficulty row: the chosen one lit up, a hint for it underneath. */
+  _drawDifficulties(ctx) {
+    const chosen = this._picking ? this.difficultyOf(this._picking) : null;
+    for (const b of this._buttons) {
+      if (!b.action.startsWith("diff:")) continue;
+      const [x0, y0, x1, y1] = b.rect;
+      const on = b.action === `diff:${chosen}`, hot = this.dwell.target === b.action;
+      panel(ctx, b.rect, { colour: on || hot ? HOT_FILL : PANEL, alpha: 0.9, radius: 14,
+        border: on ? ACCENT : hot ? CYAN : IDLE_BORDER, thickness: on || hot ? 3 : 2 });
+      centredText(ctx, b.label, (x0 + x1) / 2, y0 + 39, 0.78, on ? ACCENT : WHITE);
+      if (on && b.sub) centredText(ctx, b.sub, (x0 + x1) / 2, y1 + 18, 0.45, DIM, { body: true, shadow: false });
+      if (hot && this.dwell.progress > 0) {
+        ctx.fillStyle = css(ACCENT);
+        ctx.fillRect(x0 + 12, y1 - 8, (x1 - x0 - 24) * Math.min(1, this.dwell.progress), 4);
+      }
+    }
   }
 
   _drawCursor(ctx, dwell) {
@@ -813,7 +906,7 @@ export class Shell {
     const keys = {
       menu: `1-${n} or click to start   H switch hand`,
       countdown: "ESC menu",
-      songs: "1-9 or click a song   ESC back",
+      songs: "1-9 or click a song   TAB difficulty   ESC back",
       tutorial: "ENTER play   ESC menu",
       entry: "type your name   BACKSPACE delete   ENTER save   ESC skip",
       results: "R play again   ESC menu",

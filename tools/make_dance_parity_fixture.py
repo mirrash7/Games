@@ -1,5 +1,6 @@
 """Write web/tests/fixtures/dance_parity.json: the Python judge's verdicts on a
-recorded input stream, for the browser port to replay (web/tests/dance_parity.test.mjs).
+recorded input stream on every difficulty, and the EASY charts derive_easy
+makes, for the browser port to replay (web/tests/dance_parity.test.mjs).
 
 Two streams: a short test chart (its library and song.json travel in the
 fixture) and a 30 s slice of Neon Nights (read from assets/ by both sides).
@@ -130,10 +131,12 @@ def to_pose(p: dict | None):
     return Pose(xy=xy, confidence=conf, score=0.9)
 
 
-def judge_stream(song, poses, frames, resumes) -> dict:
+def judge_stream(song, poses, frames, resumes, level: str) -> dict:
+    """The judge's verdicts on one stream, for one difficulty (its chart and rules)."""
     from kpapp.game.dance.pose import measure
 
-    j = Judge(song)
+    song = song.for_difficulty(level)
+    j = Judge(song, level)
     measured = [None if p is None else measure(to_pose(p)) for p in poses]
     ratings = []
     for i, (st, idx) in enumerate(frames):
@@ -145,8 +148,24 @@ def judge_stream(song, poses, frames, resumes) -> dict:
     end = frames[-1][0] + 5.0
     for r in j.update(end, None):
         ratings.append([len(frames), r.point.index, r.name, r.similarity])
-    return {"ratings": ratings, "end_time": end, "score": j.score, "counts": j.counts, "unseen": j.unseen,
+    return {"points": [[p.index, p.time, p.weight] for p in song.judge_points()],
+            "ratings": ratings, "end_time": end, "score": j.score, "counts": j.counts, "unseen": j.unseen,
             "best_combo": j.best_combo, "earned": j.earned}
+
+
+def easy_chart(song) -> dict:
+    """What derive_easy made of a song (chart.derive_easy), and the freeze scores
+    it decided with: the browser must derive exactly the same chart."""
+    normal = song.judge_points()
+    easy = song.for_difficulty("easy")
+    return {
+        "chart": [[p.beat, p.move.name, p.move.beats, p.gold, list(p.move.judge)] for p in easy.chart],
+        "judge_beats": [p.beat for p in easy.judge_points()],
+        "freeze": [[a.index, b.index, chart.freeze_score(b.pose, a.pose)] for a, b in zip(normal, normal[1:])],
+    }
+
+
+LEVELS = ("easy", "normal", "hard")
 
 
 def main() -> int:
@@ -166,16 +185,19 @@ def main() -> int:
     ):
         poses, frames, resumes = record(song, t0, t1, seed, resume_at, stall)
         out = {"name": name, "poses": poses, "frames": frames, "resumes": resumes,
-               "points": [[p.index, p.time, p.weight] for p in song.judge_points()]}
-        out.update(judge_stream(song, poses, frames, resumes))
+               "levels": {level: judge_stream(song, poses, frames, resumes, level) for level in LEVELS}}
         streams.append(out)
-        names = {}
-        for r in out["ratings"]:
-            names[r[2]] = names.get(r[2], 0) + 1
-        print(f"{name}: {len(poses)} poses, {len(frames)} frames, score {out['score']}, {names}")
+        for level, res in out["levels"].items():
+            names = {}
+            for r in res["ratings"]:
+                names[r[2]] = names.get(r[2], 0) + 1
+            print(f"{name} {level}: {len(poses)} poses, {len(frames)} frames, score {res['score']}, {names}")
 
+    easy = {"groove": easy_chart(groove), "neon_nights": easy_chart(neon)}
+    print(f"easy charts: groove {len(easy['groove']['judge_beats'])} points, "
+          f"neon_nights {len(easy['neon_nights']['judge_beats'])} points")
     fixture = {"about": "made by tools/make_dance_parity_fixture.py; replayed by web/tests/dance_parity.test.mjs",
-               "groove": {"library": MOVES, "song": data}, "streams": streams}
+               "groove": {"library": MOVES, "song": data}, "streams": streams, "easy": easy}
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(fixture, separators=(",", ":")))
     print(f"wrote {OUT.relative_to(REPO)} ({OUT.stat().st_size / 1024:.0f} KB)")

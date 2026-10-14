@@ -5,7 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
-import { parseLibrary, parseSong, parseSongIds } from "../js/games/dance/chart.js";
+import {
+  BAR_BEATS, ChartError, DIFFICULTIES, EASE_BEATS, EASY_MIN_GAP, Placed, deriveEasy, difficultyId, parseLibrary,
+  parseMoves, parseSong, parseSongIds,
+} from "../js/games/dance/chart.js";
 import { REST, keypointsFor, measure, normalizePose, similarity } from "../js/games/dance/pose.js";
 import { DanceRaccoonGame, loadSongs, loadedSongs, songVariants } from "../js/games/dance/game.js";
 
@@ -138,6 +141,131 @@ test("sides alternate", () => {
   });
 });
 
+// --- difficulties (docs/DANCE.md section 7a) ----------------------------------
+
+test("difficulty ids fall back to normal", () => {
+  assert.deepEqual(DIFFICULTIES, ["easy", "normal", "hard"]);
+  assert.deepEqual(["easy", "HARD", "normal", null, "expert", ""].map(difficultyId),
+    ["easy", "hard", "normal", "normal", "normal", "normal"]);
+  assert.ok(NEON.level === "normal" && NEON.forDifficulty("normal") === NEON);
+  assert.equal(parseSong(readJSON("songs/neon_nights/song.json"), "neon_nights", LIB, "nightmare").level, "normal");
+});
+
+test("hard dances the normal chart", () => {
+  const hard = NEON.forDifficulty("hard");
+  assert.equal(hard.level, "hard");
+  const key = (p) => [p.beat, p.label, p.gold];
+  assert.deepEqual(hard.judgePoints().map(key), NEON.judgePoints().map(key));
+  assert.deepEqual(parseSong(readJSON("songs/neon_nights/song.json"), "neon_nights", LIB, "hard").judgePoints().map(key),
+    hard.judgePoints().map(key));
+});
+
+test("easy judges about one pose per bar", () => {
+  for (const song of SONGS) {
+    const easy = song.forDifficulty("easy"), normal = song.judgePoints();
+    const pts = easy.judgePoints();
+    assert.ok(pts.length && pts.length <= 0.4 * normal.length, `${pts.length} vs ${normal.length}`);
+    const beats = pts.map((p) => p.beat);
+    for (let i = 1; i < beats.length; i++) assert.ok(beats[i] - beats[i - 1] >= EASY_MIN_GAP);
+    const short = pts.filter((p) => easy.chart[p.placed].move.name.endsWith("~held")).map((p) => p.beat).sort((a, b) => a - b);
+    const bars = short.map((b) => Math.floor(b / BAR_BEATS));
+    assert.equal(bars.length, new Set(bars).size, "one held pose per bar");
+    if (!Object.hasOwn(song.charts, "easy")) {
+      assert.ok(pts.every((p) => normal.some((q) => Math.abs(p.beat - q.beat) < 1e-9 && q.pose === p.pose)),
+        "easy only asks for poses the normal chart asks for, on the same beats");
+    }
+    assert.ok(easy.lastJudgeTime >= 25.0);
+  }
+});
+
+test("the easy coach holds the kept pose", () => {
+  for (const song of SONGS) {
+    const easy = song.forDifficulty("easy");
+    for (const p of easy.chart) {
+      if (p.move.name.endsWith("~held")) assert.ok(p.move.keyframes.length === 1 && p.move.judge.join() === "0");
+    }
+    const pts = easy.judgePoints();
+    for (let i = 1; i < pts.length; i++) {
+      const [a, b] = [pts[i - 1], pts[i]];
+      if (!easy.chart[a.placed].move.name.endsWith("~held")) continue;
+      for (const u of [0.0, 0.5, 1.0]) {
+        const t = a.beat + u * Math.max(0.0, b.beat - a.beat - EASE_BEATS);
+        assert.ok(sim(a.pose, easy.coachPose(t)) > 0.97, `coach left ${a.label} at beat ${t}`);
+      }
+    }
+  }
+});
+
+test("Neon Nights on easy", () => {
+  const easy = NEON.forDifficulty("easy");
+  const pts = easy.judgePoints();
+  assert.equal(NEON.judgePoints().length, 145);
+  assert.equal(pts.length, 49);
+  SECTIONS.forEach(([name, lo], i) => {
+    const hi = SECTIONS[i + 1]?.[1] ?? 212;
+    if (NEON.judgePoints().some((p) => p.gold && lo <= p.beat && p.beat < hi)) {
+      assert.ok(pts.some((p) => p.gold && lo <= p.beat && p.beat < hi), `${name} lost its gold`);
+    }
+  });
+  assert.deepEqual(sectionMoves(easy, 144, 160).map((p) => p.move), sectionMoves(NEON, 144, 160).map((p) => p.move),
+    "the bridge's 4-beat moves stay whole");
+  assert.deepEqual(sectionMoves(easy, 192, 212).map((p) => [p.beat, p.move.name]), [[192, "finale"], [196, "bow"]]);
+  assert.equal(pts[pts.length - 1].beat, 192);
+  assert.equal(pts.filter((p) => p.beat >= 16 && p.beat < 48).length, 8, "verse 1: one pose a bar");
+});
+
+const handMade = (extra) => ({ title: "T", bpm: 120, duration: 40.0,
+  moves: [{ move: "shine", beat: 16 }, { move: "rise", beat: 20 }, { move: "star", beat: 24 }], ...extra });
+
+test("a song can hand-make its easy and hard charts", () => {
+  const data = handMade({ charts: { easy: [{ move: "rise", beat: 20, gold: true }],
+    hard: [{ move: "shine", beat: 16 }, { move: "star", beat: 18 }, { move: "rise", beat: 20 }] } });
+  const easy = parseSong(data, "s", LIB, "easy");
+  assert.deepEqual(easy.chart.map((p) => [p.move.name, p.beat, p.gold]), [["rise", 20, true]]);
+  assert.deepEqual(parseSong(data, "s", LIB, "hard").chart.map((p) => p.move.name), ["shine", "star", "rise"]);
+  const normal = parseSong(data, "s", LIB);
+  assert.deepEqual(normal.chart.map((p) => p.move.name), ["shine", "rise", "star"]);
+  assert.deepEqual(normal.forDifficulty("easy").chart, easy.chart, "the hand-made chart wins over the derived one");
+});
+
+test("hand-made charts are validated like the normal one", () => {
+  for (const [charts, message] of [
+    [{ easy: [{ move: "nope", beat: 16 }] }, "charts.easy: chart entry 0 at beat 16.0: unknown move 'nope'"],
+    [{ hard: [{ move: "rise", beat: 16 }, { move: "shine", beat: 18 }] }, "charts.hard: move 'shine' at beat 18"],
+    [{ hard: [{ move: "rise", beat: 78 }] }, "runs past the song's end"],
+    [{ normal: [] }, "only 'easy' and 'hard' charts can be hand-made"],
+    [{ expert: [] }, "only 'easy' and 'hard'"],
+    [{ easy: { move: "rise" } }, "charts.easy: expected a list"],
+    [[], "'charts' must be an object"],
+  ]) {
+    assert.throws(() => parseSong(handMade({ charts }), "s", LIB),
+      (err) => err instanceof ChartError && err.message.includes(message), message);
+  }
+});
+
+test("easy moves gold to the kept pose when the gold one would freeze", () => {
+  const up = { la: [170, 175], ra: [170, 175] }, out = { la: [90, 90], ra: [90, 90] };
+  const moves = parseMoves({ up: { beats: 2, keyframes: [{ beat: 0, pose: up }] },
+    out: { beats: 2, keyframes: [{ beat: 0, pose: out }] } }, "t");
+  const normal = [new Placed(moves.get("up"), 16), new Placed(moves.get("out"), 18),
+    new Placed(moves.get("up"), 20, true), new Placed(moves.get("out"), 22)];
+  const easy = deriveEasy(normal);
+  assert.deepEqual(easy.map((p) => [p.beat, p.move.label, p.gold]), [[16, "Up", false], [22, "Out", true]]);
+  assert.ok(easy[0].end === 20 && easy[1].end === 24, "held to the end of the bar's moves");
+});
+
+test("the freeze rule holds on every difficulty", () => {
+  for (const song of SONGS) {
+    for (const level of DIFFICULTIES) {
+      const jp = song.forDifficulty(level).judgePoints();
+      for (let i = 1; i < jp.length; i++) {
+        assert.ok(sim(jp[i].pose, jp[i - 1].pose) < FREEZE_MAX, `${song.id} ${level} beat ${jp[i].beat}`);
+        assert.ok(sim(jp[i].pose, jp[i - 1].pose, { visible: ELBOWS_HIDDEN }) < FREEZE_MAX, `${song.id} ${level}`);
+      }
+    }
+  }
+});
+
 // --- the move library -------------------------------------------------------
 
 test("library size, twins and labels", () => {
@@ -179,7 +307,7 @@ test("loadSongs fetches the library, the index and every song", async () => {
   assert.equal(out.library.size, LIB.size);
   assert.equal(out.songs[0].judgePoints().length, NEON.judgePoints().length);
   assert.deepEqual(songVariants(out.songs)[0], {
-    id: "neon_nights", title: "Neon Nights", subtitle: "KP Arcade - difficulty 1", boardId: "dance-neon_nights",
+    id: "neon_nights", title: "Neon Nights", subtitle: "KP Arcade - 1:46", boardId: "dance-neon_nights",
   });
 });
 

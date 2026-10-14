@@ -5,16 +5,21 @@ A song folder holds `song.json` (metadata + chart) and its audio. Moves come
 from the shared library (`assets/dance/moves.json`) or the song's own
 `custom_moves`. Everything is validated on load, with errors that name the
 song, move and beat, so a hand-edited or imported chart fails loudly.
+
+Every song plays on three difficulties (docs/DANCE.md section 7a). NORMAL and
+HARD dance the song's chart (`moves`); EASY dances a chart derived from it,
+one held pose per bar (`derive_easy`). A song may hand-make either one in
+`song.json` under `"charts": {"easy": [...], "hard": [...]}`.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from .pose import REST, lerp_pose, mirror_pose, normalize_pose, smoothstep
+from .pose import REST, keypoints_for, lerp_pose, measure, mirror_pose, normalize_pose, similarity, smoothstep
 
 ASSET_DIR = Path(__file__).resolve().parents[4] / "assets" / "dance"
 LIBRARY = ASSET_DIR / "moves.json"
@@ -23,6 +28,31 @@ SONGS = ASSET_DIR / "songs"
 # The coach reaches each keyframe exactly on its beat, holding it until it
 # eases into the next one over this many beats (or the whole gap if shorter).
 EASE_BEATS = 0.75
+
+DIFFICULTIES = ("easy", "normal", "hard")
+DEFAULT_DIFFICULTY = "normal"
+BAR_BEATS = 4  # EASY judges about one pose per bar
+EASY_MIN_GAP = 2.0  # beats: EASY never judges two poses closer than this
+# The freeze rule: a player frozen in the previous judged pose must score
+# below this on the next one, with or without elbows in view
+# (tests/test_dance_chart.py checks it for every difficulty of every song).
+FREEZE_MAX = 0.55
+_ELBOWS_HIDDEN = frozenset({"shoulder", "wrist", "hip"})
+
+
+def difficulty_id(difficulty) -> str:
+    """A known difficulty id; anything else (None, typos) is normal."""
+    d = str(difficulty).lower() if difficulty is not None else DEFAULT_DIFFICULTY
+    return d if d in DIFFICULTIES else DEFAULT_DIFFICULTY
+
+
+def freeze_score(target: dict, held: dict) -> float:
+    """How well a perfect player frozen in `held` matches `target`: the worse
+    (higher) of elbows seen and elbows hidden. Below FREEZE_MAX means a
+    player can't score on `target` by standing still in `held`."""
+    full = similarity(target, measure(keypoints_for(held)))[0]
+    reach = similarity(target, measure(keypoints_for(held, visible=set(_ELBOWS_HIDDEN))))[0]
+    return max(full or 0.0, reach or 0.0)
 
 
 class ChartError(ValueError):
@@ -92,6 +122,8 @@ class Song:
     chart: list[Placed]
     preview: tuple[float, float] | None = None
     folder: Path | None = None
+    level: str = DEFAULT_DIFFICULTY  # the difficulty this chart is for ("easy" | "normal" | "hard")
+    charts: dict[str, list[Placed]] = field(default_factory=dict, repr=False)  # "normal" + hand-made ones
     _frames: list[tuple[float, dict]] = field(default_factory=list, repr=False)
     _judges: list[JudgePoint] = field(default_factory=list, repr=False)
 
@@ -113,6 +145,31 @@ class Song:
             if s["beat"] <= beat:
                 name = s["name"]
         return name
+
+    # --- difficulties ---
+
+    def chart_for(self, difficulty: str) -> list[Placed]:
+        """The chart a difficulty dances: a hand-made one from song.json's
+        `charts` if there is one, else EASY derives from the normal chart and
+        HARD dances the normal chart (judged strictly: judge.DIFFICULTY)."""
+        level = difficulty_id(difficulty)
+        normal = self.charts.get(DEFAULT_DIFFICULTY, self.chart)
+        if level in self.charts:
+            return list(self.charts[level])
+        if level == "easy":
+            return derive_easy(normal)
+        return list(normal)
+
+    def for_difficulty(self, difficulty: str) -> "Song":
+        """This song on another difficulty: same metadata, that difficulty's chart."""
+        level = difficulty_id(difficulty)
+        if level == self.level:
+            return self
+        charts = self.charts or {DEFAULT_DIFFICULTY: list(self.chart)}
+        song = replace(self, level=level, chart=[], charts=charts, _frames=[], _judges=[])
+        song.chart = song.chart_for(level)
+        _index(song)
+        return song
 
     # --- the chart, flattened ---
 
@@ -158,6 +215,87 @@ class Song:
         ease = min(EASE_BEATS, b1 - b0)
         u = smoothstep((beat - (b1 - ease)) / ease) if ease > 0 else 1.0
         return lerp_pose(p0, p1, u)
+
+
+def _index(song: Song) -> None:
+    """Flatten the chart into the coach's keyframes and the judge points."""
+    song._frames, song._judges = [], []
+    for p_idx, p in enumerate(song.chart):
+        for k_idx, k in enumerate(p.move.keyframes):
+            b = p.beat + k.beat
+            song._frames.append((b, k.pose))
+            if k_idx in p.move.judge:
+                song._judges.append(JudgePoint(len(song._judges), b, song.time_of(b), k.pose, p.gold,
+                                               2.0 if p.gold else 1.0, p.move.label, p_idx))
+
+
+def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
+    """EASY's chart from a normal one: about one judged pose per bar, held.
+
+    - **Short moves** (under a bar) are grouped by the bar they start in. Each
+      group becomes one *held* move: the pose kept for the group, from its beat
+      to the group's end, with no in-between keyframes. The coach then holds
+      it for the bar, so what the player sees is what is asked.
+    - **Which pose:** a gold one first, else the earliest. A candidate is
+      skipped when it is closer than EASY_MIN_GAP beats to the previous kept
+      pose, or when a player frozen in the previous kept pose would score on it
+      (`freeze_score` >= FREEZE_MAX): the freeze rule holds on EASY too. A
+      group with no candidate left adds nothing (the coach holds on).
+    - **Gold:** a group that had a gold point keeps a gold point, so every
+      section with gold in normal keeps gold.
+    - **Moves a bar or longer** (the bridge's 4-beat moves, the final pose)
+      and **unjudged moves** (the bow) stay as they are: they are slow
+      already (a pose every 2 beats at most). The coach dances them in full
+      and their judged poses stay judged, so every pose the coach holds is
+      one the judge asks for. (Judging one pose per bar of them left the
+      coach visibly hitting poses that no longer counted.) The same gap and
+      freeze checks apply; a pose that fails them is no longer judged.
+    """
+    out: list[Placed] = []
+    prev: tuple[float, dict] | None = None  # (beat, pose) of the last kept judge point
+
+    def pick(cands):
+        nonlocal prev
+        for c in sorted(cands, key=lambda c: (not c[2], c[0])):  # (beat, pose, gold, ...)
+            if prev is not None and (c[0] - prev[0] < EASY_MIN_GAP - 1e-9
+                                     or freeze_score(c[1], prev[1]) >= FREEZE_MAX):
+                continue
+            prev = (c[0], c[1])
+            return c
+        return None
+
+    def bar_of(beat):
+        return math.floor(beat / bar + 1e-9)
+
+    i, n = 0, len(chart)
+    while i < n:
+        p = chart[i]
+        if not p.move.judge or p.move.beats >= bar - 1e-9:
+            keep: list[int] = []
+            for k in p.move.judge:
+                c = pick([(p.beat + p.move.keyframes[k].beat, p.move.keyframes[k].pose, p.gold, k)])
+                if c is not None:
+                    keep.append(k)
+            move = p.move if tuple(keep) == p.move.judge else replace(p.move, judge=tuple(keep))
+            out.append(Placed(move, p.beat, p.gold and bool(keep)))
+            i += 1
+            continue
+        group = [p]
+        i += 1
+        while (i < n and chart[i].move.judge and chart[i].move.beats < bar - 1e-9
+               and bar_of(chart[i].beat) == bar_of(p.beat)):
+            group.append(chart[i])
+            i += 1
+        cands = [(g.beat + g.move.keyframes[k].beat, g.move.keyframes[k].pose, g.gold, g)
+                 for g in group for k in g.move.judge]
+        c = pick(cands)
+        if c is None:
+            continue
+        beat, pose, gold, src = c
+        end = max(g.end for g in group)
+        held = Move(f"{src.move.name}~held", src.move.label, end - beat, (Keyframe(0.0, pose),), (0,), 0)
+        out.append(Placed(held, beat, gold or any(g.gold for g in group)))
+    return out
 
 
 def idle_groove(beat: float) -> dict:
@@ -261,7 +399,35 @@ def song_ids(songs_dir: Path = SONGS) -> list[str]:
     return ids
 
 
-def load_song(folder: Path | str, library: dict[str, Move] | None = None) -> Song:
+def _parse_chart(entries, moves: dict[str, Move], where: str, last_beat: float) -> list[Placed]:
+    """A list of {"move", "beat", "gold"?} entries -> placed moves, validated:
+    known moves, no overlaps, nothing past the song's end."""
+    if not isinstance(entries, list):
+        raise ChartError(f"{where}: expected a list of moves")
+    out: list[Placed] = []
+    end = -math.inf
+    for i, entry in enumerate(entries):
+        try:
+            name, beat = entry["move"], float(entry["beat"])
+        except (KeyError, TypeError, ValueError):
+            raise ChartError(f"{where}: chart entry {i} needs 'move' and 'beat'") from None
+        move = moves.get(name)
+        if move is None:
+            raise ChartError(f"{where}: chart entry {i} at beat {beat}: unknown move '{name}'")
+        if beat < end - 1e-9:
+            raise ChartError(f"{where}: move '{name}' at beat {beat} overlaps the previous move (ends at {end})")
+        placed = Placed(move, beat, bool(entry.get("gold", False)))
+        if placed.end > last_beat + 1e-9:
+            raise ChartError(f"{where}: move '{name}' at beat {beat} runs past the song's end (beat {last_beat:.1f})")
+        out.append(placed)
+        end = placed.end
+    return out
+
+
+def load_song(folder: Path | str, library: dict[str, Move] | None = None,
+              difficulty: str = DEFAULT_DIFFICULTY) -> Song:
+    """A song on a difficulty (default normal; unknown ids are normal too).
+    Every chart in song.json is validated, whichever difficulty is asked for."""
     folder = Path(folder)
     where = f"song '{folder.name}'"
     try:
@@ -288,31 +454,18 @@ def load_song(folder: Path | str, library: dict[str, Move] | None = None) -> Son
         preview=tuple(data["preview"]) if data.get("preview") else None, folder=folder,
     )
     last_beat = song.beat_of(duration)
-    end = -math.inf
-    for i, entry in enumerate(data.get("moves", [])):
-        try:
-            name, beat = entry["move"], float(entry["beat"])
-        except (KeyError, TypeError, ValueError):
-            raise ChartError(f"{where}: chart entry {i} needs 'move' and 'beat'") from None
-        move = moves.get(name)
-        if move is None:
-            raise ChartError(f"{where}: chart entry {i} at beat {beat}: unknown move '{name}'")
-        if beat < end - 1e-9:
-            raise ChartError(f"{where}: move '{name}' at beat {beat} overlaps the previous move (ends at {end})")
-        placed = Placed(move, beat, bool(entry.get("gold", False)))
-        if placed.end > last_beat + 1e-9:
-            raise ChartError(f"{where}: move '{name}' at beat {beat} runs past the song's end (beat {last_beat:.1f})")
-        song.chart.append(placed)
-        end = placed.end
-
-    for p_idx, p in enumerate(song.chart):
-        for k_idx, k in enumerate(p.move.keyframes):
-            b = p.beat + k.beat
-            song._frames.append((b, k.pose))
-            if k_idx in p.move.judge:
-                song._judges.append(JudgePoint(len(song._judges), b, song.time_of(b), k.pose, p.gold,
-                                               2.0 if p.gold else 1.0, p.move.label, p_idx))
-    return song
+    song.chart = _parse_chart(data.get("moves", []), moves, where, last_beat)
+    song.charts = {DEFAULT_DIFFICULTY: list(song.chart)}
+    extra = data.get("charts", {})
+    if not isinstance(extra, dict):
+        raise ChartError(f"{where}: 'charts' must be an object like {{\"easy\": [...], \"hard\": [...]}}")
+    for level, entries in extra.items():
+        if level not in DIFFICULTIES or level == DEFAULT_DIFFICULTY:
+            raise ChartError(f"{where}: charts.{level}: only 'easy' and 'hard' charts can be hand-made "
+                             f"(normal is 'moves')")
+        song.charts[level] = _parse_chart(entries, moves, f"{where} charts.{level}", last_beat)
+    _index(song)
+    return song.for_difficulty(difficulty)
 
 
 def load_songs(songs_dir: Path = SONGS, library: dict[str, Move] | None = None) -> list[Song]:

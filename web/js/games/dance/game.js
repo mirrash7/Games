@@ -25,8 +25,8 @@ import { Game } from "../base.js";
 import { loadJSON, makeCanvas } from "../../core/gfx.js";
 import { openPlayer as defaultOpenPlayer, SilentPlayer } from "../../core/audio.js";
 import { ACCENT, CYAN, DANGER, DIM, WARN, centredText, css } from "../../core/theme.js";
-import { ChartError, parseLibrary, parseSong, parseSongIds } from "./chart.js";
-import { COMBO_FROM, Judge, UNSEEN } from "./judge.js";
+import { ChartError, DEFAULT_DIFFICULTY, difficultyId, parseLibrary, parseSong, parseSongIds } from "./chart.js";
+import { COMBO_FROM, Judge, UNSEEN, rulesFor } from "./judge.js";
 import { forward, measure } from "./pose.js";
 import { cachedArt, loadArt } from "./art.js";
 import { DanceRenderer } from "./render.js";
@@ -123,12 +123,33 @@ export async function loadSongs({ base = ASSET_URL, fetchJSON = loadJSON } = {})
   return { library, songs, ids: songs.map((s) => s.folder) };
 }
 
+/**
+ * A song's leaderboard on a difficulty: "dance-<song>" on normal (the board it
+ * had before difficulties), "dance-<song>_<difficulty>" otherwise. The server
+ * accepts /^dance-[a-z0-9_]{1,40}$/.
+ */
+export function boardIdFor(songId, difficulty = null) {
+  const level = difficultyId(difficulty);
+  return level === DEFAULT_DIFFICULTY ? `dance-${songId}` : `dance-${songId}_${level}`;
+}
+
+/** A song's length as M:SS (the song cards' subtitle). */
+export function songLength(duration) {
+  const m = Math.floor(duration / 60);
+  // Python's round(): half to even.
+  const r = duration % 60;
+  const ss = Math.abs(r % 1) === 0.5 ? 2 * Math.round(r / 2) : Math.round(r);
+  return `${m}:${String(ss).padStart(2, "0")}`;
+}
+
 /** Variant entries for a list of songs: [{id, title, subtitle, boardId}]. */
 export function songVariants(songs) {
   return songs.map((s) => ({
     id: s.folder,
     title: s.title,
-    subtitle: s.artist ? `${s.artist} - difficulty ${s.difficulty}` : `difficulty ${s.difficulty}`,
+    // The song's length, not its old "difficulty 1" rating: that read like the
+    // EASY / NORMAL / HARD picker above the cards.
+    subtitle: s.artist ? `${s.artist} - ${songLength(s.duration)}` : songLength(s.duration),
     boardId: `dance-${s.folder}`,
   }));
 }
@@ -143,6 +164,14 @@ export class DanceRaccoonGame extends Game {
   static tutorial = DANCE_TUTORIAL; // the shell's how-to-play cards
   static menu = true;
   static ownCountdown = true; // the song counts in 3-2-1 on the beat; the shell skips its own
+  // The shell's difficulty picker reads these (docs/DANCE.md section 7a). NORMAL
+  // keeps each song's original board, so scores from before difficulties stay put.
+  static difficulties = Object.freeze([
+    { id: "easy", label: "EASY", hint: "fewer moves, held longer" },
+    { id: "normal", label: "NORMAL", hint: "the full routine" },
+    { id: "hard", label: "HARD", hint: "every move, judged strictly" },
+  ]);
+  static defaultDifficulty = DEFAULT_DIFFICULTY;
 
   /** Load the songs once at boot. `opts` ({base, fetchJSON}) are for tests. */
   static async preload(opts = {}) {
@@ -162,6 +191,7 @@ export class DanceRaccoonGame extends Game {
   /**
    * @param {object} opts
    *   variant      song folder id (default: the first song)
+   *   difficulty   "easy" | "normal" | "hard" (unknown ids are normal)
    *   songs        [Song] to pick from (default: what preload() loaded)
    *   player       an audio player (SilentPlayer with a fake clock in tests);
    *                default: the song's track via openPlayer, loaded asynchronously
@@ -169,15 +199,18 @@ export class DanceRaccoonGame extends Game {
    *   assetBase    URL of assets/dance/ (the song's audio is songs/<id>/<audio>)
    */
   constructor({ width = 1280, height = 720, mirrored = true, seed = null, variant = null, songs = null,
-    player = null, openPlayer = defaultOpenPlayer, assetBase = ASSET_URL, art = null } = {}) {
+    difficulty = DEFAULT_DIFFICULTY, player = null, openPlayer = defaultOpenPlayer, assetBase = ASSET_URL, art = null } = {}) {
     super({ width, height, mirrored, seed }); // nothing random yet; seed kept for the contract
     const list = songs ?? loaded?.songs ?? [];
     if (!list.length) throw new ChartError("no songs: await DanceRaccoonGame.preload() first");
-    const song = variant == null ? list[0] : list.find((s) => s.folder === variant || s.id === variant);
-    if (!song) throw new ChartError(`no song '${variant}'`);
+    const base = variant == null ? list[0] : list.find((s) => s.folder === variant || s.id === variant);
+    if (!base) throw new ChartError(`no song '${variant}'`);
+    this.difficulty = difficultyId(difficulty);
+    const song = base.forDifficulty(this.difficulty);
     this.song = song;
+    this.rules = rulesFor(this.difficulty);
     this.variant = song.folder ?? song.id;
-    this.boardId = `dance-${this.variant}`;
+    this.boardId = boardIdFor(this.variant, this.difficulty);
     this.art = art;
     this._renderer = null;
 
@@ -202,7 +235,7 @@ export class DanceRaccoonGame extends Game {
       gold: p.gold }));
     this._pictoBeats = this._pictos.map((p) => p.beat);
     this._lastMoveEnd = song.timeOf(song.chart.reduce((m, p) => Math.max(m, p.end), 0.0));
-    this.judge = new Judge(song);
+    this.judge = new Judge(song, this.rules);
     this.reset();
   }
 

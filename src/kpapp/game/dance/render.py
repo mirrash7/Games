@@ -7,9 +7,9 @@ a skeleton tinted by the last rating.
 
 Layout (docs/DANCE.md section 10): the coach stands centre-left in a spotlight
 (x ~520, feet at y 660, ~520 px tall); the pictogram lane runs along the bottom
-right onto a target ring at x 800; the PiP is top-right; the score is
-top-left above a vertical star bar; the bottom-left footer and the PAUSE
-button (x 1090+, y 646+) stay clear.
+right onto a target ring at x 812; the PiP is top-right (384 x 216); the score
+is top-left above a vertical star bar, with the difficulty badge beside it;
+the bottom-left footer and the PAUSE button (x 1090-1258, y 646-698) stay clear.
 
 Budget: < 4 ms a frame. What makes that possible:
 * The stage is one pre-rendered image, copied (not blended) each frame.
@@ -47,19 +47,35 @@ COACH_SCALE = 114.0  # px per shoulder width
 COACH_ROI = (110, 56, 930, 704)  # the coach never draws outside this
 POPUP_Y_MIN = 78
 
-LANE_RECT = (748, 544, 1262, 642)  # the track; PAUSE (x 1090+) starts below y 646
-TARGET_X, LANE_Y = 806, 593
-PX_PER_BEAT = 112.0
-CARD_SMALL, CARD_BIG = 76, 108  # card widths
-GROW_BEATS = 1.0  # a card grows from small to big over its last beat to the ring (cards come every beat)
-LABEL_Y = 672
+PAUSE_RECT = (1090, 646, 1258, 698)  # the shell's PAUSE button: nothing of ours enters it
+FOOTER_Y = 700  # the shell's footer (bottom-left) starts here
 
-PIP_RECT = (944, 16, 1264, 196)
-PIP_RADIUS = 14
+# The lane: cards ~20% bigger than at first (76 -> 108 px), re-laid out so two
+# cards a beat apart still keep a gap, everything above PAUSE_RECT, and the
+# label above the footer.
+LANE_RECT = (740, 513, 1262, 631)  # the track (118 px tall)
+TARGET_X, LANE_Y = 812, 572
+PX_PER_BEAT = 128.0
+CARD_SMALL, CARD_BIG = 92, 132  # card widths (multiples of 4: card_width's steps) (cards are 208/192 as tall as wide)
+GROW_BEATS = 1.0  # a card grows from small to big over its last beat to the ring (cards come every beat)
+RING = 146  # target ring diameter
+LANE_CLIP_BOTTOM = PAUSE_RECT[1] - 1  # cards (and their sparkles) never draw below this
+LABEL_Y = 670  # baseline of the move's name under the ring
+LABEL_SCALE = 0.72
+
+PIP_RECT = (880, 16, 1264, 232)  # 384 x 216, 16:9
+PIP_RADIUS = 16
 STAR_BAR = (30, 128, 50, 552)  # the fill track; star markers sit on it
 SCORE_ORG = (78, 76)
+HUD_BADGE_ORG = (262, 58)  # the difficulty badge's left edge and centre line, right of the score
+
+INTRO_C = (958, 352)  # the title card and GET READY, centred under the PiP
+COUNT_Y = 366  # the 3-2-1-GO words: their glow clears the PiP (y 232) once popped in
+POPUP_X = (260, 660)  # rating words: centre x clamp (the widest word, gold, stays left of the PiP)
 
 RESULTS_RECT = (700, 34, 1250, 528)  # leaves the bottom 25% to the shell
+
+DIFFICULTY_LABELS = {"easy": "EASY", "normal": "NORMAL", "hard": "HARD"}
 
 SHIFT = 4  # sub-pixel bits for cv2 drawing
 ONE = 1 << SHIFT
@@ -272,6 +288,39 @@ def make_glow_text(text: str, scale: float, colour, glow=None, thick: int = 3) -
     out[..., :3] = out[..., :3] * (1 - mf[..., None]) + fill * mf[..., None]
     out[..., 3] = np.maximum(np.maximum(mf, keyline), halo) * 255.0
     return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+def make_badge(text: str, colour, scale: float = 0.62, thick: int = 2) -> np.ndarray:
+    """A difficulty badge (BGRA): the label in `colour` on a dark, slightly
+    translucent pill with a border of the same colour."""
+    (tw, th), base = cv2.getTextSize(text, FONT, scale, thick)
+    px, py = int(round(th * 0.85)), int(round(th * 0.5))
+    w, h = tw + 2 * px, th + base + 2 * py
+    ss = 2  # drawn at 2x and reduced, for clean edges
+
+    def pill(width, height, inset):
+        m = np.zeros((height, width), np.uint8)
+        r = height // 2 - inset
+        cv2.rectangle(m, (height // 2, inset), (width - 1 - height // 2, height - 1 - inset), 255, -1)
+        for cx in (height // 2, width - 1 - height // 2):
+            cv2.circle(m, (cx, height // 2), r, 255, -1, cv2.LINE_AA)
+        return m.astype(np.float32) / 255.0
+
+    W2, H2 = w * ss, h * ss
+    outer = pill(W2, H2, 0)
+    inner = pill(W2, H2, max(2, int(round(1.6 * ss))))
+    border = np.clip(outer - inner, 0, 1)[..., None]
+    out = np.empty((H2, W2, 4), np.float32)
+    out[..., :3] = np.asarray((40, 18, 30), np.float32) * (1 - border) + np.asarray(colour, np.float32) * border
+    out[..., 3] = 255.0 * (0.88 * inner + border[..., 0])
+    bgr = np.ascontiguousarray(np.clip(out[..., :3], 0, 255).astype(np.uint8))
+    ink = np.zeros((H2, W2), np.uint8)
+    org = (px * ss, (py + th) * ss)
+    cv2.putText(ink, text, org, FONT, scale * ss, 255, thick * ss, cv2.LINE_AA)
+    k = ink.astype(np.float32)[..., None] / 255.0
+    bgr = (bgr * (1 - k) + np.asarray(colour, np.float32) * k).astype(np.uint8)
+    out[..., :3] = bgr
+    return _resize_bgra(np.clip(out + 0.5, 0, 255).astype(np.uint8), w, h)
 
 
 # --- the coach ------------------------------------------------------------------
@@ -793,9 +842,18 @@ class DanceRenderer:
         self._painter: CoachPainter | None = None
         self._painter_outfit = None
         self._cards = PictogramCards(art)
-        self._ring = Sprite(_resize_bgra(art.ring, 122, 122), tint=self.c_cyan)
-        self._ring_gold = Sprite(_resize_bgra(art.ring, 122, 122), tint=self.c_gold)
-        self._ring_light = _tinted(_resize_bgra(art.ring, 122, 122), WHITE)
+        self._ring = Sprite(_resize_bgra(art.ring, RING, RING), tint=self.c_cyan)
+        self._ring_gold = Sprite(_resize_bgra(art.ring, RING, RING), tint=self.c_gold)
+        self._ring_light = _tinted(_resize_bgra(art.ring, RING, RING), WHITE)
+        # Difficulty colours: EASY green, NORMAL cyan, HARD magenta (the manifest's
+        # palette, overridable there as "difficulty": {"easy": [b, g, r], ...}).
+        dc = man.get("difficulty", {}) if isinstance(man.get("difficulty", {}), dict) else {}
+        self.difficulty_colours = {
+            "easy": tuple(dc.get("easy", theme.GOOD)),
+            "normal": tuple(dc.get("normal", self.c_cyan)),
+            "hard": tuple(dc.get("hard", self.c_magenta)),
+        }
+        self._badges: dict[tuple[str, float], Sprite] = {}
         self._lane_bg = self._make_lane_bg()
 
         # FX
@@ -875,6 +933,21 @@ class DanceRenderer:
             cv2.circle(m, (cx, cy), r, 255, -1, cv2.LINE_AA)
         return np.repeat((m > 127)[:, :, None], 3, axis=2)
 
+    def _grab_pip(self, frame: np.ndarray) -> np.ndarray:
+        """The camera frame shrunk into the PiP. OpenCV's INTER_AREA is only fast
+        at integer ratios: 1280 -> 384 directly took 4.5 ms a frame. A 2x box
+        filter (its fast path) then a bilinear step costs 0.08 ms and looks the same."""
+        x0, y0, x1, y1 = PIP_RECT
+        w, h = x1 - x0, y1 - y0
+        fh, fw = frame.shape[:2]
+        if fw >= 2 * w and fh >= 2 * h:
+            half = getattr(self, "_pip_half", None)
+            if half is None or half.shape[:2] != (fh // 2, fw // 2):
+                half = self._pip_half = np.empty((fh // 2, fw // 2, 3), np.uint8)
+            cv2.resize(frame, (fw // 2, fh // 2), dst=half, interpolation=cv2.INTER_AREA)
+            return cv2.resize(half, (w, h), interpolation=cv2.INTER_LINEAR)
+        return cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+
     def _beam(self, light: int, angle: float):
         b = int(round(angle / 2.0))
         key = (light, b)
@@ -926,8 +999,7 @@ class DanceRenderer:
         self._clock = song_time if not over else self._clock
         pip = None
         if not over:  # the camera, as received, before anything is drawn over it
-            x0, y0, x1, y1 = PIP_RECT
-            pip = cv2.resize(frame, (x1 - x0, y1 - y0), interpolation=cv2.INTER_AREA)
+            pip = self._grab_pip(frame)
         lap("pip_grab")
 
         np.copyto(frame, self._stage)
@@ -957,7 +1029,7 @@ class DanceRenderer:
         self._draw_feedback(frame, game, geo)
         lap("feedback")
         if phase == "intro":
-            self._draw_intro(frame, song, beat)
+            self._draw_intro(frame, song, beat, getattr(game, "difficulty", None))
         if phase == "outro":
             self._draw_outro_fade(frame, song, beat)
         lap("intro_outro")
@@ -1074,13 +1146,13 @@ class DanceRenderer:
             return
         self._lane_bg.draw(frame, LANE_RECT[0], LANE_RECT[1])
         x0, y0, x1, y1 = LANE_RECT
-        clip = (x0 + 2, y0 - 12, x1 - 2, y1 + 12)
+        clip = (x0 + 2, y0 - 16, x1 - 2, LANE_CLIP_BOTTOM)
         kick = _kick(beat)
         # Beat dots along the track, scrolling with the cards.
         b0 = math.ceil(beat - (TARGET_X - x0) / PX_PER_BEAT)
         for b in range(b0, int(beat + (x1 - TARGET_X) / PX_PER_BEAT) + 1):
             x = TARGET_X + (b - beat) * PX_PER_BEAT
-            if x0 + 14 < x < x1 - 14 and abs(x - TARGET_X) > 50:
+            if x0 + 14 < x < x1 - 14 and abs(x - TARGET_X) > RING * 0.41:
                 big = b % 4 == 0
                 cv2.circle(frame, (int(x), y1 - 10), 4 if big else 2, self.c_violet if not big else (240, 200, 255),
                            -1, cv2.LINE_AA)
@@ -1098,11 +1170,12 @@ class DanceRenderer:
             if -0.3 <= d <= 0.12:
                 flash = 1.0 - abs(d + 0.05) / 0.3
         for spr_gain in ((0.25 + 0.5 * kick) * 0.6 + flash * 0.9,):
-            v = _clip_rect(TARGET_X - 61, LANE_Y - 61, 122, 122, (0, 0, self.width, self.height))
+            rh = RING // 2
+            v = _clip_rect(TARGET_X - rh, LANE_Y - rh, RING, RING, (0, 0, self.width, self.height))
             if v is not None and spr_gain > 0.01:
                 xa, ya, xb, yb = v
                 roi = frame[ya:yb, xa:xb]
-                src = self._ring_light[ya - (LANE_Y - 61):yb - (LANE_Y - 61), xa - (TARGET_X - 61):xb - (TARGET_X - 61)]
+                src = self._ring_light[ya - (LANE_Y - rh):yb - (LANE_Y - rh), xa - (TARGET_X - rh):xb - (TARGET_X - rh)]
                 cv2.addWeighted(roi, 1.0, src, min(1.0, spr_gain), 0.0, dst=roi)
 
         visible = []
@@ -1141,8 +1214,8 @@ class DanceRenderer:
                 col = self.c_gold if getattr(nxt, "gold", False) else WHITE
                 a = min(1.0, (4.0 - d) / 0.6)
                 text = label if not getattr(nxt, "gold", False) else f"{label}  x2"
-                _faded(frame, (TARGET_X - 260, LABEL_Y - 24, TARGET_X + 260, LABEL_Y + 10), a,
-                       lambda img, ox, oy: text_c(img, text, TARGET_X - ox, LABEL_Y - oy, 0.62, col, 2))
+                _faded(frame, (TARGET_X - 270, LABEL_Y - 26, TARGET_X + 270, LABEL_Y + 10), a,
+                       lambda img, ox, oy: text_c(img, text, TARGET_X - ox, LABEL_Y - oy, LABEL_SCALE, col, 2))
 
     def _draw_feedback(self, frame, game, geo: CoachGeometry) -> None:
         fbs = list(getattr(game, "feedback", None) or [])
@@ -1150,7 +1223,7 @@ class DanceRenderer:
             # The notice ("STEP BACK...") sits where the words pop; a word
             # showing through its translucent panel read as a ghost (QA).
             return
-        cx = float(np.clip(geo.head_c[0], 260, 780))
+        cx = float(np.clip(geo.head_c[0], *POPUP_X))
         base_y = max(POPUP_Y_MIN + 30, geo.head_top - 26)
         gold_flash = float(getattr(game, "gold_flash", 0.0) or 0.0)
         if gold_flash > 0.01:  # a burst of rays behind the popup
@@ -1203,9 +1276,9 @@ class DanceRenderer:
         if age < 0.25:
             self._glow_dot.add_c(frame, x, y, gain=(1 - age / 0.25) * (0.9 if gold else 0.6))
 
-    def _draw_intro(self, frame, song, beat: float) -> None:
+    def _draw_intro(self, frame, song, beat: float, difficulty: str | None = None) -> None:
         fm = float(getattr(song, "first_move_beat", 16.0) or 16.0) if song is not None else 16.0
-        cx, cy = 958, 318
+        cx, cy = INTRO_C
         title = self._title(song)
         if title is not None and beat < fm - 7.5:
             t_spr, a_spr = title
@@ -1219,6 +1292,9 @@ class DanceRenderer:
             t_spr.draw_c(frame, cx, cy + dy, fade=fade * s)
             if a_spr is not None:
                 a_spr.draw_c(frame, cx, cy + 66 + dy, fade=fade)
+            badge = self.badge(difficulty, 0.8)
+            if badge is not None:
+                badge.draw_c(frame, cx, cy + 122 + dy, fade=fade)
         k = beat - (fm - 8)
         if 0 <= k < 4 and "get_ready" in self._count_words:
             s = _pop(k * 0.5, dur=0.4) * (1.0 + 0.05 * _kick(beat))
@@ -1228,12 +1304,23 @@ class DanceRenderer:
             b = fm - 4 + i
             age = (beat - b) * (getattr(song, "beat_seconds", 0.5) if song is not None else 0.5)
             if 0 <= beat - b < 1 and name in self._count_words:
-                s = _pop(age, dur=0.22, over=1.18, start=1.6)
+                s = _pop(age, dur=0.22, over=1.18, start=1.35)  # 1.6 reached up into the PiP
                 fade = 1.0 if beat - b < 0.6 else max(0.0, (1 - (beat - b)) / 0.4)
-                self._count_words[name].get(s).draw_c(frame, cx, cy, fade=fade)
+                self._count_words[name].get(s).draw_c(frame, cx, COUNT_Y, fade=fade)
         if beat >= fm - 7.5 and song is not None:  # small title, top-centre
             text_c(frame, f"{song.title}  -  {getattr(song, 'artist', '')}".strip(" -"), 640, 40, 0.55,
                    theme.DIM, 1, theme.BODY_FONT)
+
+    def badge(self, difficulty, scale: float = 0.62) -> Sprite | None:
+        """The difficulty's badge sprite (cached), or None for a game without difficulties."""
+        key = str(difficulty).lower() if difficulty is not None else ""
+        if key not in DIFFICULTY_LABELS:
+            return None
+        hit = self._badges.get((key, scale))
+        if hit is None:
+            hit = self._badges[(key, scale)] = Sprite(make_badge(DIFFICULTY_LABELS[key],
+                                                                 self.difficulty_colours[key], scale))
+        return hit
 
     def _title(self, song):
         if song is None:
@@ -1275,6 +1362,9 @@ class DanceRenderer:
             text = f"x{combo} COMBO"
             outlined_text(frame, text, (SCORE_ORG[0], SCORE_ORG[1] + 44), FONT, 0.85 * (1 + 0.2 * cp),
                           theme.CYAN, 2, width=2)
+        badge = self.badge(getattr(game, "difficulty", None), 0.6)
+        if badge is not None:
+            badge.draw(frame, HUD_BADGE_ORG[0], HUD_BADGE_ORG[1] - badge.h // 2)
         self._draw_star_bar(frame, float(getattr(game, "stars", 0.0) or 0.0))
         notice = getattr(game, "notice", None)
         if notice:
@@ -1328,7 +1418,7 @@ class DanceRenderer:
         for (cx, cy), ang in (((x0 + r, y0 + r), 180), ((x1 - r, y0 + r), 270),
                               ((x1 - r, y1 - r), 0), ((x0 + r, y1 - r), 90)):
             cv2.ellipse(frame, (cx, cy), (r, r), 0, ang, ang + 90, col, 3, cv2.LINE_AA)
-        outlined_text(frame, "YOU", (x0 + 12, y1 - 12), theme.BODY_FONT, 0.5, WHITE, 1, width=1)
+        outlined_text(frame, "YOU", (x0 + 14, y1 - 14), theme.BODY_FONT, 0.6, WHITE, 1, width=1)
 
     def _draw_results(self, frame, game, song) -> None:
         # Everything has landed by ~1.25 s: the shell covers this screen with its
@@ -1343,7 +1433,14 @@ class DanceRenderer:
             return
         cx = (x0 + x1) // 2
         title = str(getattr(song, "title", "")) if song is not None else ""
-        text_c(frame, "RESULTS", cx, y0 + 40, 0.6, theme.DIM, 1, theme.BODY_FONT)
+        badge = self.badge(getattr(game, "difficulty", None), 0.65)
+        if badge is None:
+            text_c(frame, "RESULTS", cx, y0 + 40, 0.6, theme.DIM, 1, theme.BODY_FONT)
+        else:  # "RESULTS [EASY]", centred as a pair
+            (tw, _), _ = cv2.getTextSize("RESULTS", theme.BODY_FONT, 0.6, 1)
+            left = cx - (tw + 12 + badge.w) / 2
+            text_c(frame, "RESULTS", left + tw / 2, y0 + 40, 0.6, theme.DIM, 1, theme.BODY_FONT)
+            badge.draw(frame, int(round(left + tw + 12)), int(round(y0 + 34 - badge.h / 2)))
         text_c(frame, title.upper(), cx, y0 + 80, 1.05, theme.ACCENT, 2)
         stars = int(math.floor(float(getattr(game, "stars", 0.0) or 0.0) + 1e-6))
         for k in range(5):

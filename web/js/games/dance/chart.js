@@ -9,15 +9,49 @@
 //
 //   parseLibrary(json, where)          moves.json -> Map(name -> Move)
 //   parseSongIds(json, where)          songs/index.json -> ["neon_nights", ...]
-//   parseSong(json, folder, library)   songs/<folder>/song.json -> Song
+//   parseSong(json, folder, library, difficulty)   songs/<folder>/song.json -> Song
 //
 // Moves live in a Map, so a move called "constructor" can't find Object's.
+//
+// Every song plays on three difficulties (docs/DANCE.md section 7a). NORMAL and
+// HARD dance the song's chart (`moves`); EASY dances a chart derived from it,
+// one held pose per bar (deriveEasy). A song may hand-make either one in
+// song.json under "charts": {"easy": [...], "hard": [...]}.
 
-import { REST, lerpPose, mirrorPose, normalizePose, pyNum, pyRepr, smoothstep } from "./pose.js";
+import {
+  REST, keypointsFor, lerpPose, measure, mirrorPose, normalizePose, pyNum, pyRepr, similarity, smoothstep,
+} from "./pose.js";
 
 // The coach reaches each keyframe exactly on its beat, holding it until it
 // eases into the next one over this many beats (or the whole gap if shorter).
 export const EASE_BEATS = 0.75;
+
+export const DIFFICULTIES = Object.freeze(["easy", "normal", "hard"]);
+export const DEFAULT_DIFFICULTY = "normal";
+export const BAR_BEATS = 4; // EASY judges about one pose per bar
+export const EASY_MIN_GAP = 2.0; // beats: EASY never judges two poses closer than this
+// The freeze rule: a player frozen in the previous judged pose must score
+// below this on the next one, with or without elbows in view
+// (dance_chart.test.mjs checks it for every difficulty of every song).
+export const FREEZE_MAX = 0.55;
+const ELBOWS_HIDDEN = ["shoulder", "wrist", "hip"];
+
+/** A known difficulty id; anything else (null, typos) is normal. */
+export function difficultyId(difficulty) {
+  const d = difficulty != null ? String(difficulty).toLowerCase() : DEFAULT_DIFFICULTY;
+  return DIFFICULTIES.includes(d) ? d : DEFAULT_DIFFICULTY;
+}
+
+/**
+ * How well a perfect player frozen in `held` matches `target`: the worse
+ * (higher) of elbows seen and elbows hidden. Below FREEZE_MAX means a player
+ * can't score on `target` by standing still in `held`.
+ */
+export function freezeScore(target, held) {
+  const full = similarity(target, measure(keypointsFor(held)))[0];
+  const reach = similarity(target, measure(keypointsFor(held, { visible: ELBOWS_HIDDEN })))[0];
+  return Math.max(full ?? 0.0, reach ?? 0.0);
+}
 
 export class ChartError extends Error {
   constructor(message) {
@@ -90,6 +124,8 @@ export class Song {
     this.chart = fields.chart; // [Placed]
     this.preview = fields.preview ?? null;
     this.folder = fields.folder ?? null;
+    this.level = fields.level ?? DEFAULT_DIFFICULTY; // the difficulty this chart is for
+    this.charts = fields.charts ?? {}; // "normal" + hand-made ones: {level: [Placed]}
     this._frames = []; // [[beat, pose]]
     this._judges = []; // [JudgePoint]
   }
@@ -112,6 +148,32 @@ export class Song {
     let name = "";
     for (const s of this.sections) if (s.beat <= beat) name = s.name;
     return name;
+  }
+
+  // --- difficulties ---
+
+  /**
+   * The chart a difficulty dances: a hand-made one from song.json's `charts`
+   * if there is one, else EASY derives from the normal chart and HARD dances
+   * the normal chart (judged strictly: judge.DIFFICULTY).
+   */
+  chartFor(difficulty) {
+    const level = difficultyId(difficulty);
+    const normal = this.charts[DEFAULT_DIFFICULTY] ?? this.chart;
+    if (Object.hasOwn(this.charts, level)) return [...this.charts[level]];
+    if (level === "easy") return deriveEasy(normal);
+    return [...normal];
+  }
+
+  /** This song on another difficulty: same metadata, that difficulty's chart. */
+  forDifficulty(difficulty) {
+    const level = difficultyId(difficulty);
+    if (level === this.level) return this;
+    const charts = Object.keys(this.charts).length ? this.charts : { [DEFAULT_DIFFICULTY]: [...this.chart] };
+    const song = new Song({ ...this, level, charts, chart: [] });
+    song.chart = song.chartFor(level);
+    indexSong(song);
+    return song;
   }
 
   // --- the chart, flattened ---
@@ -261,10 +323,126 @@ export function parseSongIds(data, where = "songs/index.json") {
 }
 
 /**
- * A Song from song.json's parsed contents. `folder` is the song's folder name
- * (its id when song.json doesn't say), `library` the parsed moves.json.
+ * A list of {move, beat, gold?} entries -> placed moves, validated: known
+ * moves, no overlaps, nothing past the song's end.
  */
-export function parseSong(data, folder, library = new Map()) {
+function parseChart(entries, moves, where, lastBeat) {
+  if (!Array.isArray(entries)) throw new ChartError(`${where}: expected a list of moves`);
+  const out = [];
+  let end = -Infinity;
+  entries.forEach((entry, i) => {
+    let name, beat;
+    try {
+      if (!has(entry, "move") || !has(entry, "beat")) throw new TypeError("missing");
+      name = entry.move;
+      beat = toFloat(entry.beat);
+    } catch {
+      throw new ChartError(`${where}: chart entry ${i} needs 'move' and 'beat'`);
+    }
+    const move = moves.get(name);
+    if (move == null) throw new ChartError(`${where}: chart entry ${i} at beat ${pyNum(beat)}: unknown move '${name}'`);
+    if (beat < end - 1e-9) {
+      throw new ChartError(`${where}: move '${name}' at beat ${pyNum(beat)} overlaps the previous move (ends at ${pyNum(end)})`);
+    }
+    const placed = new Placed(move, beat, Boolean(has(entry, "gold") ? entry.gold : false));
+    if (placed.end > lastBeat + 1e-9) {
+      throw new ChartError(`${where}: move '${name}' at beat ${pyNum(beat)} runs past the song's end (beat ${lastBeat.toFixed(1)})`);
+    }
+    out.push(placed);
+    end = placed.end;
+  });
+  return out;
+}
+
+/** Flatten the chart into the coach's keyframes and the judge points. */
+function indexSong(song) {
+  song._frames = [];
+  song._judges = [];
+  song.chart.forEach((p, pIdx) => {
+    p.move.keyframes.forEach((k, kIdx) => {
+      const b = p.beat + k.beat;
+      song._frames.push([b, k.pose]);
+      if (p.move.judge.includes(kIdx)) {
+        song._judges.push(Object.freeze({
+          index: song._judges.length, beat: b, time: song.timeOf(b), pose: k.pose, gold: p.gold,
+          weight: p.gold ? 2.0 : 1.0, label: p.move.label, placed: pIdx,
+        }));
+      }
+    });
+  });
+}
+
+/**
+ * EASY's chart from a normal one: about one judged pose per bar, held (port
+ * of chart.derive_easy; its docstring has the reasons).
+ *
+ * - Short moves (under a bar) are grouped by the bar they start in; each group
+ *   becomes one held move: the kept pose, from its beat to the group's end.
+ * - Which pose: a gold one first, else the earliest, skipping any closer than
+ *   EASY_MIN_GAP beats to the previous kept pose or that a player frozen in it
+ *   would score on (freezeScore >= FREEZE_MAX). A group with none left adds nothing.
+ * - A group that had a gold point keeps a gold point.
+ * - Moves a bar or longer and unjudged moves stay whole; the same gap and
+ *   freeze checks decide which of their poses stay judged.
+ */
+export function deriveEasy(chart, bar = BAR_BEATS) {
+  const out = [];
+  let prev = null; // [beat, pose] of the last kept judge point
+  const pick = (cands) => {
+    // Gold first, then the earliest (a stable sort, like Python's).
+    const sorted = [...cands].sort((a, b) => (a[2] === b[2] ? 0 : a[2] ? -1 : 1) || a[0] - b[0]);
+    for (const c of sorted) {
+      if (prev != null && (c[0] - prev[0] < EASY_MIN_GAP - 1e-9 || freezeScore(c[1], prev[1]) >= FREEZE_MAX)) continue;
+      prev = [c[0], c[1]];
+      return c;
+    }
+    return null;
+  };
+  const barOf = (beat) => Math.floor(beat / bar + 1e-9);
+  const short = (p) => p.move.judge.length && p.move.beats < bar - 1e-9;
+
+  let i = 0;
+  const n = chart.length;
+  while (i < n) {
+    const p = chart[i];
+    if (!short(p)) {
+      const keep = [];
+      for (const k of p.move.judge) {
+        if (pick([[p.beat + p.move.keyframes[k].beat, p.move.keyframes[k].pose, p.gold, k]]) != null) keep.push(k);
+      }
+      const same = keep.length === p.move.judge.length && keep.every((k, x) => k === p.move.judge[x]);
+      const move = same ? p.move : makeMove(p.move.name, p.move.label, p.move.beats, p.move.keyframes,
+        Object.freeze(keep), p.move.pictogram);
+      out.push(new Placed(move, p.beat, p.gold && keep.length > 0));
+      i += 1;
+      continue;
+    }
+    const group = [p];
+    i += 1;
+    while (i < n && short(chart[i]) && barOf(chart[i].beat) === barOf(p.beat)) {
+      group.push(chart[i]);
+      i += 1;
+    }
+    const cands = group.flatMap((g) => g.move.judge.map((k) => [g.beat + g.move.keyframes[k].beat,
+      g.move.keyframes[k].pose, g.gold, g]));
+    const c = pick(cands);
+    if (c == null) continue;
+    const [beat, pose, gold, src] = c;
+    const end = Math.max(...group.map((g) => g.end));
+    const held = makeMove(`${src.move.name}~held`, src.move.label, end - beat,
+      Object.freeze([Object.freeze({ beat: 0.0, pose })]), Object.freeze([0]), 0);
+    out.push(new Placed(held, beat, gold || group.some((g) => g.gold)));
+  }
+  return out;
+}
+
+/**
+ * A Song from song.json's parsed contents, on a difficulty (default normal;
+ * unknown ids are normal too). `folder` is the song's folder name (its id when
+ * song.json doesn't say), `library` the parsed moves.json. Every chart in
+ * song.json is validated, whichever difficulty is asked for.
+ */
+export function parseSong(data, folder, library = new Map(), difficulty = DEFAULT_DIFFICULTY) {
   const where = `song '${folder}'`;
   if (!isObject(data)) throw new ChartError(`${where}: song.json is not valid JSON (expected an object)`);
   for (const key of ["title", "bpm", "duration"]) {
@@ -292,40 +470,18 @@ export function parseSong(data, folder, library = new Map()) {
     preview: get("preview", null) ? [...data.preview] : null, folder,
   });
   const lastBeat = song.beatOf(duration);
-  let end = -Infinity;
-  get("moves", []).forEach((entry, i) => {
-    let name, beat;
-    try {
-      if (!has(entry, "move") || !has(entry, "beat")) throw new TypeError("missing");
-      name = entry.move;
-      beat = toFloat(entry.beat);
-    } catch {
-      throw new ChartError(`${where}: chart entry ${i} needs 'move' and 'beat'`);
+  song.chart = parseChart(get("moves", []), moves, where, lastBeat);
+  song.charts = { [DEFAULT_DIFFICULTY]: [...song.chart] };
+  const extra = get("charts", {});
+  if (!isObject(extra)) {
+    throw new ChartError(`${where}: 'charts' must be an object like {"easy": [...], "hard": [...]}`);
+  }
+  for (const [level, entries] of Object.entries(extra)) {
+    if (!DIFFICULTIES.includes(level) || level === DEFAULT_DIFFICULTY) {
+      throw new ChartError(`${where}: charts.${level}: only 'easy' and 'hard' charts can be hand-made (normal is 'moves')`);
     }
-    const move = moves.get(name);
-    if (move == null) throw new ChartError(`${where}: chart entry ${i} at beat ${pyNum(beat)}: unknown move '${name}'`);
-    if (beat < end - 1e-9) {
-      throw new ChartError(`${where}: move '${name}' at beat ${pyNum(beat)} overlaps the previous move (ends at ${pyNum(end)})`);
-    }
-    const placed = new Placed(move, beat, Boolean(has(entry, "gold") ? entry.gold : false));
-    if (placed.end > lastBeat + 1e-9) {
-      throw new ChartError(`${where}: move '${name}' at beat ${pyNum(beat)} runs past the song's end (beat ${lastBeat.toFixed(1)})`);
-    }
-    song.chart.push(placed);
-    end = placed.end;
-  });
-
-  song.chart.forEach((p, pIdx) => {
-    p.move.keyframes.forEach((k, kIdx) => {
-      const b = p.beat + k.beat;
-      song._frames.push([b, k.pose]);
-      if (p.move.judge.includes(kIdx)) {
-        song._judges.push(Object.freeze({
-          index: song._judges.length, beat: b, time: song.timeOf(b), pose: k.pose, gold: p.gold,
-          weight: p.gold ? 2.0 : 1.0, label: p.move.label, placed: pIdx,
-        }));
-      }
-    });
-  });
-  return song;
+    song.charts[level] = parseChart(entries, moves, `${where} charts.${level}`, lastBeat);
+  }
+  indexSong(song);
+  return song.forDifficulty(difficulty);
 }

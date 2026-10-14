@@ -460,3 +460,55 @@ def test_games_with_their_own_count_in_skip_the_shell_countdown(tmp_path):
     assert sh.screen is Screen.PLAYING, "straight into the song after the cards"
     sh.handle_key(ord("r"))
     assert sh.screen is Screen.PLAYING, "and on play again"
+
+
+# --- difficulties ---
+
+
+class Levels(Songs):
+    difficulties = [{"id": "easy", "label": "EASY", "hint": "fewer moves"},
+                    {"id": "normal", "label": "NORMAL", "hint": "the routine"},
+                    {"id": "hard", "label": "HARD", "hint": "strict"}]
+    default_difficulty = "normal"
+
+    def __init__(self, size, variant=None, difficulty="normal", **options):
+        super().__init__(size, variant=variant, **options)
+        self.difficulty = difficulty
+
+
+def test_difficulty_picker_sets_the_game_and_its_own_board(tmp_path):
+    board = LocalBoard(tmp_path / "s.json")
+    board.submit("songs-a", "OLD", 50).result()  # scores from before difficulties existed
+    sh = Shell((W, H), {"songs": Levels}, board=board)
+    settle(sh, 0.05)
+    assert {"songs-a", "songs-a_easy", "songs-a_hard", "songs-b_easy"} <= set(sh.board_keys())
+    sh.handle_key(ord("1"))
+    assert [b.action for b in sh._layout()][:3] == ["diff:easy", "diff:normal", "diff:hard"]
+    assert sh.difficulty_of("songs") == "normal"
+    line, _ = sh._tile_scoreline("song:a")
+    assert "OLD" in line, "normal keeps the song's existing board"
+    sh._do("diff:easy")
+    assert "NO HIGH SCORES" in sh._tile_scoreline("song:a")[0], "easy has its own board"
+    sh.handle_key(ord("1"))
+    assert sh.game.difficulty == "easy" and sh.board_key == "songs-a_easy"
+    assert sh._round_title() == "ALPHA - EASY"
+    sh.handle_key(ord("r"))
+    assert sh.game.difficulty == "easy", "play again keeps the difficulty"
+    sh.handle_key(KEY_ESC)
+    sh.handle_key(KEY_ESC)
+    sh.handle_key(ord("1"))
+    assert sh.difficulty_of("songs") == "easy", "the choice is remembered"
+    sh.handle_key(9)  # TAB cycles
+    assert sh.difficulty_of("songs") == "normal"
+    frame = np.full((H, W, 3), 60, np.uint8)
+    step(sh, 0.2)
+    sh.render(frame)
+    assert frame.std() > 5
+
+
+def test_games_without_difficulties_are_unchanged(tmp_path):
+    sh = Shell((W, H), {"songs": Songs}, board=LocalBoard(tmp_path / "s.json"))
+    sh.handle_key(ord("1"))
+    assert not any(b.action.startswith("diff:") for b in sh._layout())
+    sh.handle_key(ord("1"))
+    assert sh.difficulty is None and sh.board_key == "songs-a"

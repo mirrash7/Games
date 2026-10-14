@@ -143,9 +143,10 @@ def chart_sheet(song: Song) -> np.ndarray:
         blocks.append((f"{sec['name'].upper()}   beats {lo:g}-{hi - 1:g}", cards))
     judges = song.judge_points()
     gold = sum(1 for j in judges if j.gold)
-    sub = (f"{song.artist}  |  {song.bpm:g} BPM  |  {song.duration:g} s  |  {len(song.chart)} moves, "
+    level = getattr(song, "level", "normal")
+    sub = (f"{song.artist}  |  {song.bpm:g} BPM  |  {song.duration:g} s  |  {level.upper()}: {len(song.chart)} moves, "
            f"{len(judges)} judge points, {gold} gold  |  {LEGEND}")
-    return _assemble(blocks, song.title, sub)
+    return _assemble(blocks, f"{song.title}  ({level.upper()})", sub)
 
 
 def library_sheet(moves: dict[str, Move]) -> np.ndarray:

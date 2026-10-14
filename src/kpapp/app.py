@@ -550,11 +550,12 @@ def cmd_dance_preview(args: argparse.Namespace) -> int:
         if args.library:
             img = library_sheet(dance_chart.load_library())
         else:
-            img = chart_sheet(dance_chart.load_song(dance_chart.SONGS / args.song))
+            img = chart_sheet(dance_chart.load_song(dance_chart.SONGS / args.song, difficulty=args.difficulty))
     except dance_chart.ChartError as exc:
         print(f"[kp] {exc}", file=sys.stderr)
         return 1
-    out = Path(args.out or f"{'moves' if args.library else args.song}_chart.png")
+    name = "moves" if args.library else (args.song if args.difficulty == "normal" else f"{args.song}_{args.difficulty}")
+    out = Path(args.out or f"{name}_chart.png")
     cv2.imwrite(str(out), img)
     print(f"[kp] wrote {out} ({img.shape[1]}x{img.shape[0]})")
     return 0
@@ -740,6 +741,8 @@ def main() -> int:
     p_dprev = sub.add_parser("dance-preview", help="contact sheet of a song's chart, for review")
     p_dprev.add_argument("--song", default="neon_nights", help="song id (default neon_nights)")
     p_dprev.add_argument("--library", action="store_true", help="draw the whole move library instead")
+    p_dprev.add_argument("--difficulty", choices=["easy", "normal", "hard"], default="normal",
+                         help="which difficulty's chart to draw (default normal; easy is derived from it)")
     p_dprev.add_argument("--out", type=str, help="image path (default <song>_chart.png)")
     p_dprev.set_defaults(func=cmd_dance_preview)
 

@@ -31,7 +31,7 @@ from ... import theme
 from ...controls import ControlState
 from ..base import Game
 from . import chart
-from .judge import COMBO_FROM, UNSEEN, Judge, Rating
+from .judge import COMBO_FROM, UNSEEN, Judge, Rating, rules_for
 from .pose import Measured, forward, measure
 
 try:  # the designer's cards; the game must import without them
@@ -90,6 +90,14 @@ NOTICE_ARMS = "STEP BACK - SHOW YOUR ARMS"
 NOTICE_NOBODY = "STEP INTO THE FRAME"
 
 
+def board_id_for(song_id: str, difficulty: str | None = None) -> str:
+    """A song's leaderboard on a difficulty: "dance-<song>" on normal (the
+    board it had before difficulties), "dance-<song>_<difficulty>" otherwise.
+    The server accepts /^dance-[a-z0-9_]{1,40}$/."""
+    level = chart.difficulty_id(difficulty)
+    return f"dance-{song_id}" if level == chart.DEFAULT_DIFFICULTY else f"dance-{song_id}_{level}"
+
+
 def _default_library() -> dict:
     """The shared move library, or none if it isn't there (songs may define
     all their moves in custom_moves; unknown moves still fail loudly)."""
@@ -107,12 +115,21 @@ class DanceGame(Game):
     own_countdown = True  # the song counts in 3-2-1 on the beat; the shell skips its own
     blurb = "Bust a move with the raccoon. Copy every pose like a mirror!"
     tip = "Stand back so your arms and upper body are in frame - copy the coach like a mirror"
-    board_id = "dance"  # per song: "dance-<song id>" (variants())
+    board_id = "dance"  # per song: "dance-<song id>" (variants()), "_<difficulty>" off normal
     tutorial = _TUTORIAL
+    # The shell's difficulty picker reads these (docs/DANCE.md section 7a). NORMAL
+    # keeps each song's original board, so scores from before difficulties stay put.
+    difficulties = [
+        {"id": "easy", "label": "EASY", "hint": "fewer moves, held longer"},
+        {"id": "normal", "label": "NORMAL", "hint": "the full routine"},
+        {"id": "hard", "label": "HARD", "hint": "every move, judged strictly"},
+    ]
+    default_difficulty = chart.DEFAULT_DIFFICULTY
 
     def __init__(self, size: tuple[int, int], mirrored: bool = True, seed: int | None = None,
                  variant: str | None = None, art=None, player=None, songs_dir=None,
-                 library: dict | None = None, **options: object) -> None:
+                 library: dict | None = None, difficulty: str | None = "normal",
+                 **options: object) -> None:
         super().__init__(size, **options)
         self.mirrored = mirrored
         self.seed = seed  # nothing random yet; kept for the game contract
@@ -124,8 +141,10 @@ class DanceGame(Game):
                 raise chart.ChartError(f"no songs in {self.songs_dir / 'index.json'}")
             variant = ids[0]
         self.variant = variant
-        self.song = chart.load_song(self.songs_dir / variant, lib)
-        self.board_id = f"dance-{variant}"
+        self.difficulty = chart.difficulty_id(difficulty)  # unknown ids are normal
+        self.song = chart.load_song(self.songs_dir / variant, lib, difficulty=self.difficulty)
+        self.rules = rules_for(self.difficulty)
+        self.board_id = board_id_for(variant, self.difficulty)
         if player is None:
             from ...audio import open_player
 
@@ -137,7 +156,7 @@ class DanceGame(Game):
         self._pictos = [PictogramItem(p.beat, p.label, p.pose, p.gold) for p in self.song.pictograms()]
         self._picto_beats = [p.beat for p in self._pictos]
         self._last_move_end = self.song.time_of(max((p.end for p in self.song.chart), default=0.0))
-        self.judge = Judge(self.song)
+        self.judge = Judge(self.song, self.rules)
         self._closed = False
         self.reset()
 
@@ -233,7 +252,10 @@ class DanceGame(Game):
                 print(f"[kp] dance: skipping song '{sid}': {exc}")
                 continue
             # ASCII only: OpenCV's Hershey fonts can't draw a middle dot.
-            sub = f"{s.artist} - difficulty {s.difficulty}" if s.artist else f"difficulty {s.difficulty}"
+            # The song's length, not its old "difficulty 1" rating: that read like the
+            # EASY / NORMAL / HARD picker above the cards.
+            length = f"{int(s.duration // 60)}:{int(round(s.duration % 60)):02d}"
+            sub = f"{s.artist} - {length}" if s.artist else length
             out.append({"id": sid, "title": s.title, "subtitle": sub, "board_id": f"dance-{sid}"})
         return out
 

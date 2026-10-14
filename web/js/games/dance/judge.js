@@ -2,9 +2,11 @@
 // (port of src/kpapp/game/dance/judge.py; docs/DANCE.md section 7).
 //
 // Every judged keyframe in a song is a judge point at time `t`. While the song
-// time is inside [t - WINDOW_EARLY, t + WINDOW_LATE], the judge keeps the best
-// similarity between the point's pose and the player that was *held* for HOLD
-// seconds. When the window closes, the point resolves into a rating.
+// time is inside [t - early, t + late], the judge keeps the best similarity
+// between the point's pose and the player that was *held* for `hold` seconds.
+// When the window closes, the point resolves into a rating. The window, the
+// hold and the rating thresholds depend on the difficulty: one table,
+// DIFFICULTY, below.
 //
 // Why "best in a window" rather than "the pose at t": poses reach the game in
 // steps (15-30 Hz) and 100-150 ms late, so the frame that shows the player
@@ -20,21 +22,51 @@
 
 import { similarity } from "./pose.js";
 
-export const WINDOW_EARLY = 0.20; // s before the point's time that a pose already counts
-export const WINDOW_LATE = 0.50; // s after it (the spec started at 0.40; see judge.py)
-// A match only counts once it has been *held* this long (song time): the
-// window's score is the best, over the window, of the worst similarity in the
-// last HOLD seconds. A limb sweeping through the target is not a PERFECT.
-export const HOLD = 0.12;
+/** How strictly one difficulty judges: the window, the hold and the rating thresholds. */
+export class Rules {
+  constructor({ early, late, hold, ratings }) {
+    this.early = early; // s before the point's time that a pose already counts
+    this.late = late; // s after it that the window closes
+    this.hold = hold; // s a match must be held before it counts
+    this.ratings = ratings; // [[name, minimum best similarity, value], ...]; below the last is X
+    Object.freeze(this);
+  }
 
-// [name, minimum best similarity, value]. Checked in order; below OK is X.
-// PERFECT is 0.90 (the spec started at 0.86; see judge.py).
-export const RATINGS = Object.freeze([
-  ["perfect", 0.90, 1.0],
-  ["super", 0.74, 0.8],
-  ["good", 0.60, 0.55],
-  ["ok", 0.42, 0.3],
-]);
+  /** See LOST_BEFORE. */
+  get lostBefore() {
+    return this.late / 2;
+  }
+}
+
+const table = (rows) => Object.freeze(rows.map((r) => Object.freeze(r)));
+
+// One table for every difficulty (the reasons for each number are in judge.py).
+// NORMAL is the game as tuned before difficulties existed. EASY judges a
+// quarter as many poses (chart.deriveEasy) and forgives more; HARD judges the
+// normal chart strictly.
+export const DIFFICULTY = Object.freeze({
+  easy: new Rules({ early: 0.25, late: 0.60, hold: 0.12, ratings: table([
+    ["perfect", 0.86, 1.0], ["super", 0.72, 0.8], ["good", 0.56, 0.55], ["ok", 0.40, 0.3]]) }),
+  normal: new Rules({ early: 0.20, late: 0.50, hold: 0.12, ratings: table([
+    ["perfect", 0.90, 1.0], ["super", 0.74, 0.8], ["good", 0.60, 0.55], ["ok", 0.42, 0.3]]) }),
+  hard: new Rules({ early: 0.15, late: 0.50, hold: 0.15, ratings: table([
+    ["perfect", 0.93, 1.0], ["super", 0.84, 0.8], ["good", 0.68, 0.55], ["ok", 0.50, 0.3]]) }),
+});
+export const DEFAULT_DIFFICULTY = "normal";
+
+/** The Rules for a difficulty id (unknown ids and null mean normal), or a Rules as is. */
+export function rulesFor(difficulty) {
+  if (difficulty instanceof Rules) return difficulty;
+  return Object.hasOwn(DIFFICULTY, String(difficulty)) ? DIFFICULTY[String(difficulty)]
+    : DIFFICULTY[DEFAULT_DIFFICULTY];
+}
+
+// NORMAL's numbers under their old names, for code and tests that read them.
+const N = DIFFICULTY.normal;
+export const WINDOW_EARLY = N.early;
+export const WINDOW_LATE = N.late;
+export const HOLD = N.hold;
+export const RATINGS = N.ratings;
 export const MISS = Object.freeze(["x", 0.0]);
 export const UNSEEN = "unseen";
 export const RATING_NAMES = Object.freeze([...RATINGS.map((r) => r[0]), MISS[0]]);
@@ -54,16 +86,16 @@ export const RESUME_GRACE = 1.0;
 // player before this many seconds past its point's time, and never sees them
 // again, saw at most the player on their way into the pose (they reach the game
 // 100-150 ms late): if that would be an X, the point is unseen instead.
-export const LOST_BEFORE = WINDOW_LATE / 2;
+export const LOST_BEFORE = N.lostBefore;
 
 /** Python's round(): half to even, so scores match the desktop's exactly. */
 export function pyRound(x) {
   return Math.abs(x % 1) === 0.5 ? 2 * Math.round(x / 2) : Math.round(x);
 }
 
-/** A best similarity -> [rating name, value]. */
-export function rate(sim) {
-  for (const [name, need, value] of RATINGS) if (sim >= need) return [name, value];
+/** A best similarity -> [rating name, value], by `ratings` (default: normal's). */
+export function rate(sim, ratings = null) {
+  for (const [name, need, value] of ratings ?? RATINGS) if (sim >= need) return [name, value];
   return [...MISS];
 }
 
@@ -149,13 +181,13 @@ class Window {
 
 /**
  * Feed it update(songTime, measured) every frame; it returns the ratings that
- * resolved on that frame (for juice). `hold` is overridable for the test that
- * pins why HOLD exists.
+ * resolved on that frame (for juice). `rules` is a difficulty id or a Rules
+ * (default normal).
  */
 export class Judge {
-  constructor(song, { hold = HOLD } = {}) {
+  constructor(song, rules = null) {
     this.song = song;
-    this.hold = hold;
+    this.rules = rulesFor(rules);
     this.points = [...song.judgePoints()];
     this.totalWeight = this.points.reduce((a, p) => a + p.weight, 0);
     this.reset();
@@ -207,24 +239,25 @@ export class Judge {
   judging(songTime = null) {
     const t = songTime == null ? this.songTime : songTime;
     return this.points.slice(0, this._next + 4)
-      .some((p) => p.time - WINDOW_EARLY <= t && t <= p.time + WINDOW_LATE);
+      .some((p) => p.time - this.rules.early <= t && t <= p.time + this.rules.late);
   }
 
   // --- feeding ---
 
   update(songTime, measured) {
     this.songTime = songTime;
+    const { early, late } = this.rules;
     // Open every window that has started.
-    while (this._next < this.points.length && songTime >= this.points[this._next].time - WINDOW_EARLY) {
-      const w = new Window(this.points[this._next], this.hold);
-      w.excused = w.point.time - WINDOW_EARLY <= this._excuseUntil;
+    while (this._next < this.points.length && songTime >= this.points[this._next].time - early) {
+      const w = new Window(this.points[this._next], this.rules.hold);
+      w.excused = w.point.time - early <= this._excuseUntil;
       this._open.push(w);
       this._next += 1;
     }
     const resolved = [];
     const still = [];
     for (const w of this._open) {
-      if (songTime > w.point.time + WINDOW_LATE) {
+      if (songTime > w.point.time + late) {
         // Closed. A frame that jumped past the whole window (a stall) saw
         // nothing of it: unseen, never a miss.
         resolved.push(this._resolve(w, songTime));
@@ -258,8 +291,8 @@ export class Judge {
     let name, value;
     if (best == null) [name, value] = [UNSEEN, 0.0];
     else {
-      [name, value] = rate(best);
-      const lost = w.lastSeen != null && w.lastSeen < p.time + LOST_BEFORE;
+      [name, value] = rate(best, this.rules.ratings);
+      const lost = w.lastSeen != null && w.lastSeen < p.time + this.rules.lostBefore;
       if (name === MISS[0] && (w.excused || lost)) [name, value] = [UNSEEN, 0.0];
     }
     const r = new Rating(name, value, p.weight, name !== UNSEEN ? best : null, p, songTime);

@@ -25,7 +25,7 @@
 // an injectable factory so Node tests can drive it with a fake context.
 
 import { makeCanvas as defaultMakeCanvas } from "../../core/gfx.js";
-import { ACCENT, CYAN, DIM, WARN, css, centredText, font, fontPx, panel, text, textWidth } from "../../core/theme.js";
+import { ACCENT, CYAN, DIM, GOOD, WARN, css, centredText, font, fontPx, panel, text, textWidth } from "../../core/theme.js";
 import { bgr } from "./art.js";
 import { idleGroove } from "./chart.js";
 import { FOREARM, HIP_W, REST, SHIN, THIGH, TORSO, UPPER_ARM, forward, lerpPose, limbDir, normalizePose, smoothstep }
@@ -37,19 +37,35 @@ export const COACH_SCALE = 114.0; // px per shoulder width
 export const COACH_ROI = [110, 56, 930, 704]; // the coach never draws outside this
 export const POPUP_Y_MIN = 78;
 
-export const LANE_RECT = [748, 544, 1262, 642]; // the track; PAUSE (x 1090+) starts below y 646
-export const TARGET_X = 806, LANE_Y = 593;
-export const PX_PER_BEAT = 112.0;
-export const CARD_SMALL = 76, CARD_BIG = 108; // card widths
-export const GROW_BEATS = 1.0; // a card grows from small to big over its last beat to the ring (cards come every beat)
-export const LABEL_Y = 672;
+export const PAUSE_RECT = [1090, 646, 1258, 698]; // the shell's PAUSE button: nothing of ours enters it
+export const FOOTER_Y = 700; // the shell's footer (bottom-left) starts here
 
-export const PIP_RECT = [944, 16, 1264, 196];
-export const PIP_RADIUS = 14;
+// The lane: cards ~20% bigger than at first (76 -> 108 px), re-laid out so two
+// cards a beat apart still keep a gap, everything above PAUSE_RECT, and the
+// label above the footer.
+export const LANE_RECT = [740, 513, 1262, 631]; // the track (118 px tall)
+export const TARGET_X = 812, LANE_Y = 572;
+export const PX_PER_BEAT = 128.0;
+export const CARD_SMALL = 92, CARD_BIG = 132; // card widths (multiples of 4: cardWidth's steps)
+export const GROW_BEATS = 1.0; // a card grows from small to big over its last beat to the ring (cards come every beat)
+export const RING = 146; // target ring diameter
+export const LANE_CLIP_BOTTOM = PAUSE_RECT[1] - 1; // cards (and their sparkles) never draw below this
+export const LABEL_Y = 670; // baseline of the move's name under the ring
+export const LABEL_SCALE = 0.72;
+
+export const PIP_RECT = [880, 16, 1264, 232]; // 384 x 216, 16:9
+export const PIP_RADIUS = 16;
 export const STAR_BAR = [30, 128, 50, 552]; // the fill track; star markers sit on it
 export const SCORE_ORG = [78, 76];
+export const HUD_BADGE_ORG = [262, 58]; // the difficulty badge's left edge and centre line, right of the score
+
+export const INTRO_C = [958, 352]; // the title card and GET READY, centred under the PiP
+export const COUNT_Y = 366; // the 3-2-1-GO words: their glow clears the PiP (y 232) once popped in
+export const POPUP_X = [260, 660]; // rating words: centre x clamp (the widest word, gold, stays left of the PiP)
 
 export const RESULTS_RECT = [700, 34, 1250, 528]; // leaves the bottom 25% to the shell
+
+export const DIFFICULTY_LABELS = Object.freeze({ easy: "EASY", normal: "NORMAL", hard: "HARD" });
 
 const WHITE = [255, 255, 255];
 const INK = bgr([46, 24, 34]);
@@ -333,6 +349,40 @@ export function makeGlowText(mk, str, scale, colour, glow = null) {
   grad.addColorStop(1, css(colour));
   g.fillStyle = grad;
   g.fillText(str, x, y);
+  return c;
+}
+
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * A difficulty badge: the label in `colour` on a dark, slightly translucent
+ * pill with a border of the same colour (port of render.make_badge).
+ */
+export function makeBadge(mk, label, colour, scale = 0.62) {
+  const probe = mk(4, 4).getContext("2d");
+  probe.font = font(scale);
+  const tw = probe.measureText(label).width;
+  const th = fontPx(scale) * 0.72; // cap height
+  const px = Math.round(th * 0.85), py = Math.round(th * 0.5);
+  const w = Math.ceil(tw + 2 * px), h = Math.ceil(th * 1.35 + 2 * py);
+  const c = mk(w, h);
+  const g = c.getContext("2d");
+  const pill = (inset) => {
+    g.beginPath();
+    roundRect(g, inset, inset, w - inset, h - inset, h / 2 - inset);
+  };
+  pill(1.6);
+  g.fillStyle = css(bgr([40, 18, 30]), 0.88);
+  g.fill();
+  pill(0.8);
+  g.lineWidth = 1.6;
+  g.strokeStyle = css(colour);
+  g.stroke();
+  g.font = font(scale);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillStyle = css(colour);
+  g.fillText(label, w / 2, h / 2 + th * 0.04);
   return c;
 }
 
@@ -707,9 +757,18 @@ export class DanceRenderer {
     this._painter = null;
     this._painterOutfit = null;
     this._cards = new PictogramCards(art, { makeCanvas });
-    this._ring = tint(art.ring, this.cCyan, 122, 122);
-    this._ringGold = tint(art.ring, this.cGold, 122, 122);
-    this._ringLight = tint(art.ring, WHITE, 122, 122);
+    this._ring = tint(art.ring, this.cCyan, RING, RING);
+    this._ringGold = tint(art.ring, this.cGold, RING, RING);
+    this._ringLight = tint(art.ring, WHITE, RING, RING);
+    // Difficulty colours: EASY green, NORMAL cyan, HARD magenta (the manifest's
+    // palette, overridable there as "difficulty": {"easy": [b, g, r], ...}).
+    const dc = isPlainObject(man.difficulty) ? man.difficulty : {};
+    this.difficultyColours = {
+      easy: dc.easy ? bgr(dc.easy) : GOOD,
+      normal: dc.normal ? bgr(dc.normal) : this.cCyan,
+      hard: dc.hard ? bgr(dc.hard) : this.cMagenta,
+    };
+    this._badges = new Map();
     this._laneBg = this._makeLaneBg();
 
     // FX
@@ -853,7 +912,7 @@ export class DanceRenderer {
     lap("lane");
     this._drawFeedback(ctx, game, geo);
     lap("feedback");
-    if (phase === "intro") this._drawIntro(ctx, game, song, beat);
+    if (phase === "intro") this._drawIntro(ctx, game, song, beat, game.difficulty);
     if (phase === "outro") this._drawOutroFade(ctx);
     lap("intro_outro");
     this._drawHud(ctx, game, phase);
@@ -982,20 +1041,20 @@ export class DanceRenderer {
     const b1 = Math.trunc(beat + (x1 - TARGET_X) / PX_PER_BEAT);
     for (let b = b0; b <= b1; b++) {
       const x = TARGET_X + (b - beat) * PX_PER_BEAT;
-      if (x > x0 + 14 && x < x1 - 14 && Math.abs(x - TARGET_X) > 50) {
+      if (x > x0 + 14 && x < x1 - 14 && Math.abs(x - TARGET_X) > RING * 0.41) {
         const big = ((b % 4) + 4) % 4 === 0;
         disc(ctx, [Math.trunc(x), y1 - 10], big ? 4 : 2, big ? bgr([240, 200, 255]) : this.cViolet);
       }
     }
     // The next card: the first one not yet past the ring.
     const nxt = items.find((it) => it.beat - beat >= -0.3) ?? null;
-    drawC(ctx, nxt?.gold ? this._ringGold : this._ring, TARGET_X, LANE_Y, 122, 122, 0.75 + 0.25 * k);
+    drawC(ctx, nxt?.gold ? this._ringGold : this._ring, TARGET_X, LANE_Y, RING, RING, 0.75 + 0.25 * k);
     let flash = 0.0;
     if (nxt) {
       const d = nxt.beat - beat;
       if (d >= -0.3 && d <= 0.12) flash = 1.0 - Math.abs(d + 0.05) / 0.3;
     }
-    addC(ctx, this._ringLight, TARGET_X, LANE_Y, 122, 122, Math.min(1.0, (0.25 + 0.5 * k) * 0.6 + flash * 0.9));
+    addC(ctx, this._ringLight, TARGET_X, LANE_Y, RING, RING, Math.min(1.0, (0.25 + 0.5 * k) * 0.6 + flash * 0.9));
 
     const visible = [];
     for (const it of items) {
@@ -1007,7 +1066,7 @@ export class DanceRenderer {
     }
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x0 + 2, y0 - 12, x1 - x0 - 4, y1 - y0 + 24);
+    ctx.rect(x0 + 2, y0 - 16, x1 - x0 - 4, LANE_CLIP_BOTTOM - (y0 - 16));
     ctx.clip();
     // Cards come as often as every beat (one per judge point). Size goes by
     // distance alone, so nothing pops when the "next" card changes: small until
@@ -1039,7 +1098,7 @@ export class DanceRenderer {
       const d = nxt.beat - beat;
       if (label && d < 4.0) {
         const a = Math.min(1.0, (4.0 - d) / 0.6);
-        centredText(ctx, nxt.gold ? `${label}  x2` : label, TARGET_X, LABEL_Y, 0.62, nxt.gold ? this.cGold : WHITE,
+        centredText(ctx, nxt.gold ? `${label}  x2` : label, TARGET_X, LABEL_Y, LABEL_SCALE, nxt.gold ? this.cGold : WHITE,
           { alpha: a });
       }
     }
@@ -1051,7 +1110,7 @@ export class DanceRenderer {
     // through its translucent panel read as a ghost (QA).
     if (!fbs.length || game.notice) return;
     const words = this.art.words;
-    const cx = Math.min(780, Math.max(260, geo.headC[0]));
+    const cx = Math.min(POPUP_X[1], Math.max(POPUP_X[0], geo.headC[0]));
     const baseY = Math.max(POPUP_Y_MIN + 30, geo.headTop - 26);
     const goldFlash = Number(game.goldFlash) || 0;
     if (goldFlash > 0.01) { // a burst of rays behind the popup
@@ -1110,10 +1169,10 @@ export class DanceRenderer {
     if (age < 0.25) addC(ctx, this._glowDot, x, y, 90, 90, (1 - age / 0.25) * (gold ? 0.9 : 0.6));
   }
 
-  _drawIntro(ctx, game, song, beat) {
+  _drawIntro(ctx, game, song, beat, difficulty = null) {
     const fm = song?.firstMoveBeat || 16.0;
     const bs = song?.beatSeconds ?? 0.5;
-    const cx = 958, cy = 318;
+    const [cx, cy] = INTRO_C;
     const words = this.art.words;
     const title = this._title(song);
     if (title && beat < fm - 7.5) {
@@ -1124,7 +1183,11 @@ export class DanceRenderer {
       centredText(ctx, "NOW DANCING", cx, cy - 74 + dy, 0.62, DIM, { body: true, alpha: fade });
       drawC(ctx, tImg, cx, cy + dy, tImg.width, tImg.height, fade);
       if (aImg) drawC(ctx, aImg, cx, cy + 66 + dy, aImg.width, aImg.height, fade);
-      if (game.loading) centredText(ctx, "LOADING...", cx, cy + 128 + dy, 0.6, DIM, { body: true, alpha: fade });
+      const badge = this.badge(difficulty, 0.8);
+      if (badge) drawC(ctx, badge, cx, cy + 122 + dy, badge.width, badge.height, fade);
+      if (game.loading) {
+        centredText(ctx, "LOADING...", cx, cy + (badge ? 174 : 128) + dy, 0.6, DIM, { body: true, alpha: fade });
+      }
     }
     const k = beat - (fm - 8);
     if (k >= 0 && k < 4 && words.get_ready) {
@@ -1136,15 +1199,26 @@ export class DanceRenderer {
       const b = fm - 4 + i;
       const img = words[name];
       if (beat - b >= 0 && beat - b < 1 && img) {
-        const s = pop((beat - b) * bs, 0.22, 1.18, 1.6);
+        const s = pop((beat - b) * bs, 0.22, 1.18, 1.35); // 1.6 reached up into the PiP
         const fade = beat - b < 0.6 ? 1.0 : Math.max(0.0, (1 - (beat - b)) / 0.4);
-        drawC(ctx, img, cx, cy, img.width * s, img.height * s, fade);
+        drawC(ctx, img, cx, COUNT_Y, img.width * s, img.height * s, fade);
       }
     });
     if (beat >= fm - 7.5 && song) { // small title, top-centre
       const line = `${song.title}  -  ${song.artist ?? ""}`.replace(/[\s-]+$/, "");
       centredText(ctx, line, 640, 40, 0.55, DIM, { body: true });
     }
+  }
+
+  /** The difficulty's badge (cached canvas), or null for a game without difficulties. */
+  badge(difficulty, scale = 0.62) {
+    const key = difficulty != null ? String(difficulty).toLowerCase() : "";
+    if (!Object.hasOwn(DIFFICULTY_LABELS, key)) return null;
+    const k = `${key}/${scale}`;
+    if (!this._badges.has(k)) {
+      this._badges.set(k, makeBadge(this.mk, DIFFICULTY_LABELS[key], this.difficultyColours[key], scale));
+    }
+    return this._badges.get(k);
   }
 
   _title(song) {
@@ -1190,6 +1264,8 @@ export class DanceRenderer {
       const cp = Math.max(0.0, 1.0 - (this._clock - this._comboT) / 0.3);
       text(ctx, `x${combo} COMBO`, SCORE_ORG[0], SCORE_ORG[1] + 44, 0.85 * (1 + 0.2 * cp), CYAN);
     }
+    const badge = this.badge(game.difficulty, 0.6);
+    if (badge) ctx.drawImage(badge, HUD_BADGE_ORG[0], HUD_BADGE_ORG[1] - Math.floor(badge.height / 2));
     this._drawStarBar(ctx, Number(game.stars) || 0);
     if (game.notice) {
       const str = String(game.notice);
@@ -1250,7 +1326,7 @@ export class DanceRenderer {
     ctx.lineWidth = 3;
     ctx.stroke();
     ctx.restore();
-    text(ctx, "YOU", x0 + 12, y1 - 12, 0.5, WHITE, { body: true });
+    text(ctx, "YOU", x0 + 14, y1 - 14, 0.6, WHITE, { body: true });
   }
 
   _drawResults(ctx, game, song) {
@@ -1265,7 +1341,14 @@ export class DanceRenderer {
     if (a < 0.6) return;
     const cx = (x0 + x1) / 2;
     const words = this.art.words;
-    centredText(ctx, "RESULTS", cx, y0 + 40, 0.6, DIM, { body: true });
+    const badge = this.badge(game.difficulty, 0.65);
+    if (!badge) centredText(ctx, "RESULTS", cx, y0 + 40, 0.6, DIM, { body: true });
+    else { // "RESULTS [EASY]", centred as a pair
+      const tw = textWidth(ctx, "RESULTS", 0.6, { body: true });
+      const left = cx - (tw + 12 + badge.width) / 2;
+      centredText(ctx, "RESULTS", left + tw / 2, y0 + 40, 0.6, DIM, { body: true });
+      ctx.drawImage(badge, Math.round(left + tw + 12), Math.round(y0 + 34 - badge.height / 2));
+    }
     centredText(ctx, String(song?.title ?? "").toUpperCase(), cx, y0 + 80, 1.05, ACCENT);
     const stars = Math.floor((Number(game.stars) || 0) + 1e-6);
     const full = this.art.starFull, empty = this.art.starEmpty;

@@ -436,3 +436,113 @@ def test_an_older_popup_is_gone_once_the_newer_one_is_a_few_frames_old(song, mon
     monkeypatch.setattr(words, "get", lambda s: (calls.append(s), real(s))[1])
     r.render(camera_frame(), g)
     assert len(calls) == 1, "only the newer word is drawn"
+
+
+# --- difficulty badge and the bigger lane / PiP ------------------------------------------
+
+def _diff(song, g_setup, monkeypatch=None, use_real=False, **patch):
+    """Pixels that change when the game has a difficulty (badge on) vs not."""
+    art = _real_art_or_skip() if use_real else stub_art()
+    out = []
+    for level in ("easy", None):
+        r = R.DanceRenderer(SIZE, art)
+        g = g_setup(FakeGame(song))
+        if level is not None:
+            g.difficulty = level
+        frame = camera_frame()
+        r.render(frame, g)
+        out.append(frame)
+    return np.any(out[0] != out[1], axis=2)
+
+
+@pytest.mark.parametrize("where", ["intro", "dancing", "results"])
+def test_the_difficulty_badge_is_drawn(song, where):
+    def setup(g):
+        if where == "intro":
+            return g.at(2.0)
+        if where == "dancing":
+            return g.at(30.0)
+        g.at(66.0, "game_over")
+        g.score, g.stars, g.results_t = 9000, 4.5, 2.0
+        return g
+    changed = _diff(song, setup)
+    ys, xs = np.nonzero(changed)
+    assert len(ys) > 300, "a badge appears"
+    if where == "dancing":  # right of the score, top-left
+        assert xs.min() >= R.HUD_BADGE_ORG[0] - 2 and ys.max() < 100 and xs.max() < R.PIP_RECT[0]
+    elif where == "intro":  # under the title card (and the HUD's, which shows from the start)
+        y = R.INTRO_C[1] + 122
+        assert changed[y - 20:y + 20, R.INTRO_C[0] - 60:R.INTRO_C[0] + 60].sum() > 300
+        assert not changed[R.INTRO_C[1] + 100:, :R.INTRO_C[0] - 120].any()
+    else:  # in the results panel's top line
+        x0, y0, x1, y1 = R.RESULTS_RECT
+        assert xs.min() >= x0 and xs.max() <= x1 and ys.max() < y0 + 60
+
+
+def test_badge_colours_read_easy_green_normal_cyan_hard_magenta():
+    r = R.DanceRenderer(SIZE, _real_art_or_skip())
+    b, g, rr = zip(*(r.difficulty_colours[k] for k in ("easy", "normal", "hard")))
+    assert g[0] > max(b[0], rr[0]), "easy is green"
+    assert b[1] > rr[1] and g[1] > rr[1], "normal is cyan"
+    assert rr[2] > g[2] and b[2] > g[2], "hard is magenta"
+    assert r.badge("expert") is None and r.badge(None) is None
+    assert r.badge("easy").w > 40 and r.badge("hard") is r.badge("hard"), "cached"
+
+
+def test_cards_and_pip_are_bigger_and_stay_in_bounds():
+    """The user asked for slightly bigger cards and PiP: ~+20%, 16:9 kept."""
+    assert 1.15 <= R.CARD_SMALL / 76 <= 1.25 and 1.15 <= R.CARD_BIG / 108 <= 1.25
+    x0, y0, x1, y1 = R.PIP_RECT
+    assert (x1 - x0, y1 - y0) == (384, 216)
+    assert x0 >= 0 and y0 >= 16 and x1 <= SIZE[0] - 16
+    ch = R.CARD_BIG * 208 / 192  # the card art's aspect
+    assert R.LANE_Y + ch / 2 <= R.LANE_CLIP_BOTTOM < R.PAUSE_RECT[1], "a full-size card isn't clipped"
+    assert R.LANE_Y + R.RING / 2 < R.LABEL_Y - 18, "the label sits under the ring"
+    assert R.LABEL_Y + 8 < R.FOOTER_Y
+    assert R.LANE_RECT[3] < R.PAUSE_RECT[1]
+    # A card only reaches full size within a beat of the ring, well left of PAUSE.
+    assert R.TARGET_X + R.GROW_BEATS * R.PX_PER_BEAT + R.CARD_BIG / 2 < R.PAUSE_RECT[0]
+
+
+def _overlay_pixels(song, beats, monkeypatch, parts, art):
+    """Pixels the given renderer parts draw, over a run of frames (vs the same
+    frames with those parts switched off)."""
+    hit = np.zeros((SIZE[1], SIZE[0]), bool)
+    g_on, g_off = FakeGame(song), FakeGame(song)
+    r_on, r_off = R.DanceRenderer(SIZE, art), R.DanceRenderer(SIZE, art)
+    for name in parts:
+        monkeypatch.setattr(r_off, name, lambda *a, **k: None)
+    for b in beats:
+        fa, fb = camera_frame(), camera_frame()
+        g_on.at(float(b))
+        g_off.at(float(b))
+        g_on.difficulty = g_off.difficulty = "hard"
+        r_on.render(fa, g_on)
+        r_off.render(fb, g_off)
+        hit |= np.any(fa != fb, axis=2)
+    return hit
+
+
+def test_nothing_of_ours_enters_the_pause_button_or_the_footer(song, monkeypatch):
+    """The lane (cards every beat, gold sparkles, the label), the HUD, the
+    feedback words and the PiP over a whole song: PAUSE and the footer stay
+    the stage's own pixels."""
+    art = _real_art_or_skip()
+    beats = np.arange(10.0, 62.0, 0.19)
+    hit = _overlay_pixels(song, beats, monkeypatch,
+                          ("_draw_lane", "_draw_hud", "_draw_feedback", "_draw_pip", "_draw_intro"), art)
+    x0, y0, x1, y1 = R.PAUSE_RECT
+    assert not hit[y0:y1, x0:x1].any(), "something drew into the PAUSE button"
+    assert not hit[R.FOOTER_Y:, :].any(), "something drew into the footer"
+    assert hit[R.LANE_RECT[1]:R.LANE_RECT[3], R.LANE_RECT[0]:R.LANE_RECT[2]].mean() > 0.3, "the lane draws"
+
+
+def test_the_intro_text_stays_clear_of_the_bigger_pip(song, monkeypatch):
+    """Title card, badge, GET READY and the 3-2-1 (once popped in) sit under the PiP."""
+    art = _real_art_or_skip()
+    fm = song.first_move_beat
+    beats = [-1.0, 2.0, fm - 9.0, fm - 7.0, fm - 6.0] + [fm - 4 + i + 0.5 for i in range(4)]
+    hit = _overlay_pixels(song, beats, monkeypatch, ("_draw_intro",), art)
+    x0, y0, x1, y1 = R.PIP_RECT
+    assert hit.any()
+    assert not hit[y0:y1 + 8, x0 - 8:x1].any(), "intro text under the PiP"

@@ -1,9 +1,11 @@
 """Judging a dance: timing windows, ratings, score and stars (docs/DANCE.md section 7).
 
 Every judged keyframe in a song is a judge point at time `t`. While the song
-time is inside `[t - WINDOW_EARLY, t + WINDOW_LATE]`, the judge keeps the best
-similarity between the point's pose and the player that was *held* for HOLD
-seconds. When the window closes, the point resolves into a rating.
+time is inside `[t - early, t + late]`, the judge keeps the best similarity
+between the point's pose and the player that was *held* for `hold` seconds.
+When the window closes, the point resolves into a rating. The window, the
+hold and the rating thresholds depend on the difficulty: one table,
+`DIFFICULTY`, below.
 
 Why "best in a window" rather than "the pose at t": poses reach the game in
 steps (15-30 Hz) and 100-150 ms late (AGENTS.md sections 2 and 6), so the
@@ -23,34 +25,87 @@ from .pose import Measured, similarity
 
 # --- the numbers (docs/DANCE.md section 7; pinned by tests/test_dance_game.py) ---
 
-WINDOW_EARLY = 0.20  # s before the point's time that a pose already counts
-# s after it. The spec started at 0.40; simulated through the real input path
-# (20 Hz, 150 ms lag, extrapolation) a flawless dancer just 250 ms behind the
-# coach then took 15 X on Neon Nights (7138), because the late edge minus
-# the lag minus HOLD left under 0.2 s for the player. At 0.50 that dancer is
-# PERFECT throughout, and the frozen, idle, random and wrong-side players
-# gain almost nothing (docs/DANCE.md section 7).
-WINDOW_LATE = 0.50
-# A match only counts once it has been *held* this long (song time): the
-# window's score is the best, over the window, of the worst similarity in the
-# last HOLD seconds. Without it, a limb sweeping through the target angle on
-# its way somewhere else scores a momentary PERFECT ("require a hold so
-# passing hands don't trigger things", AGENTS.md section 6).
-HOLD = 0.12
 
-# (name, minimum best similarity, value). Checked in order; below OK is X.
-# PERFECT is 0.90 (the spec started at 0.86). A segment scores
-# 1 - (d - 20) / 70, so 0.86 meant "every limb within 30 degrees": a dancer
-# holding every limb 25-30 degrees off took PERFECT on 38% of the moves. At
-# 0.90 (about 27 degrees) that dancer is SUPER (88%), while one 10-20 degrees
-# off and 200 ms late at 15 Hz stays a 5-star PERFECT dancer. 0.92 cost that
-# dancer its fifth star. The other numbers are the spec's.
-RATINGS = (
-    ("perfect", 0.90, 1.0),
-    ("super", 0.74, 0.8),
-    ("good", 0.60, 0.55),
-    ("ok", 0.42, 0.3),
-)
+@dataclass(frozen=True)
+class Rules:
+    """How strictly one difficulty judges: the window, the hold and the rating thresholds."""
+    early: float  # s before the point's time that a pose already counts
+    late: float  # s after it that the window closes
+    hold: float  # s a match must be held before it counts
+    ratings: tuple  # ((name, minimum best similarity, value), ...), checked in order; below the last is X
+
+    @property
+    def lost_before(self) -> float:
+        """See LOST_BEFORE."""
+        return self.late / 2
+
+
+# One table for every difficulty. NORMAL is the game as it was tuned before
+# difficulties existed; its numbers and their history:
+#
+# * early 0.20 / late 0.50. The spec started at late 0.40; simulated through the
+#   real input path (20 Hz, 150 ms lag, extrapolation) a flawless dancer just
+#   250 ms behind the coach then took 15 X on Neon Nights (7138), because the
+#   late edge minus the lag minus HOLD left under 0.2 s for the player. At 0.50
+#   that dancer is PERFECT throughout, and the frozen, idle, random and
+#   wrong-side players gain almost nothing.
+# * hold 0.12. The window's score is the best, over the window, of the worst
+#   similarity in the last `hold` seconds. Without it, a limb sweeping through
+#   the target angle on its way somewhere else scores a momentary PERFECT
+#   ("require a hold so passing hands don't trigger things", AGENTS.md section 6).
+# * PERFECT 0.90 (the spec started at 0.86). A segment scores 1 - (d - 20) / 70,
+#   so 0.86 meant "every limb within 30 degrees": a dancer holding every limb
+#   25-30 degrees off took PERFECT on 38% of the moves. At 0.90 (about 27
+#   degrees) that dancer is SUPER (88%), while one 10-20 degrees off and 200 ms
+#   late at 15 Hz stays a 5-star PERFECT dancer. 0.92 cost that dancer its fifth
+#   star. SUPER / GOOD / OK are the spec's.
+#
+# EASY judges a quarter as many poses (chart.derive_easy) and forgives more:
+# * thresholds 0.86 / 0.72 / 0.56 / 0.40: "within ~30 degrees" is PERFECT again.
+# * late 0.60, early 0.25: a beginner copying the coach runs later still; easy
+#   points are at least two beats apart, so a wider window never reaches into
+#   the next point's pose.
+# EASY must not be free: its bots (tests/test_dance_game.py) keep the frozen,
+# idle and random players at 1 star or below, thanks to the freeze rule
+# (chart.FREEZE_MAX) holding on the easy chart too.
+#
+# HARD judges the normal chart strictly. Tuned on Neon Nights through the
+# real input path (tests/test_dance_game.py, docs/DANCE.md section 7a):
+# * hold 0.15 (from 0.12): the longest lever. At 0.12 the sloppy dancer
+#   (every limb 25-30 degrees off, 250 ms late) still made 3 stars.
+# * thresholds 0.93 / 0.84 / 0.68 / 0.50: PERFECT is "every limb within ~25
+#   degrees", SUPER ~31. The sloppy dancer lands in SUPER and GOOD: 5150-5380
+#   (2 stars) over six seeds, while one within 10 degrees and 200 ms late
+#   scores 9987.
+# * window [-0.15, +0.50]: the early edge tightens; the late edge stays. At
+#   +0.40 (the spec's first number) separating precise from sloppy came down
+#   to 50 ms of lateness: the precise dancer, 200 ms late, fell to 3 stars and
+#   a flawless one 250 ms late to 1 star. Hard should judge the pose, not punish
+#   the camera's lag.
+DIFFICULTY: dict[str, Rules] = {
+    "easy": Rules(early=0.25, late=0.60, hold=0.12, ratings=(
+        ("perfect", 0.86, 1.0), ("super", 0.72, 0.8), ("good", 0.56, 0.55), ("ok", 0.40, 0.3))),
+    "normal": Rules(early=0.20, late=0.50, hold=0.12, ratings=(
+        ("perfect", 0.90, 1.0), ("super", 0.74, 0.8), ("good", 0.60, 0.55), ("ok", 0.42, 0.3))),
+    "hard": Rules(early=0.15, late=0.50, hold=0.15, ratings=(
+        ("perfect", 0.93, 1.0), ("super", 0.84, 0.8), ("good", 0.68, 0.55), ("ok", 0.50, 0.3))),
+}
+DEFAULT_DIFFICULTY = "normal"
+
+
+def rules_for(difficulty: "str | Rules | None") -> Rules:
+    """The Rules for a difficulty id (unknown ids and None mean normal)."""
+    if isinstance(difficulty, Rules):
+        return difficulty
+    return DIFFICULTY.get(str(difficulty), DIFFICULTY[DEFAULT_DIFFICULTY])
+
+
+# NORMAL's numbers under their old names, for code and tests that read them.
+_N = DIFFICULTY["normal"]
+WINDOW_EARLY = _N.early
+WINDOW_LATE = _N.late
+HOLD = _N.hold
+RATINGS = _N.ratings
 MISS = ("x", 0.0)
 UNSEEN = "unseen"
 RATING_NAMES = tuple(r[0] for r in RATINGS) + (MISS[0],)
@@ -68,15 +123,16 @@ SUPERSTAR = 9600
 RESUME_GRACE = 1.0
 
 # Tracking loss is never a miss (AGENTS.md section 6). A window that loses the
-# player before this many seconds past its point's time, and never sees them
-# again, saw at most the player on their way into the pose (they reach the game
-# 100-150 ms late): if that would be an X, the point is unseen instead.
-LOST_BEFORE = WINDOW_LATE / 2
+# player before this many seconds past its point's time (half its late edge:
+# Rules.lost_before), and never sees them again, saw at most the player on
+# their way into the pose (they reach the game 100-150 ms late): if that would
+# be an X, the point is unseen instead.
+LOST_BEFORE = _N.lost_before
 
 
-def rate(sim: float) -> tuple[str, float]:
-    """A best similarity -> (rating name, value)."""
-    for name, need, value in RATINGS:
+def rate(sim: float, ratings: tuple | None = None) -> tuple[str, float]:
+    """A best similarity -> (rating name, value), by `ratings` (default: normal's)."""
+    for name, need, value in (RATINGS if ratings is None else ratings):
         if sim >= need:
             return name, value
     return MISS
@@ -122,10 +178,11 @@ class Rating:
 
 
 class _Window:
-    __slots__ = ("best", "excused", "floor", "last_seen", "point", "recent")
+    __slots__ = ("best", "excused", "floor", "hold", "last_seen", "point", "recent")
 
-    def __init__(self, point) -> None:
+    def __init__(self, point, hold: float = HOLD) -> None:
         self.point = point
+        self.hold = hold
         self.best: float | None = None  # best similarity held for HOLD seconds
         self.floor: float | None = None  # worst sample seen, for a window seen too briefly to hold
         self.recent: list[tuple[float, float]] = []  # (song time, similarity), the last HOLD s
@@ -137,10 +194,11 @@ class _Window:
         self.last_seen = t
         r = self.recent
         r.append((t, sim))
-        # Keep the newest sample at or before t - HOLD, so the kept run spans HOLD.
-        while len(r) > 1 and r[1][0] <= t - HOLD:
+        # Keep the newest sample at or before t - hold, so the kept run spans it.
+        hold = self.hold
+        while len(r) > 1 and r[1][0] <= t - hold:
             del r[0]
-        if t - r[0][0] >= HOLD - 1e-9:
+        if t - r[0][0] >= hold - 1e-9:
             held = min(s for _, s in r)
             if self.best is None or held > self.best:
                 self.best = held
@@ -155,10 +213,12 @@ class _Window:
 
 class Judge:
     """Feed it `update(song_time, measured)` every frame; it returns the
-    ratings that resolved on that frame (for juice)."""
+    ratings that resolved on that frame (for juice). `rules` is a difficulty
+    id or a Rules (default normal)."""
 
-    def __init__(self, song) -> None:
+    def __init__(self, song, rules: "str | Rules | None" = None) -> None:
         self.song = song
+        self.rules = rules_for(rules)
         self.points = list(song.judge_points())
         self.total_weight = sum(p.weight for p in self.points)
         self.reset()
@@ -208,22 +268,24 @@ class Judge:
     def judging(self, song_time: float | None = None) -> bool:
         """Is any window open at `song_time` (default: the last update)?"""
         t = self.song_time if song_time is None else song_time
-        return any(p.time - WINDOW_EARLY <= t <= p.time + WINDOW_LATE for p in self.points[:self._next + 4])
+        early, late = self.rules.early, self.rules.late
+        return any(p.time - early <= t <= p.time + late for p in self.points[:self._next + 4])
 
     # --- feeding ---
 
     def update(self, song_time: float, measured: Measured | None) -> list[Rating]:
         self.song_time = song_time
+        early, late = self.rules.early, self.rules.late
         # Open every window that has started.
-        while self._next < len(self.points) and song_time >= self.points[self._next].time - WINDOW_EARLY:
-            w = _Window(self.points[self._next])
-            w.excused = w.point.time - WINDOW_EARLY <= self._excuse_until
+        while self._next < len(self.points) and song_time >= self.points[self._next].time - early:
+            w = _Window(self.points[self._next], self.rules.hold)
+            w.excused = w.point.time - early <= self._excuse_until
             self._open.append(w)
             self._next += 1
         resolved: list[Rating] = []
         still: list[_Window] = []
         for w in self._open:
-            if song_time > w.point.time + WINDOW_LATE:
+            if song_time > w.point.time + late:
                 # Closed. A frame that jumped past the whole window (a stall)
                 # saw nothing of it: unseen, never a miss.
                 resolved.append(self._resolve(w, song_time))
@@ -250,8 +312,8 @@ class Judge:
         if best is None:
             name, value = UNSEEN, 0.0
         else:
-            name, value = rate(best)
-            lost = w.last_seen is not None and w.last_seen < p.time + LOST_BEFORE
+            name, value = rate(best, self.rules.ratings)
+            lost = w.last_seen is not None and w.last_seen < p.time + self.rules.lost_before
             if name == MISS[0] and (w.excused or lost):
                 name, value = UNSEEN, 0.0
         r = Rating(name, value, p.weight, best if name != UNSEEN else None, p, song_time)

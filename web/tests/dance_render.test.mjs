@@ -14,8 +14,9 @@ import { Placed, parseLibrary, parseMoves, parseSong } from "../js/games/dance/c
 import { DanceRaccoonGame } from "../js/games/dance/game.js";
 import { stubArt } from "../js/games/dance/art.js";
 import {
-  CARD_BIG, CARD_SMALL, COACH_ROI, COACH_X, CoachPainter, DanceRenderer, GROW_BEATS, PX_PER_BEAT, SUPERSEDE_FADE,
-  cardWidth, endingStart, kick, ratingKey,
+  CARD_BIG, CARD_SMALL, COACH_ROI, COACH_X, CoachPainter, DanceRenderer, FOOTER_Y, GROW_BEATS, HUD_BADGE_ORG, INTRO_C,
+  LABEL_Y, LANE_CLIP_BOTTOM, LANE_RECT, LANE_Y, PAUSE_RECT, PIP_RECT, PX_PER_BEAT, RESULTS_RECT, RING, SUPERSEDE_FADE,
+  TARGET_X, cardWidth, endingStart, kick, ratingKey,
 } from "../js/games/dance/render.js";
 import { DANCE_TUTORIAL } from "../js/games/dance/tutorial.js";
 import { keypointsFor } from "../js/games/dance/pose.js";
@@ -209,4 +210,165 @@ test("an older popup is gone once the newer one is a few frames old; none under 
   assert.equal(count([{ rating: "perfect", gold: false, age: 0.5 },
     { rating: "perfect", gold: false, age: SUPERSEDE_FADE / 2 }]), 2, "mid hand-over both show");
   assert.equal(count(two, "STEP BACK - SHOW YOUR ARMS"), 0, "the notice hides the words");
+});
+
+// --- difficulty badges, bigger cards and PiP ------------------------------------
+
+/**
+ * A 2D context that records where images and text land on the screen: the
+ * destination rect of every drawImage and an estimate of every fillText,
+ * clipped by the current clip path's bounding box (save/restore aware).
+ * Transforms aren't tracked; callers record only the flat layers.
+ */
+function boundsContext() {
+  const marks = [];
+  let clip = [-Infinity, -Infinity, Infinity, Infinity];
+  const stack = [];
+  let box = null;
+  const grow = (x0, y0, x1, y1) => {
+    box = box ? [Math.min(box[0], x0), Math.min(box[1], y0), Math.max(box[2], x1), Math.max(box[3], y1)]
+      : [x0, y0, x1, y1];
+  };
+  const mark = (img, r) => {
+    const c = [Math.max(r[0], clip[0]), Math.max(r[1], clip[1]), Math.min(r[2], clip[2]), Math.min(r[3], clip[3])];
+    if (c[2] > c[0] && c[3] > c[1]) marks.push({ img, rect: c });
+  };
+  const t = {
+    canvas: { width: 1280, height: 720 }, filter: "none", font: "10px x", textAlign: "left", recording: false,
+    marks,
+    save: () => stack.push(clip),
+    restore: () => { clip = stack.pop() ?? clip; },
+    beginPath: () => { box = null; },
+    moveTo: (x, y) => grow(x, y, x, y),
+    lineTo: (x, y) => grow(x, y, x, y),
+    arcTo: (x1, y1, x2, y2) => grow(Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)),
+    rect: (x, y, w, h) => grow(x, y, x + w, y + h),
+    clip: () => {
+      if (box) clip = [Math.max(clip[0], box[0]), Math.max(clip[1], box[1]), Math.min(clip[2], box[2]), Math.min(clip[3], box[3])];
+    },
+    createLinearGradient: () => ({ addColorStop() {} }),
+    measureText: (str) => ({ width: String(str).length * fontSize() * 0.62 }),
+    drawImage: (img, ...a) => {
+      if (!t.recording) return;
+      const [x, y, w, h] = a.length >= 8 ? a.slice(4) : a.length >= 4 ? a : [a[0], a[1], img.width, img.height];
+      mark(img, [x, y, x + w, y + h]);
+    },
+    fillText: (str, x, y) => {
+      if (!t.recording) return;
+      const w = String(str).length * fontSize() * 0.62, h = fontSize();
+      const x0 = t.textAlign === "center" ? x - w / 2 : x;
+      mark(String(str), [x0, y - h * 0.8, x0 + w, y + h * 0.25]);
+    },
+  };
+  const fontSize = () => Number(/(\d+)px/.exec(t.font)?.[1] ?? 10);
+  return new Proxy(t, { get: (o, k) => (k in o ? o[k] : () => {}), set: (o, k, v) => { o[k] = v; return true; } });
+}
+
+/** A renderer whose flat layers (lane, HUD, feedback, PiP, intro, results) record into the context. */
+function recordingRenderer(ctx) {
+  const r = new DanceRenderer(1280, 720, stubArt(), { makeCanvas: fakeCanvasFactory([]) });
+  for (const name of ["_drawLane", "_drawHud", "_drawFeedback", "_drawPip", "_drawIntro", "_drawResults"]) {
+    const real = r[name].bind(r);
+    r[name] = (c, ...rest) => {
+      ctx.recording = true;
+      try {
+        return real(c, ...rest);
+      } finally {
+        ctx.recording = false;
+      }
+    };
+  }
+  return r;
+}
+
+const overlaps = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+
+/** A dancing game on `SONG` at song time `st`, its lane and popups filled in. */
+function dancingAt(game, st, difficulty) {
+  const g = fakeGame(SONG, st, st < 7.5 ? "intro" : "dancing");
+  g.difficulty = difficulty;
+  g.upcoming = SONG.pictograms().filter((p) => p.beat >= g.beat - 0.5).slice(0, 8)
+    .map((p) => ({ beat: p.beat, moveLabel: p.label, pose: p.pose, gold: p.gold }));
+  g.feedback = [{ rating: "perfect", gold: true, age: (st * 7) % 0.8 }];
+  g.combo = 12;
+  g.score = 4321;
+  g.displayScore = 4321;
+  g.stars = 2.4;
+  g.lastRating = "super";
+  g.player = { shoulderPx: 150, lean: 4, centrePx: [640, 330], hasHips: true, legs: {},
+    arms: { l: { upper: 160, fore: 170, reach: 165 }, r: { upper: 40, fore: 30, reach: 35 } } };
+  return g;
+}
+
+test("the difficulty badge is drawn on the intro card, beside the score and on the results", () => {
+  for (const level of ["easy", "normal", "hard"]) {
+    const ctx = boundsContext();
+    const r = recordingRenderer(ctx);
+    const frame = fakeCanvasFactory([])(1280, 720);
+    const badgeMarks = (g) => {
+      ctx.marks.length = 0;
+      r.draw(ctx, frame, g);
+      const badges = new Set([0.6, 0.65, 0.8].map((s) => r.badge(level, s)));
+      return ctx.marks.filter((m) => badges.has(m.img)).map((m) => m.rect);
+    };
+    const intro = badgeMarks(dancingAt(null, 1.0, level));
+    assert.ok(intro.some(([x0, y0, x1, y1]) => Math.abs((x0 + x1) / 2 - INTRO_C[0]) < 2
+      && Math.abs((y0 + y1) / 2 - (INTRO_C[1] + 122)) < 40), `${level}: under the title card`);
+    const hud = badgeMarks(dancingAt(null, 15.0, level));
+    assert.ok(hud.some(([x0, , x1, y1]) => x0 >= HUD_BADGE_ORG[0] - 2 && y1 < 100 && x1 < PIP_RECT[0]),
+      `${level}: right of the score`);
+    const over = { ...dancingAt(null, 19.0, level), phase: "game_over", resultsT: 2.0, score: 9000, stars: 4.5 };
+    const res = badgeMarks(over);
+    const [x0, y0, x1] = RESULTS_RECT;
+    assert.ok(res.some((b) => b[0] >= x0 && b[2] <= x1 && b[3] < y0 + 60), `${level}: on the results card`);
+  }
+  const r = new DanceRenderer(1280, 720, stubArt(), { makeCanvas: fakeCanvasFactory([]) });
+  assert.equal(r.badge("expert"), null);
+  assert.equal(r.badge(null), null);
+  assert.equal(r.badge("hard"), r.badge("hard"), "cached");
+});
+
+test("badge colours read easy green, normal cyan, hard magenta", () => {
+  const r = new DanceRenderer(1280, 720, stubArt(), { makeCanvas: fakeCanvasFactory([]) });
+  const [e, n, h] = ["easy", "normal", "hard"].map((k) => r.difficultyColours[k]); // RGB
+  assert.ok(e[1] > Math.max(e[0], e[2]), "easy is green");
+  assert.ok(n[2] > n[0] && n[1] > n[0], "normal is cyan");
+  assert.ok(h[0] > h[1] && h[2] > h[1], "hard is magenta");
+});
+
+test("cards and PiP are bigger and stay in bounds", () => {
+  assert.ok(CARD_SMALL / 76 >= 1.15 && CARD_SMALL / 76 <= 1.25 && CARD_BIG / 108 >= 1.15 && CARD_BIG / 108 <= 1.25);
+  const [x0, y0, x1, y1] = PIP_RECT;
+  assert.deepEqual([x1 - x0, y1 - y0], [384, 216]);
+  assert.ok(x0 >= 0 && y0 >= 16 && x1 <= 1280 - 16);
+  const ch = CARD_BIG * 208 / 192; // the card art's aspect
+  assert.ok(LANE_Y + ch / 2 <= LANE_CLIP_BOTTOM && LANE_CLIP_BOTTOM < PAUSE_RECT[1], "a full-size card isn't clipped");
+  assert.ok(LANE_Y + RING / 2 < LABEL_Y - 18, "the label sits under the ring");
+  assert.ok(LABEL_Y + 8 < FOOTER_Y);
+  assert.ok(LANE_RECT[3] < PAUSE_RECT[1]);
+  assert.ok(TARGET_X + GROW_BEATS * PX_PER_BEAT + CARD_BIG / 2 < PAUSE_RECT[0]);
+});
+
+test("nothing of ours enters the PAUSE button or the footer; the intro stays clear of the PiP", () => {
+  const ctx = boundsContext();
+  const r = recordingRenderer(ctx);
+  const frame = fakeCanvasFactory([])(1280, 720);
+  let lane = 0;
+  for (let st = 0.5; st < 19.5; st += 0.095) {
+    ctx.marks.length = 0;
+    const g = dancingAt(null, st, "hard");
+    r.draw(ctx, frame, g);
+    for (const m of ctx.marks) {
+      assert.ok(!overlaps(m.rect, PAUSE_RECT), `at ${st.toFixed(2)} s something drew into PAUSE: ${JSON.stringify(m.rect)}`);
+      assert.ok(m.rect[3] <= FOOTER_Y, `at ${st.toFixed(2)} s something drew into the footer: ${JSON.stringify(m.rect)}`);
+      if (overlaps(m.rect, LANE_RECT)) lane += 1;
+      if (g.phase === "intro" && m.img !== frame && !overlaps(m.rect, [0, 0, 300, 140])) {
+        // Intro text (not the HUD, not the PiP's own camera image) stays under the PiP.
+        const [px0, py0, px1, py1] = PIP_RECT;
+        const isPip = m.rect[0] >= px0 && m.rect[2] <= px1 && m.rect[1] >= py0 && m.rect[3] <= py1;
+        if (!isPip) assert.ok(!overlaps(m.rect, [px0 - 8, py0, px1, py1 + 8]), `intro over the PiP at ${st}: ${m.img}`);
+      }
+    }
+  }
+  assert.ok(lane > 50, "the lane draws");
 });

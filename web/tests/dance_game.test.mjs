@@ -19,12 +19,14 @@ import { PoseExtrapolator } from "../js/core/extrapolate.js";
 import { KP } from "../js/core/pose.js";
 import { Rng } from "../js/core/random.js";
 import { GAMES } from "../js/games/index.js";
-import { parseLibrary, parseMoves, parseSong } from "../js/games/dance/chart.js";
+import { DIFFICULTIES, parseLibrary, parseMoves, parseSong } from "../js/games/dance/chart.js";
 import {
-  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_NOBODY, Phase, songVariants,
+  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_NOBODY, Phase, boardIdFor, songVariants,
 } from "../js/games/dance/game.js";
-import { Judge, LOST_BEFORE, RATING_NAMES, RESUME_GRACE, WINDOW_EARLY, WINDOW_LATE, rate, starFill, starsFor }
-  from "../js/games/dance/judge.js";
+import {
+  DIFFICULTY, HOLD, Judge, LOST_BEFORE, RATINGS, RATING_NAMES, RESUME_GRACE, Rules, WINDOW_EARLY, WINDOW_LATE, rate,
+  starFill, starsFor,
+} from "../js/games/dance/judge.js";
 import { REST, keypointsFor, measure, mirrorPose, normalizePose, similarity } from "../js/games/dance/pose.js";
 
 const W = 1280, H = 720;
@@ -68,11 +70,11 @@ function songJson({ id = "groove", title = "Test Groove", first = 8, last = 56, 
 
 const makeSongs = (specs = [songJson()], lib = LIB) => specs.map((s) => parseSong(s, s.id, lib));
 
-function newGame(songs = makeSongs(), variant = null) {
+function newGame(songs = makeSongs(), variant = null, difficulty = undefined) {
   const clock = { t: 1000.0 };
   const probe = variant == null ? songs[0] : songs.find((s) => s.folder === variant);
   const player = new SilentPlayer(probe.duration + 2.0, { clock: () => clock.t });
-  const game = new DanceRaccoonGame({ width: W, height: H, songs, variant, player });
+  const game = new DanceRaccoonGame({ width: W, height: H, songs, variant, player, difficulty });
   return { game, clock };
 }
 
@@ -288,7 +290,7 @@ test("a good but imprecise dancer on a slow model is still a superstar", () => {
 test("holding the pose is what separates sloppy from perfect", () => {
   // Pins HOLD: judged by its best single frame, the sloppy dancer scores like a superstar.
   const { game, clock } = newGame();
-  game.judge = new Judge(game.song, { hold: 0.0 });
+  game.judge = new Judge(game.song, new Rules({ ...DIFFICULTY.normal, hold: 0.0 }));
   simulate(game, clock, sloppy(game));
   assert.ok(game.score >= 9200, report(game));
 });
@@ -522,8 +524,10 @@ test("variants list the songs and the game builds each", () => {
     songJson({ id: "slow_jam", title: "Slow Jam", first: 12 })]);
   const vs = songVariants(songs);
   assert.deepEqual(vs.map((v) => v.id), ["groove", "slow_jam"]);
-  assert.deepEqual(vs[1], { id: "slow_jam", title: "Slow Jam", subtitle: "KP Arcade - difficulty 1",
-    boardId: "dance-slow_jam" });
+  assert.match(vs[1].subtitle, /^KP Arcade - \d+:\d\d$/, "the song's length, not a rating that reads like the picker");
+  assert.equal(vs[1].subtitle, "KP Arcade - 0:32");
+  assert.deepEqual({ id: vs[1].id, title: vs[1].title, boardId: vs[1].boardId },
+    { id: "slow_jam", title: "Slow Jam", boardId: "dance-slow_jam" });
   let { game } = newGame(songs, "slow_jam");
   assert.ok(game.song.title === "Slow Jam" && game.boardId === "dance-slow_jam" && game.variant === "slow_jam");
   ({ game } = newGame(songs));
@@ -583,4 +587,106 @@ test("Neon Nights end to end", () => {
     assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
   }
   // Not wrongSide: a third of Neon Nights' points are symmetric poses.
+});
+
+// --- difficulties (docs/DANCE.md section 7a) ----------------------------------
+
+test("the difficulty interface the shell relies on", () => {
+  assert.deepEqual(DanceRaccoonGame.difficulties, [
+    { id: "easy", label: "EASY", hint: "fewer moves, held longer" },
+    { id: "normal", label: "NORMAL", hint: "the full routine" },
+    { id: "hard", label: "HARD", hint: "every move, judged strictly" },
+  ]);
+  assert.equal(DanceRaccoonGame.defaultDifficulty, "normal");
+  let { game } = newGame();
+  assert.ok(game.difficulty === "normal" && game.boardId === "dance-groove");
+  for (const level of ["easy", "hard"]) {
+    ({ game } = newGame(makeSongs(), null, level));
+    assert.ok(game.difficulty === level && game.boardId === `dance-groove_${level}`);
+    assert.equal(game.judge.rules, DIFFICULTY[level]);
+    assert.equal(game.song.level, level);
+  }
+  ({ game } = newGame(makeSongs(), null, "nightmare"));
+  assert.ok(game.difficulty === "normal" && game.boardId === "dance-groove", "unknown ids fall back to normal");
+  assert.deepEqual(songVariants(makeSongs()).map((v) => v.boardId), ["dance-groove"],
+    "the song list names the normal board; the shell adds the difficulty");
+});
+
+test("board ids fit the server's pattern", () => {
+  for (const sid of JSON.parse(readFileSync(new URL("../../assets/dance/songs/index.json", import.meta.url), "utf8"))) {
+    for (const level of DIFFICULTIES) assert.match(boardIdFor(sid, level), /^dance-[a-z0-9_]{1,40}$/);
+  }
+  assert.equal(boardIdFor("neon_nights"), "dance-neon_nights");
+  assert.equal(boardIdFor("neon_nights", "normal"), "dance-neon_nights");
+  assert.equal(boardIdFor("neon_nights", "easy"), "dance-neon_nights_easy");
+});
+
+test("one rules table: easy forgives more, hard less", () => {
+  assert.deepEqual(Object.keys(DIFFICULTY).sort(), ["easy", "hard", "normal"]);
+  const n = DIFFICULTY.normal, e = DIFFICULTY.easy, h = DIFFICULTY.hard;
+  assert.deepEqual([n.early, n.late, n.hold], [0.20, 0.50, 0.12], "normal is the game as tuned before difficulties");
+  assert.deepEqual(n.ratings.map((r) => r[1]), [0.90, 0.74, 0.60, 0.42]);
+  assert.deepEqual([WINDOW_EARLY, WINDOW_LATE, HOLD, RATINGS], [n.early, n.late, n.hold, n.ratings]);
+  assert.deepEqual([e.early, e.late, e.hold, ...e.ratings.map((r) => r[1])], [0.25, 0.60, 0.12, 0.86, 0.72, 0.56, 0.40]);
+  assert.deepEqual([h.early, h.late, h.hold, ...h.ratings.map((r) => r[1])], [0.15, 0.50, 0.15, 0.93, 0.84, 0.68, 0.50]);
+  for (const r of [e, n, h]) {
+    assert.deepEqual(r.ratings.map((x) => x[0]), ["perfect", "super", "good", "ok"]);
+    assert.deepEqual(r.ratings.map((x) => x[2]), [1.0, 0.8, 0.55, 0.3], "same values: score is 0..10000 everywhere");
+  }
+  e.ratings.forEach((a, i) => assert.ok(a[1] < n.ratings[i][1] && n.ratings[i][1] < h.ratings[i][1]));
+  assert.ok(e.late > n.late && e.early >= n.early && n.early >= h.early && h.hold > n.hold);
+  assert.equal(rate(0.88, e.ratings)[0], "perfect");
+  assert.equal(rate(0.88, n.ratings)[0], "super");
+  assert.equal(rate(0.88, h.ratings)[0], "super");
+  assert.equal(rate(0.80, h.ratings)[0], "good");
+  assert.equal(e.lostBefore, 0.30);
+});
+
+const NEON_SONGS = (() => {
+  const lib = parseLibrary(readJSON("moves.json"));
+  return [parseSong(readJSON("songs/neon_nights/song.json"), "neon_nights", lib)];
+})();
+
+function neon(level, make, opts = {}) {
+  const { game, clock } = newGame(NEON_SONGS, "neon_nights", level);
+  simulate(game, clock, make(game), opts);
+  return game;
+}
+
+/** Every limb within 10 degrees, 200 ms behind the coach. */
+const precise = (game) => sloppy(game, { late: 0.2, off: [0.0, 10.0] });
+
+for (const level of ["easy", "normal", "hard"]) {
+  test(`fairness on ${level}`, () => {
+    let game = neon(level, perfect);
+    assert.ok(game.score === 10000 && game.judge.unseen === 0, report(game));
+    assert.equal(game.song.judgePoints().length, { easy: 49, normal: 145, hard: 145 }[level]);
+    game = neon(level, precise);
+    assert.equal(game.starCount, 5, report(game));
+    for (const bot of [frozen, idle, randomArms]) {
+      game = neon(level, bot);
+      assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
+    }
+    game = neon(level, sloppy); // every limb 25-30 degrees off, 250 ms late
+    const want = { easy: [4, 4], normal: [3, 3], hard: [2, 2] }[level];
+    assert.ok(game.starCount >= want[0] && game.starCount <= want[1], `sloppy: ${report(game)}`);
+  });
+}
+
+test("easy forgives a beginner that normal rules would not", () => {
+  const beginner = (g) => sloppy(g, { late: 0.4, off: [30.0, 40.0] });
+  let game = neon("easy", beginner);
+  assert.ok(game.starCount >= 3, report(game));
+  const { game: g2, clock } = newGame(NEON_SONGS, "neon_nights", "easy");
+  g2.judge = new Judge(g2.song, DIFFICULTY.normal);
+  simulate(g2, clock, beginner(g2));
+  assert.ok(g2.starCount <= 1, report(g2));
+});
+
+test("hard needs the longer hold", () => {
+  // At normal's 0.12 s hold the sloppy dancer made 3 stars on hard.
+  const { game, clock } = newGame(NEON_SONGS, "neon_nights", "hard");
+  game.judge = new Judge(game.song, new Rules({ ...DIFFICULTY.hard, hold: 0.12 }));
+  simulate(game, clock, sloppy(game));
+  assert.ok(game.starCount >= 3, report(game));
 });

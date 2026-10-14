@@ -312,3 +312,50 @@ test("games with their own count-in skip the shell countdown", () => {
   sh.handleKey("r");
   assert.equal(sh.screen, "playing", "and on play again");
 });
+
+// --- difficulties ---
+
+class Levels extends Songs {
+  static difficulties = [{ id: "easy", label: "EASY", hint: "fewer moves" },
+    { id: "normal", label: "NORMAL", hint: "the routine" }, { id: "hard", label: "HARD", hint: "strict" }];
+  static defaultDifficulty = "normal";
+  constructor(o) {
+    super(o);
+    this.difficulty = o.difficulty ?? "normal";
+  }
+}
+
+test("the difficulty picker sets the game and its own board", async () => {
+  const board = new LocalBoard(memoryStorage());
+  await board.submit("songs-a", "OLD", 50); // scores from before difficulties existed
+  const sh = new Shell({ games: [Levels], board });
+  await sh.refreshScores();
+  for (const k of ["songs-a", "songs-a_easy", "songs-a_hard", "songs-b_easy"]) assert.ok(sh.boardKeys().includes(k), k);
+  sh.handleKey("1");
+  assert.deepEqual(sh._layout().slice(0, 3).map((b) => b.action), ["diff:easy", "diff:normal", "diff:hard"]);
+  assert.equal(sh.difficultyOf("songs"), "normal");
+  assert.match(sh._tileScoreline("song:a")[0], /OLD/, "normal keeps the song's existing board");
+  sh._do("diff:easy");
+  assert.match(sh._tileScoreline("song:a")[0], /NO HIGH SCORES/, "easy has its own board");
+  sh.handleKey("1");
+  assert.equal(sh.game.difficulty, "easy");
+  assert.equal(sh.boardKey, "songs-a_easy");
+  assert.equal(sh._roundTitle(), "ALPHA - EASY");
+  sh.handleKey("r");
+  assert.equal(sh.game.difficulty, "easy", "play again keeps the difficulty");
+  sh.handleKey("Escape");
+  sh.handleKey("Escape");
+  sh.handleKey("1");
+  assert.equal(sh.difficultyOf("songs"), "easy", "the choice is remembered");
+  sh.handleKey("Tab");
+  assert.equal(sh.difficultyOf("songs"), "normal");
+});
+
+test("games without difficulties are unchanged", () => {
+  const sh = new Shell({ games: [Songs] });
+  sh.handleKey("1");
+  assert.ok(!sh._layout().some((b) => b.action.startsWith("diff:")));
+  sh.handleKey("1");
+  assert.equal(sh.difficulty, null);
+  assert.equal(sh.boardKey, "songs-a");
+});

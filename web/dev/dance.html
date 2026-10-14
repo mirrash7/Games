@@ -24,7 +24,8 @@
        ?bot=sloppy      every limb 25-30 degrees off and 250 ms late
        ?moment=N        one moment at full 1280x720
        ?audio=1         real time with the real music (click to start), shown live
-       ?song=<id>       another song -->
+       ?song=<id>       another song
+       ?difficulty=easy|normal|hard   (default normal) -->
 <header>
   <b>Raccoon Dance harness</b>
   <span id="status">loading...</span>
@@ -44,6 +45,7 @@ import { Rng } from "../js/core/random.js";
 
 const W = 1280, H = 720, FPS = 60, MODEL_HZ = 20, LAG = 0.15;
 const params = new URLSearchParams(location.search);
+const DIFFICULTY = params.get("difficulty") ?? "normal";
 const status = document.getElementById("status");
 const perf = document.getElementById("perf");
 const sheet = document.getElementById("sheet");
@@ -179,9 +181,9 @@ const MOMENTS = [
 
 async function contactSheet(song, sloppy) {
   const clock = { t: 0 };
-  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder,
+  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder, difficulty: DIFFICULTY,
     player: new SilentPlayer(song.duration + 2, { clock: () => clock.t }) });
-  const input = new Input(song, sloppy);
+  const input = new Input(game.song, sloppy);
   const screen = document.createElement("canvas");
   screen.width = W;
   screen.height = H;
@@ -192,8 +194,8 @@ async function contactSheet(song, sloppy) {
   // Below the moments: the lane on every beat from 77 to 83 (one card per judge
   // point: Point Up shows two), and a PERFECT -> PERFECT hand-over frame by frame.
   const LANE_BEATS = [77, 78, 79, 80, 81, 82, 83];
-  const LANE_CROP = [700, 530, 1270, 690], POP_CROP = [210, 30, 830, 270];
-  const laneH = 26 + Math.ceil(LANE_BEATS.length / 2) * (160 + 20);
+  const LANE_CROP = [700, 492, 1270, 690], POP_CROP = [210, 30, 830, 270];
+  const laneH = 26 + Math.ceil(LANE_BEATS.length / 2) * (198 + 20);
   const popH = 26 + 2 * (240 + 20);
   const top = rows * (ch + label);
   sheet.width = W;
@@ -224,7 +226,16 @@ async function contactSheet(song, sloppy) {
     clock.t += 1 / FPS;
     const controls = input.step(clock.t, game.songTime);
     game.update(controls, 1 / FPS);
-    const hit = MOMENTS[m][1](game);
+    // Moments come in song order; one that never happens on this difficulty
+    // (no point in the arms-down stretch on easy, say) is skipped by a later one.
+    let hit = false;
+    for (let k = m; k < MOMENTS.length; k++) {
+      if (MOMENTS[k][1](game)) {
+        m = k;
+        hit = true;
+        break;
+      }
+    }
     const laneHit = one == null && lane < LANE_BEATS.length && game.beat >= LANE_BEATS[lane];
     const fb = game.feedback, newest = fb[fb.length - 1], older = fb[fb.length - 2];
     if (one == null && pops === 0 && game.beat > 70 && newest && older && newest.rating === "perfect"
@@ -239,7 +250,7 @@ async function contactSheet(song, sloppy) {
       times.push(performance.now() - t0);
     }
     if (laneHit) {
-      crop(LANE_CROP, (lane % 2) * 640, top + 26 + Math.floor(lane / 2) * 180, `beat ${game.beat.toFixed(2)}`);
+      crop(LANE_CROP, (lane % 2) * 640, top + 26 + Math.floor(lane / 2) * 218, `beat ${game.beat.toFixed(2)}`);
       lane += 1;
     }
     if (popHit) {
@@ -267,7 +278,7 @@ async function contactSheet(song, sloppy) {
   const n = Math.max(1, times.length);
   perf.textContent = `render: mean ${mean.toFixed(2)} ms, p95 ${times[Math.floor(n * 0.95)]?.toFixed(2)} ms over ${n} frames; `
     + Object.entries(parts).map(([k, v]) => `${k} ${(v / n).toFixed(2)}`).join(", ");
-  status.textContent = `${song.title}, ${sloppy ? "sloppy" : "perfect"} bot: score ${game.score}, ${game.starCount} stars, `
+  status.textContent = `${song.title} (${game.difficulty}, ${game.song.judgePoints().length} points), ${sloppy ? "sloppy" : "perfect"} bot: score ${game.score}, ${game.starCount} stars, `
     + `${JSON.stringify(game.counts)}, unseen ${game.judge.unseen}; ${m}/${MOMENTS.length} moments`;
   window.__dance = { score: game.score, counts: game.counts, moments: m, mean, parts };
 }
@@ -279,8 +290,8 @@ async function live(song, sloppy) {
   await new Promise((r) => go.addEventListener("click", r, { once: true }));
   go.hidden = true;
   unlockAudio();
-  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder });
-  const input = new Input(song, sloppy);
+  const game = new DanceRaccoonGame({ songs: [song], variant: song.folder, difficulty: DIFFICULTY });
+  const input = new Input(game.song, sloppy);
   const ctx = sheet.getContext("2d");
   sheet.width = W;
   sheet.height = H;
@@ -317,8 +328,9 @@ async function live(song, sloppy) {
     return;
   }
   const nav = document.getElementById("nav");
-  nav.innerHTML = MOMENTS.map((mm, i) => `<a href="?moment=${i}${params.get("bot") ? `&bot=${params.get("bot")}` : ""}">${i}</a>`).join("")
-    + ' <a href="?">sheet</a> <a href="?bot=sloppy">sloppy</a> <a href="?audio=1">music</a>';
+  nav.innerHTML = MOMENTS.map((mm, i) => `<a href="?moment=${i}${params.get("bot") ? `&bot=${params.get("bot")}` : ""}&difficulty=${DIFFICULTY}">${i}</a>`).join("")
+    + ' <a href="?">sheet</a> <a href="?bot=sloppy">sloppy</a> <a href="?audio=1">music</a>'
+    + ' <a href="?difficulty=easy">easy</a> <a href="?difficulty=normal">normal</a> <a href="?difficulty=hard">hard</a>';
   const sloppy = params.get("bot") === "sloppy";
   status.textContent = "dancing...";
   await new Promise((r) => setTimeout(r, 0));
