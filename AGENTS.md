@@ -371,7 +371,7 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
 - **Art** stays in `assets/<game>/generated/`. `tools/build_web.py` (Pages) and
   `tools/serve_web.py` (local) mount it into the site; add a line to `MOUNTS`.
 - **Verify:** `cd web && node --test tests/*.test.mjs` (pytest runs it too), then
-  look at it: `uv run python tools/serve_web.py`, open `http://localhost:8765/?debug=1`
+  look at it: `uv run python tools/serve_web.py`, open `http://localhost:8765/arcade/?debug=1` (the landing page is `/`)
   (`?source=<image/video>` stands in for a webcam), plus `dev/<game>.html` contact
   sheets and `dev/pipeline.html` for model accuracy and speed.
 - **Tutorial and leaderboards exist in both builds.** Each game's `tutorial`

@@ -77,7 +77,10 @@ this; see below.)
 
 ```
 web/
-  index.html, style.css     intro card, canvas, toolbar (camera picker, fullscreen, skeleton)
+  index.html                the landing page: hero, experiences catalog, how it works (see "Landing page")
+  landing/                  landing.css, landing.js (catalog + menu), hero.js (three.js hero), catalog.json
+  media/                    showcase videos + posters for the landing page (snack, flappy, dance, hero)
+  arcade/index.html, style.css   the arcade: intro card, canvas, toolbar (camera picker, fullscreen, skeleton)
   coi-sw.js                 cross-origin isolation for static hosting
   js/main.js                boot (backend choice, downloads) and the render loop (app.py's twin)
   js/camera.js              getUserMedia -> mirrored 1280x720 frame; built-in camera over iPhone
@@ -107,11 +110,13 @@ uv run python tools/serve_web.py           # http://localhost:8765 with COOP/COE
 cd web && node --test tests/*.test.mjs     # or: uv run --with pytest pytest tests/ -q
 ```
 
-Open `http://localhost:8765/`. Useful URL options:
+Open `http://localhost:8765/` for the landing page and `http://localhost:8765/arcade/`
+for the arcade. The arcade's URL options:
 
 - `?debug=1` shows the skeleton and the timings (or press D).
-- `?game=snack` or `?game=flappy` preselects a game.
-- `?source=dev/people-walking.jpg` uses an image or video in place of the
+- `?game=snack`, `?game=flappy` or `?game=dance` opens that game once the
+  player has started the camera (the landing page's PLAY buttons use this).
+- `?source=../dev/people-walking.jpg` uses an image or video in place of the
   webcam. Sample media is gitignored; this one is Roboflow's public
   people-walking image.
 
@@ -124,6 +129,67 @@ Dev pages:
 - `dev/tutorial.html?game=snack&t=1` freezes the how-to-play cards at a
   time, and `&screen=entry` or `&screen=results` shows the leaderboard
   screens. `&crop=x0,y0,x1,y1` enlarges part of the screen.
+
+## Landing page
+
+`web/index.html` is the site's front door: a "Vision Playground" of
+interactive computer-vision experiences, of which the arcade games are the
+first category. Roboflow-like colours and type (no logos; the footer says the
+project is independent) and a credit for RF-DETR.
+
+- **Hero** (`landing/hero.js`): three.js 0.169 from jsDelivr via an import map
+  (CORS + CORP headers, so it loads under the service worker's
+  `COEP: require-corp`), with UnrealBloomPass. A 17-keypoint skeleton dances
+  Neon Nights' real choreography: `chart.js` parses `assets/dance/moves.json`
+  and the song, `Song.coachPose(beat)` poses it, `pose.js` `forward()` gives
+  the joints, and a tracked 3D box carries a "person 0.9x" label. It caps
+  devicePixelRatio at 1.75, stops when off-screen or the tab is hidden, and
+  costs ~2 ms a frame including the GPU on an M-series Mac
+  (`__hero.bench()` in the console measures it). `prefers-reduced-motion`
+  draws one still frame; without WebGL (or if three.js can't load) the hero
+  shows `media/hero.webm|mp4` in a frame, else just the gradient. Test those
+  with `?motion=reduce` and `?hero=video`.
+- **Catalog** (`landing/landing.js`): rendered from `landing/catalog.json`.
+  The menu lists "All" plus every category that has an experience, with
+  counts; it's a row of links (`#cat=<id>`), so categories are deep-linkable
+  and keyboard-accessible, and it scrolls sideways when there are many.
+  Categories with nothing live yet are grouped under "Roadmap". Live cards
+  play their muted preview video on hover or focus (in view on touch screens)
+  and fall back to the game's sprite in a detection box if the poster is
+  missing.
+- Fonts: Inter Tight and Geist Mono from `@fontsource` on jsDelivr (Google
+  Fonts' CSS isn't CORP-enabled).
+
+### Add an experience or a category
+
+Edit `web/landing/catalog.json`; no HTML changes. The schema (also at the top
+of `landing.js`, and checked by `validateCatalog`, which
+`web/tests/landing.test.mjs` runs on the real file):
+
+```jsonc
+{
+  "categories": [ { "id": "segmentation", "title": "Segmentation", "blurb": "One or two sentences." } ],
+  "experiences": [ {
+    "id": "cutout-studio",                  // unique, lowercase-with-dashes
+    "title": "Cutout Studio",
+    "category": "segmentation",             // must be a category id
+    "status": "live",                       // or "soon": a "Coming soon" card, not a link
+    "summary": "One or two sentences.",
+    "tags": ["masks", "background"],
+    "href": "cutout/",                      // live only; relative to the site root
+    "media": { "mp4": "media/cutout.mp4", "webm": "media/cutout.webm", "poster": "media/cutout.jpg",
+               "fallback": "assets/...png", "fallbackLabel": "person",   // sprite if the poster is missing
+               "motif": "mask" },           // soon cards: "boxes" | "mask" | "graph" placeholder art
+    "needs": ["webcam"],
+    "model": "RF-DETR segmentation"         // optional
+  } ]
+}
+```
+
+A new category appears in the menu as soon as it has one experience. Keep
+preview videos short and small (a few seconds, ~0.5-1 MB, 16:9); they load
+only on hover. The test checks that live hrefs point at an existing page and,
+for `?game=`, a registered game.
 
 ## Re-export the model
 

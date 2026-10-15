@@ -7,7 +7,7 @@
 //
 // The render loop never waits on the camera or the model.
 //
-// URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy (preselect),
+// URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy|dance (open that game once started),
 // ?source=<image or video url> (stand-in for the webcam), ?debug=1 (skeleton + stats),
 // ?leaderboard=<url> (a different leaderboard server, e.g. a local `wrangler dev`).
 
@@ -158,6 +158,10 @@ async function boot() {
   await fillCameraPicker();
   engine.onResult = () => sendFrame();
   running = true;
+  // Deep links from the landing page (arcade/?game=dance): open that game
+  // straight away - its song list, or its how-to-play cards.
+  const wanted = params.get("game");
+  if (wanted && shell.registry[wanted]) shell.choose(wanted);
   requestAnimationFrame(tick);
 }
 

@@ -44,6 +44,7 @@ def test_site_build_layout(tmp_path):
     out = tmp_path / "site"
     build(out)
     assert (out / "index.html").exists() and (out / "coi-sw.js").exists()
+    assert (out / "arcade" / "index.html").exists(), "the arcade lives at /arcade/, the landing page at /"
     assert (out / "assets" / "snack" / "manifest.json").exists()
     assert (out / "assets" / "flappy" / "bird_0.png").exists()
     assert (out / "models" / "manifest_fp16.json").exists()

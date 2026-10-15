@@ -127,5 +127,5 @@ Desktop game ids map to the site's through `board_id` (fruitninja -> snack).
 ## Develop locally
 
 See `leaderboard/README.md`: `wrangler dev --local` runs the Worker and a
-local database. `http://localhost:8765/?leaderboard=http://localhost:8787`
+local database. `http://localhost:8765/arcade/?leaderboard=http://localhost:8787`
 points the site at it.

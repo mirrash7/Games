@@ -2,76 +2,194 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Motion Arcade</title>
-  <meta name="description" content="Body-controlled arcade games in your browser. A pose model watches your webcam; nothing leaves your computer.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Vision Playground: computer vision you can play</title>
+  <meta name="description" content="Interactive computer-vision experiences that run live in your browser. Start with arcade games you control with your whole body, tracked by a pose model on your own device.">
+  <meta name="theme-color" content="#161026">
+  <meta name="color-scheme" content="dark light">
   <link rel="icon" href="assets/snack/raccoon_idle.png">
-  <link rel="stylesheet" href="style.css">
-  <script>
-    // Cross-origin isolation via service worker (see coi-sw.js). Reload once
-    // when it first takes control; never loop.
-    (function () {
-      if (window.crossOriginIsolated || !window.isSecureContext || !("serviceWorker" in navigator)) return;
-      navigator.serviceWorker.register("coi-sw.js").then(function (reg) {
-        if (navigator.serviceWorker.controller) {
-          // Controlled but still not isolated: the browser refused; carry on single-threaded.
-          return;
-        }
-        var reload = function () {
-          if (sessionStorage.getItem("coi-reloaded")) return;
-          sessionStorage.setItem("coi-reloaded", "1");
-          location.reload();
-        };
-        if (reg.active) reload();
-        navigator.serviceWorker.addEventListener("controllerchange", reload);
-      }).catch(function (e) { console.warn("coi service worker:", e); });
-    })();
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Vision Playground">
+  <meta property="og:title" content="Vision Playground: computer vision you can play">
+  <meta property="og:description" content="Interactive computer-vision experiences that run live in your browser. Body-controlled games today, more experiences on the way.">
+  <meta property="og:url" content="https://mirrash7.github.io/Games/">
+  <meta property="og:image" content="https://mirrash7.github.io/Games/media/hero.jpg">
+  <meta property="og:image:alt" content="A glowing keypoint skeleton dancing inside a detection box">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Fonts: Inter Tight (headlines, body) and Geist Mono (labels), served with CORS + CORP
+       so they load under the site's COEP: require-corp. -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-300.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-500.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-500.css">
+  <link rel="stylesheet" href="landing/landing.css">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+    }
+  }
   </script>
+  <script type="module" src="landing/landing.js"></script>
 </head>
 <body>
-  <main id="stage">
-    <canvas id="screen" width="1280" height="720" aria-label="Game screen"></canvas>
+  <a class="skip" href="#experiences">Skip to experiences</a>
 
-    <section id="intro" class="overlay">
-      <div class="card">
-        <img class="mascot" src="assets/snack/raccoon_idle.png" alt="">
-        <h1>MOTION ARCADE</h1>
-        <p class="lede">Arcade games you play with your body. A pose model watches your webcam
-          and runs entirely in this browser: no video leaves your computer.</p>
-        <ul class="games">
-          <li><b>Snack Attack</b> your hand is a raccoon. Swipe through the snacks and dodge the trash.</li>
-          <li><b>Flappy Raccoon</b> flap your arms to fly through the pipes.</li>
-        </ul>
-        <p id="device" class="device">Checking your graphics card...</p>
-        <button id="go" class="go" disabled>Allow camera and play</button>
-        <div id="progress" class="progress" hidden>
-          <div class="bar"><span id="bar"></span></div>
-          <p id="status" class="status"></p>
+  <header class="site-header">
+    <div class="wrap header-row">
+      <a class="wordmark" href="./" aria-label="Vision Playground, home">
+        <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M12 7.5 8.5 11.5l-1 4M12 7.5l3.5 4 1 4M12 7.5v6l-2 4.5M12 13.5l2 4.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+          <circle cx="12" cy="7.5" r="1.6" fill="currentColor"/>
+          <circle cx="8.5" cy="11.5" r="1.1" fill="currentColor"/><circle cx="15.5" cy="11.5" r="1.1" fill="currentColor"/>
+          <circle cx="10" cy="18" r="1.1" fill="currentColor"/><circle cx="14" cy="18" r="1.1" fill="currentColor"/>
+        </svg>
+        <span>Vision Playground</span>
+      </a>
+      <nav class="top-nav" aria-label="Main">
+        <a href="#experiences">Experiences</a>
+        <a href="#how">How it works</a>
+        <a href="https://github.com/mirrash7/Games" target="_blank" rel="noopener">Source<span class="ext" aria-hidden="true">↗</span></a>
+        <a class="btn btn-ghost btn-sm" href="arcade/">Play</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section id="hero" class="hero" aria-labelledby="hero-title">
+      <canvas id="hero-canvas" class="hero-canvas" aria-hidden="true"></canvas>
+      <div class="hero-video" data-hero-video></div>
+      <div class="hero-scan" aria-hidden="true"></div>
+      <div class="hero-label" data-hero-label aria-hidden="true"><span>person</span> <span data-score>0.98</span></div>
+
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Live in your browser<span class="wide">&nbsp;· On-device</span></p>
+          <h1 id="hero-title">Vision <br>Playground</h1>
+          <p class="lede">Interactive computer-vision experiences that run live in your browser.
+            First up: arcade games you control with your whole body.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="arcade/">Play the arcade<span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn btn-ghost" href="#experiences">Explore experiences</a>
+          </div>
+          <dl class="hero-stats">
+            <div><dt>Keypoints / person</dt><dd>17</dd></div>
+            <div><dt>Runs on</dt><dd>WebGPU</dd></div>
+            <div><dt>Frames uploaded</dt><dd>0</dd></div>
+          </dl>
         </div>
-        <p class="fine">The first visit downloads the pose model once (<span id="model-size">72-143 MB</span>); after that it starts from the browser cache.
-          Stand about 2 m back with your upper body in view.</p>
+      </div>
+
+      <div class="hero-hud" aria-hidden="true">
+        <p><span class="k">Track</span> <span data-hud-song>Neon Nights · 120 BPM</span></p>
+        <p><span class="k">Move</span> <span data-hud-move>Groove</span></p>
+        <p><span class="k">Beat</span> <span data-hud-beat>000</span></p>
+      </div>
+      <p class="sr-only">Background animation: a glowing 17-point body skeleton dances the Raccoon Dance choreography inside a detection box labelled "person".</p>
+    </section>
+
+    <section id="experiences" class="experiences" aria-labelledby="experiences-title">
+      <div class="wrap section-head">
+        <div>
+          <p class="eyebrow"><span class="idx">[01]</span> Experiences</p>
+          <h2 id="experiences-title">Pick an experience</h2>
+        </div>
+        <p class="section-note">Every experience runs on your device, in the browser. Start with the body-controlled games; more categories land here as they're built.</p>
+      </div>
+
+      <nav id="category-menu" class="menu" aria-label="Experience categories">
+        <div class="wrap menu-row">
+          <span class="menu-label" aria-hidden="true">Filter</span>
+          <ul class="menu-list" data-menu-list>
+            <li><a class="chip-link" href="#cat=all" aria-current="true"><span class="chip-title">All</span></a></li>
+          </ul>
+        </div>
+      </nav>
+      <p id="catalog-status" class="sr-only" role="status" aria-live="polite"></p>
+
+      <div id="catalog" class="wrap catalog">
+        <noscript><p class="catalog-error">The experiences list needs JavaScript. <a href="arcade/">Open the arcade</a>.</p></noscript>
       </div>
     </section>
 
-    <section id="failure" class="overlay" hidden>
-      <div class="card">
-        <h1>Something went wrong</h1>
-        <p id="failure-text" class="lede"></p>
-        <button class="go" onclick="location.reload()">Try again</button>
+    <section id="how" class="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow"><span class="idx">[02]</span> How it works</p>
+            <h2 id="how-title">Your camera never leaves the page.</h2>
+          </div>
+          <p class="section-note">The model downloads once (72-143 MB, then cached) and runs on your graphics card with WebGPU, or on the CPU when there's no WebGPU.</p>
+        </div>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-idx">01</span>
+            <svg class="step-icon" viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="5" y="13" width="30" height="22" rx="2"/><path d="M35 20l8-5v18l-8-5"/><circle cx="20" cy="24" r="6"/>
+            </svg>
+            <h3>Camera</h3>
+            <p>Your webcam feed stays in this browser tab. Frames go to the model and nowhere else.</p>
+          </li>
+          <li class="step">
+            <span class="step-idx">02</span>
+            <svg class="step-icon" viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="10" y="10" width="28" height="28" rx="2"/><rect x="17" y="17" width="14" height="14"/>
+              <path d="M16 4v6M24 4v6M32 4v6M16 38v6M24 38v6M32 38v6M4 16h6M4 24h6M4 32h6M38 16h6M38 24h6M38 32h6"/>
+            </svg>
+            <h3>RF-DETR, in your browser</h3>
+            <p>A real-time keypoint model finds 17 body points per person, on WebGPU when your browser has it.</p>
+          </li>
+          <li class="step">
+            <span class="step-idx">03</span>
+            <svg class="step-icon" viewBox="0 0 48 48" aria-hidden="true">
+              <circle cx="24" cy="9" r="4"/><path d="M24 13v14M24 17l-10-6M24 17l10-6M24 27l-7 13M24 27l7 13"/>
+              <circle cx="14" cy="11" r="1.8" class="dot"/><circle cx="34" cy="11" r="1.8" class="dot"/><circle cx="17" cy="40" r="1.8" class="dot"/><circle cx="31" cy="40" r="1.8" class="dot"/>
+            </svg>
+            <h3>Your body drives it</h3>
+            <p>Hands become cursors, flaps become flight, poses become dance moves. The game draws at 60 frames a second.</p>
+          </li>
+        </ol>
       </div>
     </section>
   </main>
 
-  <footer id="bar-bottom">
-    <span id="engine" class="chip">model: not loaded</span>
-    <label class="cam">Camera <select id="camera" disabled></select></label>
-    <button id="fullscreen" class="tool" title="Fullscreen (F)">Fullscreen</button>
-    <button id="debug" class="tool" title="Show the skeleton (D)">Skeleton</button>
-    <span class="spacer"></span>
-    <a href="https://github.com/mirrash7/Games" target="_blank" rel="noopener">Source</a>
-    <span class="credit">Pose model: <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> by Roboflow (Apache-2.0)</span>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-brand">
+        <a class="wordmark" href="./"><span>Vision Playground</span></a>
+        <p>Interactive computer-vision experiences that run live in your browser.</p>
+        <p class="credit">Powered by <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> (Roboflow, Apache-2.0).</p>
+      </div>
+      <div>
+        <h2 class="footer-h">Experiences</h2>
+        <ul id="footer-categories" class="footer-links">
+          <li><a href="arcade/">Arcade</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-h">Project</h2>
+        <ul class="footer-links">
+          <li><a href="arcade/">Play the arcade</a></li>
+          <li><a href="https://github.com/mirrash7/Games" target="_blank" rel="noopener">Source on GitHub</a></li>
+          <li><a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR model</a></li>
+        </ul>
+      </div>
+      <div class="footer-note">
+        <h2 class="footer-h">Leaderboards</h2>
+        <p>After a high score you can enter a 1-3 letter name. The game, that name and the score go to a shared worldwide leaderboard; video never does.</p>
+      </div>
+    </div>
+    <div class="wrap footer-base">
+      <p>An independent project. Not affiliated with or endorsed by Roboflow.</p>
+      <p class="mono">Built with RF-DETR · onnxruntime-web · three.js</p>
+    </div>
   </footer>
-
-  <script type="module" src="js/main.js"></script>
 </body>
 </html>
