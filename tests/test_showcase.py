@@ -85,3 +85,44 @@ def test_frames_are_deterministic(clip):
     for x, y in zip(a, b):
         assert np.array_equal(x, y)
     assert not np.array_equal(a[0], a[1]), "the clip moves"
+
+
+def test_snack_elbows_never_rise_above_the_shoulders():
+    """Snack Attack's raccoon arm reaches like a person: the elbow stays below the
+    shoulder line on every frame of the clip, drawn and true, and so does the
+    other arm. A fixed bend side once put the elbow up whenever the hand rose,
+    and per-keypoint extrapolation flung the drawn elbow ~50 px over the
+    shoulder at the end of fast swings."""
+    tool = _load_tool()
+    from kpapp.config import KP
+
+    sc = tool.make("snack")
+    true_gaps = []
+    for _ in tool.clip_frames(sc):
+        elbow, _palm = sc.bot.arm
+        shoulder = sc.bot.body.frame(sc.bot.cx, sc.bot.lean)["r_shoulder"]
+        true_gaps.append(elbow[1] - shoulder[1])
+    total = int(round(sc.timing.seconds * tool.FPS)) + int(round(tool.LOOP_FADE * tool.FPS))
+    assert len(sc.drawn) == total  # every rendered frame, the loop's lead-in included
+    assert min(true_gaps) >= sc.bot.margin - 1e-6
+    for pose in sc.drawn:
+        assert pose is not None
+        for side in ("left", "right"):  # left_* is the controlling (screen-right) arm
+            gap = pose.xy[KP[f"{side}_elbow"]][1] - pose.xy[KP[f"{side}_shoulder"]][1]
+            assert gap >= 0.0, f"{side} elbow {-gap:.1f} px above its shoulder"
+
+
+def test_snack_raccoon_stays_on_the_drawn_palm():
+    """The cursor is the game's palm; the drawn arm is re-solved to end there."""
+    tool = _load_tool()
+    from kpapp.config import KP
+
+    sc = tool.make("snack")
+    gaps = []
+    for _ in itertools.islice(tool.clip_frames(sc), 60):
+        pose, tip = sc.drawn[-1], sc.game.blade.trail(sc.game.clock)
+        if pose is None or not tip:
+            continue
+        w, e = pose.xy[KP["left_wrist"]], pose.xy[KP["left_elbow"]]
+        gaps.append(float(np.hypot(*(w + 0.38 * (w - e) - tip[-1]))))
+    assert gaps and float(np.median(gaps)) < 12.0

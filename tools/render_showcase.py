@@ -67,6 +67,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from kpapp.config import KP  # noqa: E402
 from kpapp.controls import ControlState  # noqa: E402
+from kpapp.hand import PALM_REACH  # noqa: E402
 from kpapp.inference import Pose, PoseExtrapolator, Result  # noqa: E402
 
 MEDIA = ROOT / "web" / "media"
@@ -269,6 +270,9 @@ class SyntheticCamera:
                 if not covers(x):
                     tx = x
                     break
+            else:  # no room along the edge: drop inside the box, under the HUD
+                ty = max(r[3] for r in self.keep_out
+                         if tx < r[2] and tx + tw > r[0] and ty < r[3] and ty + th > r[1])
         img[ty:ty + th, tx:tx + tw] = tag
 
 
@@ -331,6 +335,40 @@ def two_link(shoulder, target, a: float, b: float, bend: float) -> tuple[np.ndar
     n = np.array([-u[1], u[0]]) * bend
     elbow = s + u * x + n * y
     return elbow, s + d
+
+
+def low_elbow_reach(shoulder, target, a: float, b: float, margin: float) -> tuple[np.ndarray, np.ndarray]:
+    """Elbow and end point of an arm reaching for `target` with the elbow kept
+    at least `margin` px below the shoulder line, bent down and out like a real
+    reach.
+
+    Of the two exact solutions it takes the lower elbow. When that one would
+    still rise above the line (a hand held high), the elbow is pinned to the
+    allowed arc and the end point goes as close to the target as it can; the
+    caller must then use the returned end point, not the target."""
+    s = np.asarray(shoulder, np.float64)
+    tgt = np.asarray(target, np.float64)
+    floor = s[1] + margin
+    best = None
+    for bend in (1.0, -1.0):
+        elbow, end = two_link(s, tgt, a, b, bend)
+        if elbow[1] >= floor and (best is None or elbow[1] > best[0][1]):
+            best = (elbow, end)
+    if best is not None:
+        return best
+    # Pinned: search the arc of elbows at or below the line for the closest reach.
+    lo = math.asin(min(1.0, margin / a))  # angle below horizontal at the line
+    out = None
+    for k in range(121):
+        ang = lo + (math.pi - 2 * lo) * k / 120  # sweep from screen-right to screen-left
+        elbow = s + a * np.array([math.cos(ang), math.sin(ang)])
+        d = tgt - elbow
+        n = float(np.hypot(*d))
+        end = elbow + d * (b / n) if n > 1e-6 else elbow + np.array([0.0, -b])
+        err = float(np.hypot(*(end - tgt)))
+        if out is None or err < out[0]:
+            out = (err, elbow, end)
+    return out[1], out[2]
 
 
 class Body:
@@ -419,6 +457,7 @@ class Showcase:
         self.ticks = 0
         self.numpy = SeededNumpy(self.seed)
         self.controls = ControlState()
+        self.drawn: list[Pose | None] = []  # every skeleton drawn so far (tests read it)
 
     def step(self) -> None:
         raise NotImplementedError
@@ -426,8 +465,14 @@ class Showcase:
     def camera(self) -> SyntheticCamera:
         raise NotImplementedError
 
+    def drawn_pose(self) -> Pose | None:
+        """The skeleton drawn into the camera layer: the pose the game reads."""
+        return self.controls.pose
+
     def render(self) -> np.ndarray:
-        frame = self.cam.frame(self.controls.pose)
+        pose = self.drawn_pose()
+        self.drawn.append(pose)
+        frame = self.cam.frame(pose)
         with self.numpy.active():
             self.game.render(frame)
         return frame
@@ -448,9 +493,17 @@ class SnackBot:
     DRIFT = 140.0  # px/s between swings: well under the 260 px/s cutting speed
     BOMB_CLEAR = 44.0 + 70.0  # blade half-width + margin, on top of the bag's radius
     G = 1500.0
+    ELBOW_MARGIN = 0.12  # shoulder widths: the elbow stays at least this far below the shoulder
 
     def __init__(self, body: Body) -> None:
         self.body = body
+        sw = body.sw
+        self.upper, self.reach = 0.62 * sw, 0.58 * sw * 1.38  # shoulder-elbow, elbow-palm
+        self.margin = self.ELBOW_MARGIN * sw
+        # Highest a palm can go with the elbow kept below the shoulder: elbow at
+        # the margin, forearm straight up. Planned hands stay a little under it.
+        self.top = body.sy + self.margin - self.reach + 14.0
+        self.arm = None
         self.hand = np.array([700.0, 330.0])
         self.path: list[tuple[float, np.ndarray]] = []  # (time, palm) waypoints
         self.cx = 560.0  # hip centre
@@ -469,7 +522,7 @@ class SnackBot:
             if f.is_bomb:
                 continue
             p = self._pred(f, self.LAG + 0.3)
-            if 90 < p[0] < W - 90 and 60 < p[1] < H - 150 and f.pos[1] < H + 20:
+            if 90 < p[0] < W - 90 and self.top + 20 < p[1] < H - 150 and f.pos[1] < H + 20:
                 snacks.append(f)
         while snacks:
             path = self._swing(t, snacks)
@@ -491,7 +544,7 @@ class SnackBot:
         best, best_c = stay, self._clearance(t, stay, bombs)
         for k in range(12):
             ang = k * math.pi / 6
-            to = np.clip(self.hand + 110.0 * np.array([math.cos(ang), math.sin(ang)]), [60, 60], [W - 60, H - 160])
+            to = np.clip(self.hand + 110.0 * np.array([math.cos(ang), math.sin(ang)]), [60, self.top], [W - 60, H - 160])
             cand = [(t, self.hand.copy()), (t + 0.25, to)]
             c = self._clearance(t, cand, bombs)
             if c > best_c:
@@ -524,7 +577,7 @@ class SnackBot:
         # Approach: a point before the first snack, a little below its line.
         p0 = self._pred(targets[0], (tt - t) + self.LAG + 0.25)
         start = p0 + np.array([-direction * 150.0, 50.0])
-        start = np.clip(start, [40, 60], [W - 40, H - 120])
+        start = np.clip(start, [40, self.top], [W - 40, H - 120])
         dt = max(0.12, float(np.hypot(*(start - here))) / self.APPROACH)
         tt += dt
         here = start
@@ -535,10 +588,12 @@ class SnackBot:
             for _ in range(3):  # where it will be when we get there
                 p = self._pred(f, arrive - t + self.LAG)
                 arrive = tt + max(0.05, float(np.hypot(*(p - here))) / self.SWIPE)
+            if p[1] < self.top:  # out of reach by then (elbow below the shoulder): skip it
+                continue
             tt, here = arrive, p
             path.append((tt, here.copy()))
         end = here + np.array([direction * 180.0, -40.0])
-        end = np.clip(end, [40, 60], [W - 40, H - 120])
+        end = np.clip(end, [40, self.top], [W - 40, H - 120])
         tt += max(0.08, float(np.hypot(*(end - here))) / self.SWIPE)
         path.append((tt, end.copy()))
         tt += 0.18
@@ -583,7 +638,7 @@ class SnackBot:
     def tick(self, t: float, dt: float, game) -> None:
         if not self.path or t >= self.path[-1][0]:
             self._plan(t, game)
-        self.hand = np.asarray(self._palm_at(t), np.float64)
+        planned = np.asarray(self._palm_at(t), np.float64)
         # The body steps toward where the hand is going (looking ahead along
         # the plan) and leans into the reach, so the arm stays in reach
         # without the figure sliding about like a robot.
@@ -603,15 +658,20 @@ class SnackBot:
                 self.feet[i] = x0 + (stance - x0) * _ease(u)
                 if u >= 1:
                     self.step[i] = None
+        # The palm is the wrist pushed 0.38 of a forearm on (hand.PALM_REACH), so
+        # the elbow-to-palm segment is 1.38 forearms long. The hand is wherever
+        # that arm actually puts it, so the skeleton and the raccoon never part.
+        shoulder = b.frame(self.cx, self.lean)["r_shoulder"]
+        elbow, palm = low_elbow_reach(shoulder, planned, self.upper, self.reach, self.margin)
+        self.arm = (elbow, palm)
+        self.hand = palm
 
     def pose(self, t: float) -> Pose:
         b = self.body
         sw = b.sw
         fr = b.frame(self.cx, self.lean)
-        # The palm is the wrist pushed 0.38 of a forearm on (hand.PALM_REACH), so
-        # the elbow-to-palm segment is 1.38 forearms long.
-        fore = 0.58 * sw
-        elbow, palm = two_link(fr["r_shoulder"], self.hand, 0.62 * sw, fore * 1.38, bend=-1.0)
+        elbow, palm = self.arm if self.arm is not None else low_elbow_reach(
+            fr["r_shoulder"], self.hand, self.upper, self.reach, self.margin)
         wrist = elbow + (palm - elbow) / 1.38
         # The other arm hangs loose and sways a little.
         sh2 = fr["l_shoulder"]
@@ -622,19 +682,45 @@ class SnackBot:
 
 
 class SnackShowcase(Showcase):
+    """Snack Attack. The controlling arm is drawn re-solved from the palm the
+    game reads (`low_elbow_reach`, elbow below the shoulder line), not straight
+    from the extrapolated keypoints. Projection moves each keypoint on its own
+    velocity, so at the end of a fast swing it flung the drawn elbow up to
+    ~50 px above the shoulder for a frame or two, which no real arm does. The
+    palm, and so the raccoon on it, is the game's own; only the elbow and wrist
+    between it and the shoulder are redrawn."""
+
     id = "snack"
     seed = 6
-    timing = Timing(start=40.0, seconds=7.5, poster=3.0, hero=1.0)
+    timing = Timing(start=37.6, seconds=7.5, poster=3.0, hero=1.0)
 
     def __init__(self) -> None:
         super().__init__()
         from kpapp.game.fruitninja.game import FruitNinjaGame
 
         self.game = FruitNinjaGame((W, H), seed=self.seed)
-        self.bot = SnackBot(Body(shoulder_px=160.0, shoulder_y=245.0))
+        self.bot = SnackBot(Body(shoulder_px=170.0, shoulder_y=220.0))
         self.pipe = PosePipeline(seed=self.seed)
         self.cam = SyntheticCamera(scale=1.4, seed=self.seed, glow=1.6,
                                    keep_out=((0, 0, 240, 100), (1050, 0, W, 80)))
+
+    DRAW_MARGIN = 0.05  # shoulder widths the drawn elbow keeps below the shoulder line
+
+    def drawn_pose(self) -> Pose | None:
+        pose = self.controls.pose
+        if pose is None:
+            return None
+        s, e, w = KP["left_shoulder"], KP["left_elbow"], KP["left_wrist"]  # the screen-right arm
+        if min(pose.confidence[s], pose.confidence[e], pose.confidence[w]) < 0.4:
+            return pose
+        xy = pose.xy.astype(np.float64)
+        palm = xy[w] + PALM_REACH * (xy[w] - xy[e])  # where the game puts the raccoon
+        bot = self.bot
+        elbow, palm = low_elbow_reach(xy[s], palm, bot.upper, bot.reach, self.DRAW_MARGIN * bot.body.sw)
+        out = pose.xy.copy()
+        out[e] = elbow
+        out[w] = elbow + (palm - elbow) / (1 + PALM_REACH)
+        return Pose(xy=out.astype(np.float32), confidence=pose.confidence, score=pose.score)
 
     def step(self) -> None:
         dt = 1.0 / SIM_HZ
