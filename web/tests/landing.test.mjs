@@ -85,9 +85,9 @@ test("live experiences have preview media; fallback art exists in the repo", () 
   }
 });
 
-test("coming-soon experiences aren't links and draw a placeholder", () => {
+test("coming-soon experiences, when listed, aren't links and draw a placeholder", () => {
+  // None are listed right now (the roadmap is hidden), but the catalogue still supports them.
   const soon = CATALOG.experiences.filter((e) => e.status === "soon");
-  assert.ok(soon.length >= 3);
   for (const e of soon) {
     assert.equal(e.href, undefined);
     assert.ok(["boxes", "mask", "graph"].includes(e.media?.motif), e.id);
@@ -159,7 +159,9 @@ test("filtering: one category, or all with live experiences first", () => {
   const all = filterExperiences(CATALOG, null);
   assert.equal(all.length, CATALOG.experiences.length);
   const firstSoon = all.findIndex((e) => e.status === "soon");
-  assert.ok(all.slice(firstSoon).every((e) => e.status === "soon"));
+  if (firstSoon >= 0) assert.ok(all.slice(firstSoon).every((e) => e.status === "soon"));
+  const mixed = filterExperiences(mini(), null);
+  assert.deepEqual(mixed.map((e) => e.status), ["live", "soon"], "live first, coming soon after");
   // Stable within a status.
   const list = [{ id: 1, status: "soon" }, { id: 2, status: "live" }, { id: 3, status: "soon" }, { id: 4, status: "live" }];
   assert.deepEqual(sortExperiences(list).map((e) => e.id), [2, 4, 1, 3]);
@@ -173,7 +175,7 @@ test("counts and groups follow the catalog", () => {
   const menu = menuCategories(CATALOG);
   assert.deepEqual(menu.map((c) => c.id), CATALOG.categories.map((c) => c.id));
   assert.equal(menu[0].live, 3);
-  assert.deepEqual(groupsFor(CATALOG, "segmentation").map((g) => g.category.id), ["segmentation"]);
+  assert.deepEqual(groupsFor(mini(), "b").map((g) => g.category.id), ["b"]);
   assert.equal(groupsFor(CATALOG, null).length, menu.length);
 });
 

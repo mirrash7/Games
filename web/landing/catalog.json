@@ -5,21 +5,6 @@
       "id": "body-games",
       "title": "Body-Controlled Games",
       "blurb": "Your body is the controller. A pose model tracks 17 keypoints from your webcam and turns them into play."
-    },
-    {
-      "id": "object-detection",
-      "title": "Object Detection",
-      "blurb": "Point your camera at the world and see what a detector finds, box by box."
-    },
-    {
-      "id": "segmentation",
-      "title": "Segmentation",
-      "blurb": "Pixel-accurate masks: cut things out, swap backgrounds, play with outlines."
-    },
-    {
-      "id": "vision-agents",
-      "title": "Vision Agents",
-      "blurb": "Models that look, reason and act, chained into small interactive tools."
     }
   ],
   "experiences": [
@@ -29,7 +14,11 @@
       "category": "body-games",
       "status": "live",
       "summary": "Your palm is a hungry raccoon. Swipe through flying snacks and dodge the trash bags.",
-      "tags": ["hand tracking", "swipe", "arcade"],
+      "tags": [
+        "hand tracking",
+        "swipe",
+        "arcade"
+      ],
       "href": "arcade/?game=snack",
       "media": {
         "mp4": "media/snack.mp4",
@@ -38,7 +27,9 @@
         "fallback": "assets/snack/raccoon_idle.png",
         "fallbackLabel": "raccoon"
       },
-      "needs": ["webcam"],
+      "needs": [
+        "webcam"
+      ],
       "model": "RF-DETR keypoints"
     },
     {
@@ -47,7 +38,11 @@
       "category": "body-games",
       "status": "live",
       "summary": "Flap your arms like wings to keep the raccoon in the air and through the pipes.",
-      "tags": ["arm flaps", "gesture", "arcade"],
+      "tags": [
+        "arm flaps",
+        "gesture",
+        "arcade"
+      ],
       "href": "arcade/?game=flappy",
       "media": {
         "mp4": "media/flappy.mp4",
@@ -56,7 +51,9 @@
         "fallback": "assets/flappy/bird_0.png",
         "fallbackLabel": "raccoon"
       },
-      "needs": ["webcam"],
+      "needs": [
+        "webcam"
+      ],
       "model": "RF-DETR keypoints"
     },
     {
@@ -65,7 +62,11 @@
       "category": "body-games",
       "status": "live",
       "summary": "Copy the coach like a mirror and get scored on every beat. Two original songs, on EASY, NORMAL or HARD.",
-      "tags": ["full body", "rhythm", "2 songs"],
+      "tags": [
+        "full body",
+        "rhythm",
+        "2 songs"
+      ],
       "href": "arcade/?game=dance",
       "media": {
         "mp4": "media/dance.mp4",
@@ -74,48 +75,10 @@
         "fallback": "assets/dance/generated/coach_head.png",
         "fallbackLabel": "coach"
       },
-      "needs": ["webcam"],
+      "needs": [
+        "webcam"
+      ],
       "model": "RF-DETR keypoints"
-    },
-    {
-      "id": "object-finder",
-      "title": "Object Finder",
-      "category": "object-detection",
-      "status": "soon",
-      "summary": "Live bounding boxes on whatever your camera sees, with labels and confidence.",
-      "tags": ["detection", "live boxes"],
-      "media": { "motif": "boxes" },
-      "needs": ["webcam"]
-    },
-    {
-      "id": "scavenger-hunt",
-      "title": "Scavenger Hunt",
-      "category": "object-detection",
-      "status": "soon",
-      "summary": "A list of everyday things to find and show to the camera before the timer runs out.",
-      "tags": ["detection", "game"],
-      "media": { "motif": "boxes" },
-      "needs": ["webcam"]
-    },
-    {
-      "id": "cutout-studio",
-      "title": "Cutout Studio",
-      "category": "segmentation",
-      "status": "soon",
-      "summary": "Lift yourself or an object out of the frame and drop it onto a new scene.",
-      "tags": ["masks", "background"],
-      "media": { "motif": "mask" },
-      "needs": ["webcam"]
-    },
-    {
-      "id": "scene-narrator",
-      "title": "Scene Narrator",
-      "category": "vision-agents",
-      "status": "soon",
-      "summary": "Detections become a running description of what is happening in front of the camera.",
-      "tags": ["agents", "pipelines"],
-      "media": { "motif": "graph" },
-      "needs": ["webcam"]
     }
   ]
 }
