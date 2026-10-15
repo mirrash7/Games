@@ -140,6 +140,79 @@ def test_sides_alternate():
             assert f"{n[:-2]}_l" in names[i + 1:i + 3] or f"{n[:-2]}_l" in names[max(0, i - 2):i], n
 
 
+# --- Pumpkin Patch Bounce: a hook that keeps coming back --------------------------
+
+PUMPKIN = next(s for s in SONGS if s.id == "pumpkin_patch_bounce")
+PUMPKIN_SECTIONS = [("intro", 0), ("hook 1", 16), ("verse", 48), ("hook 2", 80), ("break", 112),
+                    ("final hook", 128), ("outro", 160)]
+HOOKS = (16, 80, 128)  # each 32 beats: the 16-beat hook routine, twice
+
+
+def test_pumpkin_patch_bounce_metadata():
+    data = json.loads((PUMPKIN.folder / "song.json").read_text())
+    for key, value in {"id": "pumpkin_patch_bounce", "title": "Pumpkin Patch Bounce", "artist": "KP Arcade",
+                       "bpm": 116, "offset": 0.0, "duration": 93.0, "audio": "audio.m4a", "difficulty": 1,
+                       "coach": {"outfit": "pumpkin"}, "preview": [16, 32]}.items():
+        assert data[key] == value, key
+    assert [(s["name"], s["beat"]) for s in PUMPKIN.sections] == PUMPKIN_SECTIONS
+    assert 176 < PUMPKIN.beat_of(PUMPKIN.duration) < 180, "176 beats of music plus a tail"
+
+
+def test_pumpkin_patch_bounce_structure():
+    song = PUMPKIN
+    assert not section_moves(song, 0, 16), "the intro has no moves (the game counts in on 12-15)"
+    assert song.first_move_beat == 16
+    hooks = [section_moves(song, lo, lo + 32) for lo in HOOKS]
+    routine = [(p.beat - hooks[0][0].beat, p.move.name) for p in hooks[0]]
+    for h in hooks:
+        assert h[0].beat in HOOKS and h[-1].end == h[0].beat + 32
+        assert [(p.beat - h[0].beat, p.move.name) for p in h] == routine, "every hook dances the same routine"
+    assert [sum(p.gold for p in h) for h in hooks] == [1, 1, 2]
+    signature = hooks[0][0].move.name
+    gold = [p for p in song.chart if p.gold]
+    assert all(p.move.name == signature for p in gold), "gold lands on the hook's signature move"
+    assert all(any(lo <= p.beat < lo + 32 for lo in HOOKS) for p in gold), "gold only in the hooks"
+    brk = section_moves(song, 112, 128)
+    assert brk and all(p.move.beats == 4 for p in brk), "the half-time break dances 4-beat moves"
+    assert brk[0].beat == 112 and brk[-1].end == 128
+    outro = section_moves(song, 160, 180)
+    assert outro[0].beat == 160 and outro[0].move.judge, "a judged final pose on beat 160"
+    assert outro[-1].move.name == "bow" and not outro[-1].move.judge, "then an unjudged bow"
+    assert song.judge_points()[-1].beat == 160
+    assert song.last_judge_time < song.time_of(176), "judging ends before the music does"
+    names = [p.move.name for p in song.chart]
+    for i, n in enumerate(names):  # a one-sided move is followed by its twin
+        if n.endswith("_r"):
+            assert names[i + 1] == f"{n[:-2]}_l", f"{n} at beat {song.chart[i].beat:g}"
+
+
+def test_pumpkin_patch_bounce_hook_is_learnable():
+    """The hook is the same poses on the same counts every time it comes
+    round: two 8-counts (A, B), danced A B A B in all three hooks, so a
+    player who learns it in hook 1 nails it in hook 2 and the final hook."""
+    def poses(lo, hi):
+        return [(p.beat - lo, p.label, p.pose) for p in PUMPKIN.judge_points() if lo <= p.beat < hi]
+    count_a, count_b = poses(16, 24), poses(24, 32)
+    assert count_a and count_b and [p[2] for p in count_a] != [p[2] for p in count_b]
+    for lo in HOOKS:
+        for half in (0, 16):
+            assert poses(lo + half, lo + half + 8) == count_a, f"8-count A at beat {lo + half}"
+            assert poses(lo + half + 8, lo + half + 16) == count_b, f"8-count B at beat {lo + half + 8}"
+    # Catchy, not a memory test: about one pose a beat, from a small set of moves.
+    assert 12 <= len(count_a) + len(count_b) <= 16
+    assert len({p.move.label for p in section_moves(PUMPKIN, 16, 32)}) <= 7
+    # Every 8-count of the song starts a move on its downbeat.
+    starts = {p.beat for p in PUMPKIN.chart}
+    assert all(b in starts for b in range(16, 160, 8))
+
+
+def test_pumpkin_patch_bounce_idle_players_cannot_score():
+    """Standing still with arms down matches no judged pose, elbows seen or not."""
+    for p in PUMPKIN.judge_points():
+        assert sim(p.pose, REST) < FREEZE_MAX, f"{p.label} at {p.beat:g}"
+        assert sim(p.pose, REST, ELBOWS_HIDDEN) < FREEZE_MAX, f"{p.label} at {p.beat:g}, elbows hidden"
+
+
 # --- difficulties (docs/DANCE.md section 7a) ---------------------------------------
 
 def test_difficulty_ids_fall_back_to_normal():
@@ -271,7 +344,7 @@ def test_easy_moves_gold_to_the_kept_pose_when_the_gold_one_would_freeze():
 # --- the move library ----------------------------------------------------------
 
 def test_library_size_twins_and_labels():
-    assert 22 <= len(LIB) <= 32
+    assert 22 <= len(LIB) <= 64  # Neon Nights' 29 moves, Pumpkin Patch Bounce's 21, room for a song or two
     raw = json.loads(chart.LIBRARY.read_text())["moves"]
     for name, spec in raw.items():
         if name.endswith("_l"):

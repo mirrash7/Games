@@ -85,6 +85,22 @@ OUTFITS = {
         "rim": rgb(110, 245, 255),  # crisp neon line around the silhouette
         "glow": rgb(200, 70, 255),  # soft halo behind it
     },
+    # "Pumpkin Patch Bounce": pumpkin-orange jacket, deep plum trousers, a
+    # lime-green stem accent, a warm orange rim. The fur and gloves stay the
+    # raccoon's own, and the headphones (baked into the head sprite) keep neon's.
+    "pumpkin": {
+        "fur": rgb(160, 118, 222),
+        "fur_dark": rgb(92, 58, 150),
+        "top": rgb(255, 128, 24),  # pumpkin orange
+        "top_hi": rgb(255, 196, 110),
+        "pants": rgb(58, 30, 84),  # deep plum, near black
+        "accent": rgb(150, 236, 60),  # stem green: cuffs, belt, stripes, soles
+        "glove": rgb(250, 246, 255),
+        "shoe": rgb(250, 248, 255),
+        "ink": INK,
+        "rim": rgb(255, 196, 90),  # warm candle-light line
+        "glow": rgb(255, 110, 20),  # orange halo
+    },
 }
 
 # Rating words: fill colour (BGR) and sprite. PERFECT gold, SUPER cyan, GOOD

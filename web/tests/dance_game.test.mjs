@@ -546,7 +546,8 @@ test("the shell lists Neon Nights and builds the game for it", async () => {
   await DanceRaccoonGame.preload({ base: ASSETS, fetchJSON: diskFetch, art: false });
   assert.ok(GAMES.includes(DanceRaccoonGame), "registered");
   assert.equal(GAMES.indexOf(DanceRaccoonGame), GAMES.length - 1, "after Flappy");
-  assert.deepEqual(DanceRaccoonGame.variants().map((v) => [v.id, v.boardId]), [["neon_nights", "dance-neon_nights"]]);
+  assert.deepEqual(DanceRaccoonGame.variants().map((v) => [v.id, v.boardId]),
+    [["neon_nights", "dance-neon_nights"], ["pumpkin_patch_bounce", "dance-pumpkin_patch_bounce"]]);
   const sh = new Shell({ games: GAMES });
   assert.ok(sh.boardKeys().includes("dance-neon_nights"));
   const warn = console.warn;

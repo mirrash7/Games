@@ -326,8 +326,12 @@ re-run the model on offline. Analyse these before tuning anything.
   (audio + `song.json` chart). The shell shows a song list for games with
   `variants()`, with one leaderboard per song (`dance-<id>`). Add songs with
   `kp dance-import` (from a recording) and check them with `kp dance-preview`.
-  The first song, "Neon Nights", is original and synthesised
-  (`tools/generate_dance_song.py`). Bots prove fairness: a perfect dancer
+  Two songs, both original and synthesised (`tools/generate_dance_song.py
+  --all`; one arrangement file per song in `tools/dance_songs/`, sharing the
+  engine in `tools/dance_synth.py`): "Neon Nights" (synth-pop, 120 BPM) and
+  "Pumpkin Patch Bounce" (a TikTok-style hook routine with an October flavour,
+  116 BPM, pumpkin coach outfit). Choreography is original: viral-dance
+  *style* and generic moves, never a creator's routine. Bots prove fairness: a perfect dancer
   150 ms late scores 10000; idle, frozen and random players stay at 1 star or
   below. Not yet tested with a live player.
 - **Off the menu:** Hole in the Wall (`--game holeinwall`), Catch (`--game catch`),

@@ -217,6 +217,31 @@ and `hard` are allowed there.
 Beat 0 is at `offset` seconds into the audio. The generator must put the first downbeat exactly there, and the
 chart is authored against these beats.
 
+## 6b. The second song: "Pumpkin Patch Bounce"
+
+116 BPM, 4/4, offset 0.0, 93 s (176 beats of music plus a tail), coach outfit
+`pumpkin`. An original routine in the *style* of short-video dances: a
+16-beat hook that keeps coming back, upper-body moves that read close to the
+camera, and some October flavour. No creator's routine is reproduced.
+
+| beats | section | moves |
+|---|---|---|
+| 0-15 | intro | none (count-in on 12-15) |
+| 16-47 | hook 1 | the hook, twice; gold on the second Woah (32) |
+| 48-79 | verse | Step Clap R/L, Hair Flip R/L, Howl R/L, Scarecrow, Hands Up; twice |
+| 80-111 | hook 2 | the hook, twice; gold on 96 |
+| 112-127 | break | half time, 4-beat moves: Spooky Claws, Ghost Arms R/L, Witch Stir |
+| 128-159 | final hook | the hook, twice; gold on both Woahs (128, 144) |
+| 160-175 | outro | Boo! on 160 (judged), then the bow |
+
+**The hook** is two 8-counts, danced A B A B in every hook:
+A = Woah (fists snap right, then left) / Frame (hands beside the face, then
+jazz hands down) / Point Over R (up and over, then down across) / Point Over L;
+B = Heart Hands (held) / Brush Off R / Brush Off L / Cheer (held).
+`tests/test_dance_chart.py` pins the structure, that the hook's poses repeat
+identically, and that standing still scores on no judged pose.
+Judge points: EASY 41, NORMAL 117, HARD 117.
+
 ## 7. Judging (`judge.py`)
 
 The numbers in this section are NORMAL's. EASY and HARD change the window,

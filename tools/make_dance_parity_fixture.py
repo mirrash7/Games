@@ -193,9 +193,12 @@ def main() -> int:
                 names[r[2]] = names.get(r[2], 0) + 1
             print(f"{name} {level}: {len(poses)} poses, {len(frames)} frames, score {res['score']}, {names}")
 
-    easy = {"groove": easy_chart(groove), "neon_nights": easy_chart(neon)}
-    print(f"easy charts: groove {len(easy['groove']['judge_beats'])} points, "
-          f"neon_nights {len(easy['neon_nights']['judge_beats'])} points")
+    # Every shipped song's EASY chart: the browser must derive exactly the same one.
+    library = chart.load_library()
+    easy = {"groove": easy_chart(groove)}
+    for sid in chart.song_ids():
+        easy[sid] = easy_chart(chart.load_song(chart.SONGS / sid, library))
+    print("easy charts: " + ", ".join(f"{k} {len(v['judge_beats'])} points" for k, v in easy.items()))
     fixture = {"about": "made by tools/make_dance_parity_fixture.py; replayed by web/tests/dance_parity.test.mjs",
                "groove": {"library": MOVES, "song": data}, "streams": streams, "easy": easy}
     OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -686,3 +686,28 @@ def test_hard_needs_the_longer_hold():
     game.judge = Judge(game.song, dataclasses.replace(judge.DIFFICULTY["hard"], hold=0.12))
     simulate(game, clock, sloppy(game))
     assert game.star_count >= 3, report(game)
+
+
+def _pumpkin(level, make_bot, **kw):
+    lib = chart.load_library()
+    game, clock = new_game(chart.SONGS, variant="pumpkin_patch_bounce", library=lib, difficulty=level)
+    simulate(game, clock, make_bot(game), **kw)
+    print(f"pumpkin_patch_bounce {level} {getattr(make_bot, '__name__', 'bot')}:", report(game))
+    return game
+
+
+@pytest.mark.parametrize("level", ["easy", "normal", "hard"])
+def test_pumpkin_patch_bounce_is_fair(level):
+    """The second song through the same input path: perfect is 10000 (elbows
+    missing and hips out of frame too), lazy players stay at a star or less,
+    and hard still separates a sloppy dancer (2 stars)."""
+    game = _pumpkin(level, perfect)
+    assert game.score == 10000 and game.judge.unseen == 0, report(game)
+    assert len(game.song.judge_points()) == {"easy": 41, "normal": 117, "hard": 117}[level]
+    game = _pumpkin(level, perfect, elbow_drop=0.5, hips=False)
+    assert game.score == 10000, report(game)
+    for bot in (frozen, idle, random_arms):
+        game = _pumpkin(level, bot)
+        assert game.star_count <= 1, report(game)
+    game = _pumpkin(level, sloppy)
+    assert game.star_count == {"easy": 4, "normal": 3, "hard": 2}[level], report(game)

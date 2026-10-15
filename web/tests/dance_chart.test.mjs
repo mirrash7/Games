@@ -269,7 +269,7 @@ test("the freeze rule holds on every difficulty", () => {
 // --- the move library -------------------------------------------------------
 
 test("library size, twins and labels", () => {
-  assert.ok(LIB.size >= 22 && LIB.size <= 32);
+  assert.ok(LIB.size >= 22 && LIB.size <= 64);
   for (const [name, spec] of Object.entries(readJSON("moves.json").moves)) {
     if (name.endsWith("_l")) assert.equal(spec.mirror_of, `${name.slice(0, -2)}_r`, `${name}: author one side, mirror the other`);
   }
