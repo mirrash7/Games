@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Flappy Raccoon · RoboFlow Fun</title>
+  <meta name="description" content="Flap your arms like wings to fly a raccoon through the pipes, tracked live by a pose model running in your browser.">
+  <meta name="theme-color" content="#8fd0f5">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="../../assets/flappy/bird_0.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="RoboFlow Fun">
+  <meta property="og:title" content="Flappy Raccoon · RoboFlow Fun">
+  <meta property="og:description" content="Your arms are the wings. Flap to fly the raccoon through the pipes. Played with your body, in your browser.">
+  <meta property="og:url" content="https://mirrash7.github.io/Games/games/flappy-raccoon/">
+  <meta property="og:image" content="https://mirrash7.github.io/Games/media/flappy.jpg">
+  <meta property="og:image:alt" content="Flappy Raccoon: a winged raccoon flies between green pipes while the player flaps their arms">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Fonts as on the landing page: @fontsource on jsDelivr (CORS + CORP, fine under COEP: require-corp). -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-300.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-500.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-500.css">
+  <link rel="stylesheet" href="../play.css">
+  <link rel="stylesheet" href="theme.css">
+  <script>
+    // Cross-origin isolation via service worker (see coi-sw.js). Reload once
+    // when it first takes control; never loop.
+    (function () {
+      if (window.crossOriginIsolated || !window.isSecureContext || !("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("../../coi-sw.js").then(function (reg) {
+        if (navigator.serviceWorker.controller) {
+          // Controlled but still not isolated: the browser refused; carry on single-threaded.
+          return;
+        }
+        var reload = function () {
+          if (sessionStorage.getItem("coi-reloaded")) return;
+          sessionStorage.setItem("coi-reloaded", "1");
+          location.reload();
+        };
+        if (reg.active) reload();
+        navigator.serviceWorker.addEventListener("controllerchange", reload);
+      }).catch(function (e) { console.warn("coi service worker:", e); });
+    })();
+  </script>
+</head>
+<body data-game="flappy">
+  <a class="skip" href="#go">Skip to play</a>
+
+  <main id="stage">
+    <canvas id="screen" width="1280" height="720" aria-label="Flappy Raccoon game screen"></canvas>
+
+    <section id="intro" class="overlay intro" aria-labelledby="game-title">
+      <div class="sky" aria-hidden="true">
+        <span class="cloud c1"></span><span class="cloud c2"></span><span class="cloud c3"></span><span class="cloud c4"></span>
+      </div>
+      <header class="topbar">
+        <a class="back" href="../../"><span class="arrow" aria-hidden="true">←</span>All experiences</a>
+        <p class="crumb"><span class="path">Body-Controlled Games / </span><b>Flappy Raccoon</b></p>
+        <a class="arcade-link" href="../../arcade/" title="All three games in one arcade">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="1.5" width="5" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/><rect x="1.5" y="9.5" width="5" height="5"/><rect x="9.5" y="9.5" width="5" height="5"/></svg>
+          Arcade
+        </a>
+      </header>
+
+      <div class="intro-grid">
+        <div class="card">
+          <span class="mascot bird" aria-hidden="true">
+            <img src="../../assets/flappy/bird_0.png" alt="" width="128" height="112">
+            <img src="../../assets/flappy/bird_1.png" alt="" width="128" height="112">
+          </span>
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span><span class="idx">[02]</span> Arm flaps <span class="sep" aria-hidden="true">·</span> Gesture</p>
+          <h1 id="game-title" class="title">Flappy Raccoon</h1>
+          <p class="pitch">Your arms are the wings. Flap to keep the raccoon in the air and through the pipes.</p>
+
+          <section class="needs" aria-labelledby="needs-title">
+            <h2 id="needs-title" class="label">What you need</h2>
+            <ul class="need-list">
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3.5" width="10" height="9" rx="1"/><path d="m11.5 6.5 3-2v7l-3-2"/><circle cx="6.5" cy="8" r="2"/></svg>A webcam</li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h13M1.5 8l2.5-2.5M1.5 8l2.5 2.5M14.5 8 12 5.5M14.5 8 12 10.5"/></svg>~2 m of space</li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 5.5h13"/></svg>Chrome or Edge for GPU speed</li>
+            </ul>
+          </section>
+
+          <p id="device" class="device" aria-live="polite">Checking your graphics card...</p>
+          <button id="go" class="go" disabled>Allow camera and play</button>
+          <div id="progress" class="progress" hidden>
+            <div class="bar"><span id="bar"></span></div>
+            <p id="status" class="status" aria-live="polite"></p>
+          </div>
+          <p class="fine">The first visit downloads the pose model once (<span id="model-size">72-143 MB</span>); after that it starts from your browser's cache.</p>
+          <p class="privacy"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+            <span>Your video never leaves your device: the pose model runs in this tab.</span></p>
+        </div>
+
+        <section class="howto" aria-labelledby="howto-title">
+          <h2 id="howto-title" class="label">How to play</h2>
+          <ol class="steps">
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">01</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <path class="box" d="M4 10V4h6M30 4h6v6M36 30v6h-6M10 36H4v-6"/>
+                <circle cx="20" cy="11" r="3.2"/>
+                <path d="M14 18h12M14 18l-3-6.5L8 6M26 18l3-6.5L32 6M15.5 18l.5 10.5M24.5 18l-.5 10.5M16 28.5h8"/>
+                <circle class="kp" cx="8" cy="6" r="1.8"/><circle class="kp" cx="32" cy="6" r="1.8"/>
+                <circle class="kp" cx="11" cy="11.5" r="1.5"/><circle class="kp" cx="29" cy="11.5" r="1.5"/>
+              </svg>
+              <p><b>Stand back</b> so both arms stay in view, even raised.</p>
+            </li>
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">02</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <circle cx="20" cy="9" r="3.2"/>
+                <path d="M14 16h12M15.5 16l.5 10.5M24.5 16l-.5 10.5M16 26.5h8"/>
+                <path class="acc" d="M14 16 7 15l-4 1M26 16l7-1 4 1" stroke-width="1.8"/>
+                <path d="M14 16l-6 7-3.5 4M26 16l6 7 3.5 4" stroke-opacity=".35" stroke-dasharray="2 2.5"/>
+                <path class="acc" d="M5 31v5M3 34l2 2 2-2M35 31v5M33 34l2 2 2-2" stroke-width="1.6"/>
+              </svg>
+              <p><b>Beat your arms down</b> like wings: each flap is one hop.</p>
+            </li>
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">03</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <path d="M27 3v10h7V3M27 37V25h7v12M25.5 13h10M25.5 25h10"/>
+                <path class="acc" d="M3 26c4-7 8-9 12-7 4 2 7 1 10 0 3-1 7-2 13 1" stroke-dasharray="2.5 3" stroke-width="1.6"/>
+                <circle class="kp" cx="15" cy="19.5" r="3"/>
+              </svg>
+              <p><b>Fly through the gaps.</b> Every pipe you pass scores a point.</p>
+            </li>
+          </ol>
+        </section>
+
+        <figure class="showcase">
+          <div class="feed">
+            <video muted autoplay loop playsinline preload="auto" poster="../../media/flappy.jpg" aria-label="Gameplay preview: the winged raccoon flies through green pipes">
+              <source src="../../media/flappy.webm" type="video/webm">
+              <source src="../../media/flappy.mp4" type="video/mp4">
+            </video>
+            <span class="corners" aria-hidden="true"></span>
+            <span class="feed-tag" aria-hidden="true"><span class="rec"></span>Gameplay · recorded in the browser</span>
+          </div>
+          <img class="sprite bob s-feather" src="../../assets/flappy/feather.png" alt="" width="24" height="24">
+          <img class="sprite bob s-feather2" src="../../assets/flappy/feather.png" alt="" width="24" height="24">
+        </figure>
+      </div>
+    </section>
+
+    <section id="failure" class="overlay failure" hidden aria-labelledby="failure-title">
+      <div class="card">
+        <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Flappy Raccoon</p>
+        <h1 id="failure-title">Something went wrong</h1>
+        <p id="failure-text" class="lede"></p>
+        <div class="failure-actions">
+          <button class="go" onclick="location.reload()">Try again</button>
+          <a href="../../">All experiences</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="bar-bottom" class="toolbar">
+    <span class="game-name"><img src="../../assets/flappy/bird_0.png" alt="" width="20" height="20"><span>Flappy Raccoon</span></span>
+    <span class="divider" aria-hidden="true"></span>
+    <span id="engine" class="chip">model: not loaded</span>
+    <label class="cam">Camera <select id="camera" disabled></select></label>
+    <button id="fullscreen" class="tool" title="Fullscreen (F)">Fullscreen</button>
+    <button id="debug" class="tool" title="Show the skeleton (D)">Skeleton</button>
+    <span class="spacer"></span>
+    <a href="../../" class="home" aria-label="All experiences"><span aria-hidden="true">← </span><span class="home-label" aria-hidden="true">All experiences</span></a>
+    <a href="https://github.com/mirrash7/Games" class="source" target="_blank" rel="noopener">Source</a>
+    <span class="credit">Pose model: <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> by Roboflow (Apache-2.0)</span>
+  </footer>
+
+  <script src="../play.js"></script>
+  <script type="module" src="../../js/main.js"></script>
+</body>
+</html>

@@ -45,6 +45,8 @@ def test_site_build_layout(tmp_path):
     build(out)
     assert (out / "index.html").exists() and (out / "coi-sw.js").exists()
     assert (out / "arcade" / "index.html").exists(), "the arcade lives at /arcade/, the landing page at /"
+    for page in ("snack-attack", "flappy-raccoon", "raccoon-dance"):
+        assert (out / "games" / page / "index.html").exists(), f"each game has its own page: /games/{page}/"
     assert (out / "assets" / "snack" / "manifest.json").exists()
     assert (out / "assets" / "flappy" / "bird_0.png").exists()
     assert (out / "models" / "manifest_fp16.json").exists()

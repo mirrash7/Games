@@ -1,0 +1,65 @@
+/* Snack Attack: a night market. Indigo dusk, string lights, warm snack orange. */
+
+:root {
+  --g-bg: #120b24;
+  --g-surface: rgba(19, 11, 38, .8);
+  --g-surface-line: rgba(255, 166, 92, .22);
+  --g-text: #f7f1ea;
+  --g-text-2: rgba(247, 241, 234, .76);
+  --g-text-3: rgba(247, 241, 234, .55);
+  --g-line: rgba(255, 210, 170, .14);
+  --g-accent: #ff9a3d;
+  --g-accent-ink: #ffb26b;
+  --g-focus: #ffb26b;
+  --g-frame: #ffb26b;
+  --g-shadow: 0 50px 120px -40px rgba(255, 128, 48, .42), 0 0 0 1px rgba(255, 166, 92, .08);
+}
+
+.intro, .failure {
+  background:
+    radial-gradient(55% 60% at 78% 62%, rgba(255, 128, 48, .2), transparent 70%),
+    radial-gradient(50% 55% at 8% 0%, rgba(128, 51, 235, .32), transparent 70%),
+    linear-gradient(90deg, rgba(18, 11, 36, .92) 0%, rgba(18, 11, 36, .55) 42%, rgba(18, 11, 36, .35) 100%),
+    linear-gradient(to top, #120b24 0%, rgba(18, 11, 36, 0) 40%),
+    url("../../assets/snack/background.png") center 30% / cover no-repeat,
+    #120b24;
+}
+
+.title {
+  background: linear-gradient(100deg, #fff6ea 0%, #ffd7a3 38%, #ff9a3d 68%, #ff6fae 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  padding-bottom: .06em;
+}
+
+.card { border-top: 2px solid var(--g-accent); }
+.card .mascot { width: 104px; right: 18px; top: -46px; --r0: -8deg; --r1: 4deg; --dy: -8px; --dur: 3.2s; }
+@media (max-width: 599px) { .card .mascot { width: 80px; top: -36px; right: 12px; } }
+
+/* Snacks orbiting the feed. */
+.s-donut { width: 96px; left: -44px; top: 18%; --r0: -14deg; --r1: 8deg; --dur: 5.5s; }
+.s-pizza { width: 100px; right: -36px; top: -54px; --r0: 10deg; --r1: -6deg; --dur: 6.5s; --delay: -2s; }
+.s-candy { width: 78px; right: 9%; bottom: -46px; --r0: -10deg; --r1: 12deg; --dur: 7s; --delay: -1s; }
+.s-fries { width: 70px; left: 14%; bottom: -40px; --r0: 8deg; --r1: -10deg; --dur: 5s; --delay: -3s; }
+.s-trash { left: auto; right: -30px; top: 46%; width: 74px; --r0: -4deg; --r1: 4deg; --dy: -10px; --dur: 4.5s; }
+.s-trash img { width: 100%; height: auto; outline: 1.5px solid #ff5a4e; outline-offset: 2px; }
+.s-trash .det-tag { background: #ff5a4e; left: -3.5px; bottom: calc(100% + 2px); }
+
+/* String lights along the top of the screen. */
+.topbar { position: relative; }
+.topbar::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 10px; pointer-events: none; opacity: .75;
+  background:
+    radial-gradient(circle, #ffb26b 0 2px, transparent 3px) 0 0 / 48px 10px repeat-x,
+    radial-gradient(circle, #ff6fae 0 2px, transparent 3px) 24px 2px / 48px 10px repeat-x;
+  filter: drop-shadow(0 0 4px rgba(255, 170, 90, .9));
+}
+
+@media (max-width: 979px) {
+  .s-donut { width: 64px; left: -10px; top: auto; bottom: -26px; }
+  .s-pizza { width: 66px; right: -6px; top: -30px; }
+  .s-candy, .s-fries { display: none; }
+  .s-trash { width: 48px; right: -8px; top: 50%; }
+}
+@media (max-width: 599px) {
+  .s-trash .det-tag { display: none; }
+}

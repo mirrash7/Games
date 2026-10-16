@@ -19,7 +19,7 @@
         "swipe",
         "arcade"
       ],
-      "href": "arcade/?game=snack",
+      "href": "games/snack-attack/",
       "media": {
         "mp4": "media/snack.mp4",
         "webm": "media/snack.webm",
@@ -43,7 +43,7 @@
         "gesture",
         "arcade"
       ],
-      "href": "arcade/?game=flappy",
+      "href": "games/flappy-raccoon/",
       "media": {
         "mp4": "media/flappy.mp4",
         "webm": "media/flappy.webm",
@@ -67,7 +67,7 @@
         "rhythm",
         "2 songs"
       ],
-      "href": "arcade/?game=dance",
+      "href": "games/raccoon-dance/",
       "media": {
         "mp4": "media/dance.mp4",
         "webm": "media/dance.webm",

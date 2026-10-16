@@ -1,0 +1,96 @@
+/* Raccoon Dance: a neon club. Magenta and cyan light on violet-black. */
+
+:root {
+  --g-bg: #0b0518;
+  --g-surface: rgba(14, 6, 30, .8);
+  --g-surface-line: rgba(255, 92, 210, .26);
+  --g-text: #f6f0ff;
+  --g-text-2: rgba(246, 240, 255, .76);
+  --g-text-3: rgba(246, 240, 255, .56);
+  --g-line: rgba(200, 160, 255, .16);
+  --g-accent: #ff4fd0;
+  --g-accent-2: #3ee8ff;
+  --g-accent-ink: #ff86df;
+  --g-gold: #ffc83d;
+  --g-focus: #3ee8ff;
+  --g-frame: #3ee8ff;
+  --g-shadow: 0 0 0 1px rgba(62, 232, 255, .35), 0 0 60px -10px rgba(255, 79, 208, .5), 0 50px 120px -40px rgba(62, 232, 255, .35);
+}
+
+.intro, .failure {
+  background:
+    radial-gradient(45% 55% at 72% 45%, rgba(255, 79, 208, .2), transparent 70%),
+    linear-gradient(90deg, rgba(11, 5, 24, .94) 0%, rgba(11, 5, 24, .6) 40%, rgba(11, 5, 24, .4) 100%),
+    linear-gradient(to top, #0b0518 0%, rgba(11, 5, 24, 0) 45%),
+    url("../../assets/dance/generated/stage.png") center 40% / cover no-repeat,
+    #0b0518;
+}
+
+/* A synthwave floor under everything. */
+.floor {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 46%; z-index: -1; pointer-events: none;
+  background:
+    linear-gradient(rgba(62, 232, 255, .55) 1px, transparent 1px) 0 0 / 100% 48px,
+    linear-gradient(90deg, rgba(255, 79, 208, .5) 1px, transparent 1px) 50% 0 / 64px 100%;
+  transform: perspective(360px) rotateX(62deg); transform-origin: 50% 100%;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 85%);
+          mask-image: linear-gradient(to top, #000 0%, transparent 85%);
+  opacity: .5;
+  animation: floor 1s linear infinite; /* 120 BPM: one grid line a beat */
+}
+@keyframes floor { to { background-position: 0 48px, 50% 0; } }
+
+.title {
+  background: linear-gradient(95deg, #ff6fd8 0%, #d79bff 45%, #6ff0ff 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 18px rgba(255, 79, 208, .45));
+  padding-bottom: .06em;
+}
+.card::after {
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px; border-radius: 6px 6px 0 0;
+  background: linear-gradient(90deg, var(--g-accent), #a77bff, var(--g-accent-2));
+  box-shadow: 0 0 14px rgba(255, 79, 208, .7);
+}
+.card .mascot {
+  width: 112px; right: 14px; top: -54px; --r0: -7deg; --r1: 7deg; --dy: -6px; --dur: .5s; /* on the beat */
+  filter: drop-shadow(0 0 16px rgba(255, 79, 208, .55)) drop-shadow(0 10px 18px rgba(0, 0, 0, .5));
+}
+@media (max-width: 599px) { .card .mascot { width: 84px; top: -40px; } }
+
+/* Songs and difficulty. */
+.meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.meta li {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  font: 400 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--g-text-2);
+  border: 1px solid var(--g-line); border-radius: 2px;
+}
+.meta li b { font-weight: 500; color: var(--g-text); }
+.meta .levels { gap: 0; padding: 0; overflow: hidden; }
+.meta .levels span { padding: 0 10px; height: 100%; display: inline-flex; align-items: center; font-weight: 500; }
+.meta .levels span + span { border-left: 1px solid var(--g-line); }
+.meta .levels span:nth-child(1) { color: #6ff0ff; }
+.meta .levels span:nth-child(2) { color: #d0a8ff; }
+.meta .levels span:nth-child(3) { color: #ff86df; }
+.tracks {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 10px;
+  font: 400 12px/1.4 var(--mono); color: var(--g-text-2);
+}
+.tracks .k { color: var(--g-text-3); text-transform: uppercase; letter-spacing: .1em; font-size: 11px; margin-right: 4px; }
+.tracks .sep { color: var(--g-text-3); }
+
+/* Gold moves in the step pictogram. */
+.step-icon .gold { stroke: var(--g-gold); fill: var(--g-gold); fill-opacity: .14; stroke-opacity: 1; }
+.step-icon .gold-star { fill: var(--g-gold); stroke: none; }
+.step::before { box-shadow: 0 0 10px var(--g-accent); }
+
+.feed video { border-color: rgba(62, 232, 255, .5); }
+.feed-tag { background: linear-gradient(90deg, #b03be0, #8033eb); }
+.corners { --c: #3ee8ff; filter: drop-shadow(0 0 6px rgba(62, 232, 255, .8)); }
+.s-star { width: 52px; left: -30px; top: 12%; --r0: -16deg; --r1: 10deg; --dur: 2s; filter: drop-shadow(0 0 12px rgba(255, 200, 61, .7)); }
+.s-star2 { width: 38px; right: -22px; bottom: 22%; --r0: 12deg; --r1: -14deg; --dur: 1.5s; --delay: -.5s; filter: drop-shadow(0 0 10px rgba(255, 200, 61, .7)); }
+.s-spark { width: 56px; right: 18%; top: -44px; --r0: 0deg; --r1: 45deg; --dur: 3s; filter: none; mix-blend-mode: screen; }
+
+@media (max-width: 979px) {
+  .s-star { left: -8px; top: auto; bottom: -20px; width: 40px; }
+  .s-star2 { right: -6px; width: 30px; }
+}

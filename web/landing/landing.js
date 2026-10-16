@@ -17,7 +17,7 @@
 //         "status": "live" | "soon",        // soon: shown as "Coming soon", not clickable
 //         "summary": "One or two sentences.",
 //         "tags": ["hand tracking", ...],   // short; shown as mono chips
-//         "href": "arcade/?game=snack",     // live only: where PLAY goes (relative to the site root)
+//         "href": "games/snack-attack/",    // live only: where PLAY goes (relative to the site root)
 //         "media": {                        // all optional; paths relative to the site root
 //           "mp4": "media/snack.mp4",       //   hover / in-view preview, muted, looped
 //           "webm": "media/snack.webm",

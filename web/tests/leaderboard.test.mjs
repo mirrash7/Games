@@ -359,3 +359,26 @@ test("games without difficulties are unchanged", () => {
   assert.equal(sh.difficulty, null);
   assert.equal(sh.boardKey, "songs-a");
 });
+
+// --- a game's own page ---
+
+test("single-game mode: the title screen offers PLAY and ALL GAMES, never other games", () => {
+  let home = 0;
+  const sh = new Shell({ games: [Songs], selected: "songs", single: true });
+  sh.onHome = () => { home += 1; };
+  assert.equal(sh.single, true);
+  assert.deepEqual(sh.menuGames, ["songs"]);
+  assert.deepEqual(sh._layout().map((b) => b.action), ["start:songs", "home"]);
+  sh._do("home");
+  assert.equal(home, 1, "ALL GAMES goes back to the site");
+  sh.handleKey("Enter");
+  assert.equal(sh.screen, "songs", "PLAY opens the game (its song list)");
+  sh.handleKey("Escape");
+  assert.equal(sh.screen, "menu", "BACK returns to this game's title screen");
+  assert.deepEqual(sh._layout().map((b) => b.action), ["start:songs", "home"]);
+});
+
+test("without a home link the title screen just offers PLAY", () => {
+  const sh = new Shell({ games: [Songs], selected: "songs", single: true });
+  assert.deepEqual(sh._layout().map((b) => b.action), ["start:songs"]);
+});

@@ -1,0 +1,388 @@
+/* RoboFlow Fun: one page per game (games/<slug>/index.html).
+   Layout and components shared by every game page. Each game's theme.css sets
+   the --g-* tokens and its own backdrop; the CTA stays the brand purple.
+
+   Contract with js/main.js: #stage (fullscreen target) holds canvas#screen,
+   section#intro (start screen, hidden when play starts) and section#failure.
+   The footer toolbar keeps #engine, #camera, #fullscreen and #debug. */
+
+:root {
+  /* Brand (landing/landing.css). */
+  --ink: #161026;
+  --ink-deep: #0f0a1c;
+  --paper: #f4f2ec;
+  --brand: #8033eb;
+  --brand-hi: #9150f0;
+  --lav: #c29af6;
+  --sans: "Inter Tight", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 4px;
+  --gutter: 16px;
+  --bar-h: 44px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+
+  /* Game theme defaults (overridden by games/<slug>/theme.css). */
+  --g-bg: var(--ink-deep);
+  --g-surface: rgba(22, 16, 38, .78);
+  --g-surface-line: rgba(194, 154, 246, .2);
+  --g-text: var(--paper);
+  --g-text-2: rgba(244, 242, 236, .74);
+  --g-text-3: rgba(244, 242, 236, .54);
+  --g-line: rgba(194, 154, 246, .18);
+  --g-accent: var(--lav);
+  --g-accent-2: var(--brand);
+  --g-accent-ink: var(--lav);    /* the accent as readable text on the card */
+  --g-title: var(--paper);
+  --g-focus: var(--lav);
+  --g-frame: rgba(244, 242, 236, .8);
+  --g-shadow: 0 40px 120px -40px rgba(128, 51, 235, .6);
+  color-scheme: dark;
+}
+@media (min-width: 720px) { :root { --gutter: 32px; } }
+@media (min-width: 1200px) { :root { --gutter: 48px; } }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  height: 100dvh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--ink-deep); color: var(--g-text);
+  font: 400 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+img, video, svg, canvas { display: block; max-width: 100%; }
+a { color: inherit; }
+h1, h2, h3, p { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+:focus-visible { outline: 2px solid var(--g-focus); outline-offset: 3px; border-radius: 2px; }
+.mono { font-family: var(--mono); }
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.skip {
+  position: absolute; left: 12px; top: -60px; z-index: 50;
+  padding: 10px 14px; background: var(--paper); color: var(--ink);
+  font: 500 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; border-radius: var(--r);
+}
+.skip:focus { top: 12px; }
+
+/* --- the stage: canvas letterboxed like the arcade ------------------------- */
+
+#stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: #000; }
+#screen {
+  width: min(100vw, calc((100vh - var(--bar-h)) * 16 / 9));
+  width: min(100vw, calc((100dvh - var(--bar-h)) * 16 / 9));
+  aspect-ratio: 16 / 9; height: auto; background: #000; display: block; cursor: crosshair;
+}
+:fullscreen #screen, #stage:fullscreen #screen { width: min(100vw, calc(100vh * 16 / 9)); }
+
+.overlay {
+  position: absolute; inset: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--g-bg); color: var(--g-text);
+}
+.overlay[hidden] { display: none; }
+
+/* --- start screen ---------------------------------------------------------- */
+
+.intro { isolation: isolate; display: flex; flex-direction: column; }
+/* Fine scan lines over every backdrop: the house CV texture. */
+.intro::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, .025) 0 1px, transparent 1px 4px);
+}
+
+.topbar {
+  display: flex; align-items: center; gap: 16px; min-height: 60px;
+  padding: 0 var(--gutter); flex: none;
+}
+.back, .arcade-link {
+  display: inline-flex; align-items: center; gap: 8px; text-decoration: none; white-space: nowrap;
+  font: 400 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-text-2);
+  transition: color .2s;
+}
+.back:hover, .arcade-link:hover { color: var(--g-text); }
+.back .arrow { font-family: var(--sans); font-size: 16px; transition: transform .25s var(--ease); }
+.back:hover .arrow { transform: translateX(-3px); }
+.crumb {
+  flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-text-3);
+}
+.crumb b { font-weight: 500; color: var(--g-text); }
+.arcade-link {
+  height: 32px; padding: 0 12px; border: 1px solid var(--g-line); border-radius: var(--r);
+}
+.arcade-link:hover { border-color: var(--g-accent); }
+.arcade-link svg { width: 14px; height: 14px; }
+@media (max-width: 599px) { .crumb .path { display: none; } }
+@media (max-width: 479px) { .crumb { visibility: hidden; } }
+
+.intro-grid {
+  flex: 1; width: 100%; max-width: calc(1360px + 2 * var(--gutter)); margin: 0 auto;
+  padding: 8px var(--gutter) 32px;
+  display: grid; gap: 28px; align-content: center;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "show" "card" "how";
+}
+.intro-grid > .card { grid-area: card; }
+.intro-grid > .howto { grid-area: how; }
+.intro-grid > .showcase { grid-area: show; }
+@media (min-width: 980px) {
+  .intro-grid {
+    grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+    grid-template-areas: "card show" "card how";
+    grid-template-rows: auto auto;
+    column-gap: clamp(36px, 4.5vw, 80px); row-gap: 32px; padding-bottom: 36px;
+  }
+  .intro-grid > .card { align-self: center; }
+  .intro-grid > .showcase { align-self: end; }
+  .intro-grid > .howto { align-self: start; }
+}
+@media (min-width: 1200px) { .intro-grid { grid-template-columns: minmax(0, 520px) minmax(0, 1fr); } }
+
+/* The card: everything the player reads before pressing play. */
+.card {
+  position: relative; min-width: 0;
+  background: var(--g-surface); border: 1px solid var(--g-surface-line); border-radius: 6px;
+  padding: 28px 28px 22px;
+  backdrop-filter: blur(14px) saturate(1.15); -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, .7);
+}
+@media (max-width: 599px) { .card { padding: 22px 18px 18px; } }
+
+.eyebrow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  font: 400 11px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--g-accent-ink);
+}
+.eyebrow .idx { color: var(--g-text-3); }
+.card .mascot ~ .eyebrow { padding-right: 100px; }
+@media (max-width: 599px) { .card .mascot ~ .eyebrow { padding-right: 84px; } }
+.eyebrow .sep { color: var(--g-text-3); }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--g-accent); flex: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-accent) 22%, transparent);
+}
+
+.title {
+  margin: 14px 0 12px;
+  font: 300 clamp(42px, 4.6vw, 66px)/.95 var(--sans); letter-spacing: -0.045em;
+  color: var(--g-title); text-wrap: balance;
+}
+.pitch { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.5; color: var(--g-text-2); max-width: 30em; }
+
+.label {
+  font: 400 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--g-text-3);
+  margin: 0 0 12px;
+}
+
+/* How to play: three numbered steps with a keypoint pictogram each. On wide
+   screens they sit in a row under the video, joined by a line like the
+   landing page's steps. */
+.howto { min-width: 0; }
+.steps { border-top: 1px solid var(--g-line); }
+.step {
+  position: relative;
+  display: grid; grid-template-columns: 26px 40px minmax(0, 1fr); align-items: center; column-gap: 14px;
+  padding: 12px 0; border-bottom: 1px solid var(--g-line);
+}
+.step-idx { font: 500 12px/1 var(--mono); letter-spacing: .08em; color: var(--g-accent-ink); }
+.step-icon {
+  width: 40px; height: 40px; fill: none; stroke: var(--g-text); stroke-opacity: .9;
+  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+.step-icon .kp { fill: var(--g-accent); stroke: none; }
+.step-icon .acc { stroke: var(--g-accent); stroke-opacity: 1; }
+.step-icon .box { stroke: var(--g-text-3); stroke-opacity: 1; stroke-width: 1.2; }
+.step-icon .fill { fill: var(--g-accent); fill-opacity: .25; stroke: none; }
+.step p { font-size: 15px; line-height: 1.4; color: var(--g-text-2); }
+.step p b { font-weight: 500; color: var(--g-text); }
+@media (min-width: 980px) {
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 0; }
+  .step {
+    grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: auto auto; align-items: start;
+    row-gap: 12px; column-gap: 12px; padding: 18px 20px 4px 0; border-bottom: 0;
+  }
+  .step + .step { padding-left: 20px; border-left: 1px solid var(--g-line); }
+  .step-idx { grid-column: 1 / -1; }
+  .step-icon { grid-row: 2; }
+  .step p { grid-row: 2; font-size: 14.5px; }
+  .step::before {
+    content: ""; position: absolute; top: -4px; left: 0; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--g-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--g-accent) 18%, transparent);
+  }
+  .step + .step::before { left: -4px; }
+}
+
+.needs { margin-top: 20px; }
+.need-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.need-list li {
+  display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px;
+  font: 400 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--g-text-2);
+  border: 1px solid var(--g-line); border-radius: 2px;
+}
+.need-list svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Which backend will run the model (main.js writes the text, may add .cpu and a link). */
+.device {
+  position: relative; margin-top: 20px; padding: 10px 12px 10px 30px;
+  font-size: 13px; line-height: 1.45; color: var(--g-text-2);
+  border-left: 2px solid var(--g-accent); background: color-mix(in srgb, var(--g-accent) 8%, transparent);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.device::before {
+  content: ""; position: absolute; left: 12px; top: 16px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--g-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-accent) 22%, transparent);
+}
+.device.cpu { border-left-color: #f0a03c; background: rgba(240, 160, 60, .1); }
+.device.cpu::before { background: #f0a03c; box-shadow: 0 0 0 3px rgba(240, 160, 60, .2); }
+.device .switch { color: inherit; opacity: .85; white-space: nowrap; }
+
+/* The one big button. */
+.go {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 14px;
+  width: 100%; min-height: 58px; margin-top: 16px; padding: 14px 22px;
+  font: 500 14px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: #fff;
+  background: var(--brand); border: 0; border-radius: var(--r); cursor: pointer;
+  box-shadow: 0 18px 40px -18px rgba(128, 51, 235, .9), inset 0 1px 0 rgba(255, 255, 255, .18);
+  transition: background-color .2s, transform .2s var(--ease), box-shadow .2s;
+}
+.go::after { content: "→"; font: 400 18px/1 var(--sans); transition: transform .25s var(--ease); }
+.go:hover:not(:disabled) { background: var(--brand-hi); }
+.go:hover:not(:disabled)::after { transform: translateX(4px); }
+.go:active:not(:disabled) { transform: translateY(1px); }
+.go:disabled { cursor: default; background: color-mix(in srgb, var(--brand) 55%, #3a3448); color: rgba(255, 255, 255, .78); box-shadow: none; }
+.go:disabled::after { content: none; }
+.go:focus-visible { outline: 2px solid var(--g-focus); outline-offset: 3px; }
+
+.progress { margin-top: 14px; }
+.progress[hidden] { display: none; }
+.bar { height: 4px; border-radius: 2px; background: var(--g-line); overflow: hidden; }
+.bar span {
+  display: block; height: 100%; width: 0; border-radius: inherit;
+  background: linear-gradient(90deg, var(--brand), var(--g-accent)); transition: width .15s;
+}
+.status { min-height: 1.4em; margin-top: 8px; font: 400 12px/1.4 var(--mono); letter-spacing: .02em; color: var(--g-text-3); }
+
+.fine { margin-top: 16px; font-size: 12.5px; line-height: 1.5; color: var(--g-text-3); }
+.privacy {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 10px;
+  font-size: 12.5px; line-height: 1.5; color: var(--g-text-2);
+}
+.privacy svg { flex: none; width: 14px; height: 14px; margin-top: 2px; fill: none; stroke: var(--g-accent-ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* --- the showcase: the game's looping video in a detection frame ---------- */
+
+.showcase { position: relative; margin: 0; min-width: 0; }
+.feed {
+  position: relative; aspect-ratio: 16 / 9; border-radius: var(--r);
+  background: #000; box-shadow: var(--g-shadow);
+}
+.feed video {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  border-radius: var(--r); border: 1px solid var(--g-surface-line);
+}
+/* Corner brackets: the detection frame around the feed. */
+.corners {
+  --c: var(--g-frame); --len: 22px; --w: 2px; --o: -10px;
+  position: absolute; inset: var(--o); pointer-events: none; z-index: 2;
+  background:
+    linear-gradient(var(--c), var(--c)) top left / var(--len) var(--w),
+    linear-gradient(var(--c), var(--c)) top left / var(--w) var(--len),
+    linear-gradient(var(--c), var(--c)) top right / var(--len) var(--w),
+    linear-gradient(var(--c), var(--c)) top right / var(--w) var(--len),
+    linear-gradient(var(--c), var(--c)) bottom left / var(--len) var(--w),
+    linear-gradient(var(--c), var(--c)) bottom left / var(--w) var(--len),
+    linear-gradient(var(--c), var(--c)) bottom right / var(--len) var(--w),
+    linear-gradient(var(--c), var(--c)) bottom right / var(--w) var(--len);
+  background-repeat: no-repeat;
+}
+.feed-tag {
+  position: absolute; left: -10px; bottom: calc(100% + 14px); z-index: 2;
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 8px;
+  font: 500 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  background: var(--brand); color: #fff; border-radius: 2px;
+}
+.feed-tag .rec { width: 6px; height: 6px; border-radius: 50%; background: #ff5a4e; animation: blink 1.6s steps(1) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* Floating sprites (decorative; positions come from each theme). */
+.sprite { position: absolute; z-index: 3; pointer-events: none; height: auto; filter: drop-shadow(0 14px 18px rgba(0, 0, 0, .45)); }
+.bob { animation: bob var(--dur, 6s) var(--ease) var(--delay, 0s) infinite alternate; }
+@keyframes bob {
+  from { transform: translate3d(0, 0, 0) rotate(var(--r0, -6deg)); }
+  to { transform: translate3d(0, var(--dy, -14px), 0) rotate(var(--r1, 6deg)); }
+}
+
+/* Small screens: the video leads, as a banner above the card. */
+@media (max-width: 979px) {
+  .corners { --o: -8px !important; --len: 16px; }
+  .intro-grid { align-items: start; padding-top: 28px; }
+  .intro-grid > * { width: 100%; max-width: 640px; justify-self: center; }
+  .showcase { margin: 24px 0 8px; }
+}
+
+/* --- failure --------------------------------------------------------------- */
+
+.failure { display: grid; place-items: center; padding: 24px var(--gutter); }
+.failure .card { width: min(560px, 100%); }
+.failure h1 { margin: 12px 0 10px; font: 300 clamp(32px, 4vw, 44px)/1.05 var(--sans); letter-spacing: -0.035em; }
+.failure p.lede { color: var(--g-text-2); }
+.failure-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 4px; }
+.failure-actions .go { width: auto; flex: 1 1 220px; }
+.failure-actions a { font: 400 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-text-2); margin-top: 16px; }
+
+/* --- toolbar (shared with the arcade's behaviour, restyled) --------------- */
+
+.toolbar {
+  height: var(--bar-h); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--gutter);
+  background: #0c0817; border-top: 1px solid rgba(194, 154, 246, .14); color: rgba(244, 242, 236, .6);
+  font: 400 11px/1 var(--mono); letter-spacing: .06em; white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.toolbar::-webkit-scrollbar { display: none; }
+.toolbar a { color: rgba(244, 242, 236, .7); text-decoration: none; text-transform: uppercase; letter-spacing: .1em; }
+.toolbar a:hover { color: var(--paper); }
+.toolbar .spacer { flex: 1; }
+.toolbar .game-name { color: var(--paper); text-transform: uppercase; letter-spacing: .12em; display: inline-flex; align-items: center; gap: 8px; }
+.toolbar .game-name img { width: 20px; height: 20px; }
+.toolbar .divider { width: 1px; height: 18px; background: rgba(194, 154, 246, .18); flex: none; }
+.chip {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 2px;
+  border: 1px solid rgba(194, 154, 246, .2); color: var(--paper); text-transform: none;
+}
+.chip.gpu { color: #7fe3ff; border-color: rgba(127, 227, 255, .35); }
+.chip.cpu { color: #ffbe5a; border-color: rgba(255, 190, 90, .35); }
+.cam { display: inline-flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: .1em; }
+.tool, .toolbar select {
+  height: 28px; font: 400 11px/1 var(--mono); letter-spacing: .06em; color: var(--paper);
+  background: rgba(37, 23, 66, .6); border: 1px solid rgba(194, 154, 246, .24); border-radius: var(--r);
+  padding: 0 10px; cursor: pointer;
+}
+.tool { text-transform: uppercase; letter-spacing: .1em; }
+.tool:hover, .toolbar select:hover:not(:disabled) { border-color: var(--lav); }
+.toolbar select { max-width: 200px; text-transform: none; }
+.toolbar select:disabled { opacity: .55; cursor: default; }
+.tool[aria-pressed="true"] { border-color: #7fe3ff; color: #7fe3ff; }
+.toolbar :focus-visible { outline: 2px solid var(--lav); outline-offset: 2px; }
+.credit { color: rgba(244, 242, 236, .45); }
+.credit a { text-transform: none; letter-spacing: .02em; color: rgba(244, 242, 236, .7); }
+@media (max-width: 899px) { .credit, .toolbar .source { display: none; } }
+@media (max-width: 599px) { .toolbar .game-name span, .toolbar .home-label { display: none; } }
+
+/* --- motion ---------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; }
+}
+
+/* Shared decorative pieces positioned by each theme. */
+.mascot {
+  position: absolute; z-index: 2; pointer-events: none; height: auto;
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, .45));
+}
+.det-tag {
+  position: absolute; left: 0; bottom: 100%;
+  padding: 4px 6px; font: 500 10px/1 var(--mono); letter-spacing: .04em; white-space: nowrap;
+  background: var(--brand); color: #fff; border-radius: 2px 2px 0 0;
+}
+.det-box { outline: 1.5px solid var(--brand); outline-offset: 0; }

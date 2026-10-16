@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Snack Attack · RoboFlow Fun</title>
+  <meta name="description" content="Your palm is a hungry raccoon. Swipe through flying snacks and dodge the trash bags, tracked live by a pose model running in your browser.">
+  <meta name="theme-color" content="#140c26">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="../../assets/snack/raccoon_idle.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="RoboFlow Fun">
+  <meta property="og:title" content="Snack Attack · RoboFlow Fun">
+  <meta property="og:description" content="Your palm is a hungry raccoon. Swipe through the snacks, dodge the trash. Played with your body, in your browser.">
+  <meta property="og:url" content="https://mirrash7.github.io/Games/games/snack-attack/">
+  <meta property="og:image" content="https://mirrash7.github.io/Games/media/snack.jpg">
+  <meta property="og:image:alt" content="Snack Attack: a raccoon on the player's palm eats snacks at a night market">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Fonts as on the landing page: @fontsource on jsDelivr (CORS + CORP, fine under COEP: require-corp). -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-300.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/inter-tight@5.1.0/latin-500.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-400.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.1.0/latin-500.css">
+  <link rel="stylesheet" href="../play.css">
+  <link rel="stylesheet" href="theme.css">
+  <script>
+    // Cross-origin isolation via service worker (see coi-sw.js). Reload once
+    // when it first takes control; never loop.
+    (function () {
+      if (window.crossOriginIsolated || !window.isSecureContext || !("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("../../coi-sw.js").then(function (reg) {
+        if (navigator.serviceWorker.controller) {
+          // Controlled but still not isolated: the browser refused; carry on single-threaded.
+          return;
+        }
+        var reload = function () {
+          if (sessionStorage.getItem("coi-reloaded")) return;
+          sessionStorage.setItem("coi-reloaded", "1");
+          location.reload();
+        };
+        if (reg.active) reload();
+        navigator.serviceWorker.addEventListener("controllerchange", reload);
+      }).catch(function (e) { console.warn("coi service worker:", e); });
+    })();
+  </script>
+</head>
+<body data-game="snack">
+  <a class="skip" href="#go">Skip to play</a>
+
+  <main id="stage">
+    <canvas id="screen" width="1280" height="720" aria-label="Snack Attack game screen"></canvas>
+
+    <section id="intro" class="overlay intro" aria-labelledby="game-title">
+      <header class="topbar">
+        <a class="back" href="../../"><span class="arrow" aria-hidden="true">←</span>All experiences</a>
+        <p class="crumb"><span class="path">Body-Controlled Games / </span><b>Snack Attack</b></p>
+        <a class="arcade-link" href="../../arcade/" title="All three games in one arcade">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="1.5" width="5" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/><rect x="1.5" y="9.5" width="5" height="5"/><rect x="9.5" y="9.5" width="5" height="5"/></svg>
+          Arcade
+        </a>
+      </header>
+
+      <div class="intro-grid">
+        <div class="card">
+          <img class="mascot bob" src="../../assets/snack/raccoon_idle.png" alt="" width="128" height="128">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span><span class="idx">[01]</span> Hand tracking <span class="sep" aria-hidden="true">·</span> Swipe</p>
+          <h1 id="game-title" class="title">Snack Attack</h1>
+          <p class="pitch">Your palm is a hungry raccoon. Swipe through the snacks, dodge the trash.</p>
+
+          <section class="needs" aria-labelledby="needs-title">
+            <h2 id="needs-title" class="label">What you need</h2>
+            <ul class="need-list">
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3.5" width="10" height="9" rx="1"/><path d="m11.5 6.5 3-2v7l-3-2"/><circle cx="6.5" cy="8" r="2"/></svg>A webcam</li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h13M1.5 8l2.5-2.5M1.5 8l2.5 2.5M14.5 8 12 5.5M14.5 8 12 10.5"/></svg>~2 m of space</li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 5.5h13"/></svg>Chrome or Edge for GPU speed</li>
+            </ul>
+          </section>
+
+          <p id="device" class="device" aria-live="polite">Checking your graphics card...</p>
+          <button id="go" class="go" disabled>Allow camera and play</button>
+          <div id="progress" class="progress" hidden>
+            <div class="bar"><span id="bar"></span></div>
+            <p id="status" class="status" aria-live="polite"></p>
+          </div>
+          <p class="fine">The first visit downloads the pose model once (<span id="model-size">72-143 MB</span>); after that it starts from your browser's cache.</p>
+          <p class="privacy"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+            <span>Your video never leaves your device: the pose model runs in this tab.</span></p>
+        </div>
+
+        <section class="howto" aria-labelledby="howto-title">
+          <h2 id="howto-title" class="label">How to play</h2>
+          <ol class="steps">
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">01</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <path class="box" d="M4 10V4h6M30 4h6v6M36 30v6h-6M10 36H4v-6"/>
+                <circle cx="20" cy="13" r="3.6"/>
+                <path d="M13 21h14M13 21l-3.5 7.5L11 35M27 21l3.5 7.5L29 35M15 21l.5 15M25 21l-.5 15"/>
+                <circle class="kp" cx="13" cy="21" r="1.7"/><circle class="kp" cx="27" cy="21" r="1.7"/>
+                <circle class="kp" cx="9.5" cy="28.5" r="1.7"/><circle class="kp" cx="30.5" cy="28.5" r="1.7"/>
+                <circle class="kp" cx="20" cy="13" r="1.4"/>
+              </svg>
+              <p><b>Stand back</b> so your whole upper body is in view.</p>
+            </li>
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">02</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <path d="M4 36C10 25 17 19 25 15" stroke-opacity=".35" stroke-width="5"/>
+                <path class="acc" d="M5 34C11 24 18 18 33 9" stroke-width="2"/>
+                <circle class="fill" cx="17" cy="22" r="6"/>
+                <circle cx="17" cy="22" r="6"/><circle cx="17" cy="22" r="2"/>
+                <circle class="kp" cx="33" cy="9" r="3"/>
+              </svg>
+              <p><b>Swipe fast</b> with your right hand: your palm is the raccoon.</p>
+            </li>
+            <li class="step">
+              <span class="step-idx" aria-hidden="true">03</span>
+              <svg class="step-icon" viewBox="0 0 40 40" aria-hidden="true">
+                <path d="M16.5 8.5 20 12l3.5-3.5"/>
+                <path d="M20 12c-7 0-11 7-11 13.5C9 31.5 13 35 20 35s11-3.5 11-9.5C31 19 27 12 20 12z"/>
+                <path class="acc" d="M7 33 33 7" stroke-width="2"/>
+              </svg>
+              <p><b>Avoid the trash bags.</b> Let 3 snacks drop and the round is over.</p>
+            </li>
+          </ol>
+        </section>
+
+        <figure class="showcase">
+          <div class="feed">
+            <video muted autoplay loop playsinline preload="auto" poster="../../media/snack.jpg" aria-label="Gameplay preview: the raccoon on a player's palm eats snacks">
+              <source src="../../media/snack.webm" type="video/webm">
+              <source src="../../media/snack.mp4" type="video/mp4">
+            </video>
+            <span class="corners" aria-hidden="true"></span>
+            <span class="feed-tag" aria-hidden="true"><span class="rec"></span>Gameplay · recorded in the browser</span>
+          </div>
+          <img class="sprite bob s-donut" src="../../assets/snack/fruit_donut_whole.png" alt="" width="134" height="126">
+          <img class="sprite bob s-pizza" src="../../assets/snack/fruit_pizza_whole.png" alt="" width="140" height="140">
+          <img class="sprite bob s-candy" src="../../assets/snack/fruit_cotton_candy_pink_whole.png" alt="" width="140" height="170">
+          <img class="sprite bob s-fries" src="../../assets/snack/fruit_fries_whole.png" alt="" width="120" height="150">
+          <span class="sprite bob s-trash"><img src="../../assets/snack/bomb.png" alt="" width="156" height="184"><span class="det-tag">trash 0.93</span></span>
+        </figure>
+      </div>
+    </section>
+
+    <section id="failure" class="overlay failure" hidden aria-labelledby="failure-title">
+      <div class="card">
+        <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Snack Attack</p>
+        <h1 id="failure-title">Something went wrong</h1>
+        <p id="failure-text" class="lede"></p>
+        <div class="failure-actions">
+          <button class="go" onclick="location.reload()">Try again</button>
+          <a href="../../">All experiences</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="bar-bottom" class="toolbar">
+    <span class="game-name"><img src="../../assets/snack/raccoon_idle.png" alt="" width="20" height="20"><span>Snack Attack</span></span>
+    <span class="divider" aria-hidden="true"></span>
+    <span id="engine" class="chip">model: not loaded</span>
+    <label class="cam">Camera <select id="camera" disabled></select></label>
+    <button id="fullscreen" class="tool" title="Fullscreen (F)">Fullscreen</button>
+    <button id="debug" class="tool" title="Show the skeleton (D)">Skeleton</button>
+    <span class="spacer"></span>
+    <a href="../../" class="home" aria-label="All experiences"><span aria-hidden="true">← </span><span class="home-label" aria-hidden="true">All experiences</span></a>
+    <a href="https://github.com/mirrash7/Games" class="source" target="_blank" rel="noopener">Source</a>
+    <span class="credit">Pose model: <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> by Roboflow (Apache-2.0)</span>
+  </footer>
+
+  <script src="../play.js"></script>
+  <script type="module" src="../../js/main.js"></script>
+</body>
+</html>

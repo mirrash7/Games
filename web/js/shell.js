@@ -85,8 +85,11 @@ export class Shell {
    * @param {object} o
    * @param {Function[]} o.games game classes (see games/base.js)
    * @param {object} [o.board] leaderboard (leaderboard.js); null turns leaderboards off
+   * @param {boolean} [o.single] one game's own page (games/<slug>/): the welcome
+   *   screen becomes that game's title screen - PLAY, and ALL GAMES (onHome)
    */
-  constructor({ width = 1280, height = 720, games = [], mirrored = true, selected = null, board = null } = {}) {
+  constructor({ width = 1280, height = 720, games = [], mirrored = true, selected = null, board = null,
+    single = false } = {}) {
     this.width = width;
     this.height = height;
     this.mirrored = mirrored;
@@ -94,6 +97,9 @@ export class Shell {
     this.menuGames = games.filter((g) => g.title && g.menu !== false).map((g) => g.id);
     if (selected && this.registry[selected] && !this.menuGames.includes(selected)) this.menuGames.push(selected);
     this.selected = selected && this.registry[selected] ? selected : this.menuGames[0] ?? null;
+    this.single = single && this.selected != null;
+    if (this.single) this.menuGames = [this.selected];
+    this.onHome = null; // single mode: the page sets this to go back to the site (ALL GAMES)
     this.hand = "right";
     this._trackers = { right: new HandTracker("right", mirrored), left: new HandTracker("left", mirrored) };
     this._clock = 0;
@@ -371,7 +377,8 @@ export class Shell {
   }
 
   _do(action) {
-    if (action.startsWith("start:")) this.choose(action.slice(6));
+    if (action === "home") this.onHome?.();
+    else if (action.startsWith("start:")) this.choose(action.slice(6));
     else if (action.startsWith("song:")) this.start(this._picking, true, action.slice(5));
     else if (action.startsWith("diff:")) this._chooseDifficulty(this._picking, action.slice(5));
     else if (action === "resume") this.resume();
@@ -531,6 +538,15 @@ export class Shell {
 
   _layout() {
     const w = this.width, h = this.height;
+    if (this.screen === "menu" && this.single) {
+      // The game's own title screen: one big PLAY tile, and a way back to the site.
+      const g = this.registry[this.selected];
+      const tw = Math.floor(w * 0.36), th = Math.floor(h * 0.34), x0 = Math.floor((w - tw) / 2), y0 = Math.floor(h * 0.31);
+      const buttons = [new Button(`start:${this.selected}`, "PLAY", [x0, y0, x0 + tw, y0 + th], g.blurb || "", "ENTER")];
+      const bw = Math.floor(w * 0.18), by = Math.floor(h * 0.68);
+      if (this.onHome) buttons.push(new Button("home", "ALL GAMES", [w / 2 - bw / 2, by, w / 2 + bw / 2, by + 60]));
+      return buttons;
+    }
     if (this.screen === "menu") {
       const n = Math.max(1, this.menuGames.length);
       const tw = Math.floor(w * 0.3), th = Math.floor(h * 0.34), gap = Math.floor(w * 0.04);
@@ -635,14 +651,16 @@ export class Shell {
   _drawMenu(ctx) {
     dim(ctx, 0.62);
     const w = this.width, h = this.height;
-    centredText(ctx, "MOTION ARCADE", w / 2, Math.floor(h * 0.17), 2.0, ACCENT);
-    centredText(ctx, "Point with your right hand and hover over a game to start", w / 2, Math.floor(h * 0.25),
-      0.72, WHITE, { body: true });
+    const title = this.single ? (this.registry[this.selected].title || this.selected.toUpperCase()) : "MOTION ARCADE";
+    centredText(ctx, title, w / 2, Math.floor(h * 0.17), 2.0, ACCENT);
+    centredText(ctx, this.single ? "Point with your right hand and hover over PLAY - or press ENTER"
+      : "Point with your right hand and hover over a game to start", w / 2, Math.floor(h * 0.25),
+    0.72, WHITE, { body: true });
     this._drawButtons(ctx, this.dwell, true);
     let status, colour;
     if (!this.personSeen) [status, colour] = ["Step in front of the camera", WARN];
     else if (!this.cursor) [status, colour] = ["Raise your hand to point", WARN];
-    else [status, colour] = ["Hand found - hold it over a game", GOOD];
+    else [status, colour] = [`Hand found - hold it over ${this.single ? "PLAY" : "a game"}`, GOOD];
     centredText(ctx, status, w / 2, Math.floor(h * 0.82), 0.8, colour);
     if (this.notice) {
       centredText(ctx, this.notice.text, w / 2, Math.floor(h * 0.89), 0.56, this.notice.colour ?? DIM,
@@ -904,7 +922,7 @@ export class Shell {
   _drawFooter(ctx) {
     const n = Math.max(1, this.menuGames.length);
     const keys = {
-      menu: `1-${n} or click to start   H switch hand`,
+      menu: this.single ? "ENTER or click PLAY   H switch hand" : `1-${n} or click to start   H switch hand`,
       countdown: "ESC menu",
       songs: "1-9 or click a song   TAB difficulty   ESC back",
       tutorial: "ENTER play   ESC menu",

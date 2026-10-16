@@ -53,9 +53,10 @@ test("experience and category ids are unique, and every category exists", () => 
 
 test("the three arcade games are live, in Body-Controlled Games", () => {
   const live = CATALOG.experiences.filter((e) => e.status === "live");
-  assert.deepEqual(live.map((e) => e.href).sort(), ["arcade/?game=dance", "arcade/?game=flappy", "arcade/?game=snack"]);
+  assert.deepEqual(live.map((e) => e.href).sort(),
+    ["games/flappy-raccoon/", "games/raccoon-dance/", "games/snack-attack/"]);
   for (const e of live) assert.equal(e.category, "body-games");
-  const dance = live.find((e) => e.href.endsWith("dance"));
+  const dance = live.find((e) => e.href.includes("dance"));
   assert.match(dance.summary, /EASY, NORMAL or HARD/);
   assert.match(dance.summary, /Two .*songs/);
 });
@@ -69,6 +70,10 @@ test("live hrefs open a real page and a registered game", () => {
     assert.ok(existsSync(file), `${e.id}: ${e.href} has no page (${file.pathname})`);
     const game = url.searchParams.get("game");
     if (game != null) assert.ok(ids.has(game), `${e.id}: no game '${game}' in js/games/index.js`);
+    // A per-game page names its game on <body data-game> and opens straight into it.
+    const html = readFileSync(file, "utf8");
+    const own = html.match(/<body[^>]*data-game="([^"]+)"/)?.[1];
+    if (page.startsWith("games/")) assert.ok(own && ids.has(own), `${e.id}: ${e.href} must set <body data-game> to a registered game`);
   }
 });
 

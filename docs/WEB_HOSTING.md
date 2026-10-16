@@ -81,6 +81,9 @@ web/
   landing/                  landing.css, landing.js (catalog + menu), hero.js (three.js hero), catalog.json
   media/                    showcase videos + posters for the landing page (snack, flappy, dance, hero)
   arcade/index.html, style.css   the arcade: intro card, canvas, toolbar (camera picker, fullscreen, skeleton)
+  games/<slug>/index.html   one page per game (snack-attack, flappy-raccoon, raccoon-dance): its own
+                            intro and theme, then straight into that game (see "Game pages")
+  games/play.css            shared styles for the game pages
   coi-sw.js                 cross-origin isolation for static hosting
   js/main.js                boot (backend choice, downloads) and the render loop (app.py's twin)
   js/camera.js              getUserMedia -> mirrored 1280x720 frame; built-in camera over iPhone
@@ -115,7 +118,7 @@ for the arcade. The arcade's URL options:
 
 - `?debug=1` shows the skeleton and the timings (or press D).
 - `?game=snack`, `?game=flappy` or `?game=dance` opens that game once the
-  player has started the camera (the landing page's PLAY buttons use this).
+  player has started the camera.
 - `?source=../dev/people-walking.jpg` uses an image or video in place of the
   webcam. Sample media is gitignored; this one is Roboflow's public
   people-walking image.
@@ -129,6 +132,22 @@ Dev pages:
 - `dev/tutorial.html?game=snack&t=1` freezes the how-to-play cards at a
   time, and `&screen=entry` or `&screen=results` shows the leaderboard
   screens. `&crop=x0,y0,x1,y1` enlarges part of the screen.
+
+## Game pages
+
+Each game has its own page at `games/<slug>/`, and the landing page's PLAY
+buttons go there, not to the arcade. A game page is the arcade page with
+`<body data-game="snack|flappy|dance">`, the same element ids, and its own
+intro card, video and colours. `js/main.js` reads `data-game`, loads only that
+game (its art, its leaderboard) and builds the shell in **single mode**: the
+title screen offers PLAY and ALL GAMES (back to the site), never the other
+games, and MENU from a finished round returns to that title screen. The same
+URL options work (`?debug=1`, `?source=../../dev/people-walking.jpg`).
+
+To give a new game its own page: copy a folder under `web/games/`, change
+`data-game`, the copy, the video and the accent colour, and point its
+`catalog.json` entry's `href` at it. `landing.test.mjs` checks that every live
+href opens a page whose `data-game` is a registered game.
 
 ## Landing page
 

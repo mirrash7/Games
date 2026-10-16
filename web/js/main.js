@@ -19,7 +19,7 @@ import { ControlMapper } from "./core/controls.js";
 import { SKELETON } from "./core/pose.js";
 import { banner, text, panel, WARN, css } from "./core/theme.js";
 import { Shell } from "./shell.js";
-import { GAMES } from "./games/index.js";
+import { GAMES as ALL_GAMES } from "./games/index.js";
 import { createBoard } from "./leaderboard.js";
 import { LEADERBOARD } from "./config.js";
 import { unlockAudio } from "./core/audio.js";
@@ -27,6 +27,12 @@ import { unlockAudio } from "./core/audio.js";
 const W = 1280, H = 720;
 const RESOLUTION = 336;
 const params = new URLSearchParams(location.search);
+// A game's own page (games/<slug>/, <body data-game="dance">) runs just that
+// game: only its art loads, it starts straight in, and its title screen replaces
+// the all-games menu. The arcade page (arcade/) has no data-game: every game.
+const SINGLE = ALL_GAMES.some((g) => g.id === document.body.dataset.game) ? document.body.dataset.game : null;
+const GAMES = SINGLE ? ALL_GAMES.filter((g) => g.id === SINGLE) : ALL_GAMES;
+const SITE_HOME = new URL("../", import.meta.url).href; // the landing page (js/ sits at the site root)
 const $ = (id) => document.getElementById(id);
 
 const canvas = $("screen");
@@ -65,9 +71,16 @@ gpuP.then((gpu) => {
     ui.device.textContent = "Your graphics card will run the model (WebGPU). Expect a smooth 15-30 pose updates a second.";
   } else {
     ui.device.classList.add("cpu");
+    // What ~6 updates a second means for the game(s) on this page.
+    const verdict = {
+      snack: "Snack Attack is playable at this speed.",
+      flappy: "Flappy Raccoon will feel sluggish at this speed.",
+      dance: "Raccoon Dance is best on EASY at this speed.",
+    };
+    const fit = SINGLE ? verdict[SINGLE] ?? "" : "Snack Attack is playable; Flappy Raccoon will feel sluggish.";
     ui.device.textContent = cpuForced
-      ? "CPU only (you asked for it): about 6 pose updates a second on a fast laptop, slower elsewhere. Snack Attack is playable; Flappy Raccoon will feel sluggish."
-      : "No WebGPU in this browser, so the model runs on your CPU: about 6 pose updates a second on a fast laptop, slower elsewhere. Snack Attack is playable; Flappy Raccoon will feel sluggish. Chrome or Edge on a recent computer uses the GPU.";
+      ? `CPU only (you asked for it): about 6 pose updates a second on a fast laptop, slower elsewhere. ${fit}`
+      : `No WebGPU in this browser, so the model runs on your CPU: about 6 pose updates a second on a fast laptop, slower elsewhere. ${fit} Chrome or Edge on a recent computer uses the GPU.`;
   }
   // A switch between the two paths, for comparing them.
   const other = new URL(location.href);
@@ -81,14 +94,14 @@ gpuP.then((gpu) => {
     ui.device.append(" ", a);
   }
   ui.go.disabled = false;
-  ui.go.focus();
+  ui.go.focus({ preventScroll: true }); // don't scroll the title and video away on phones
   // Start the download now, so it is done (or nearly) by the time the player
   // presses play. Not on a data-saver connection: there it waits for the click.
   if (!navigator.connection?.saveData) beginModel();
 });
 
 // Art is small; fetch it straight away too.
-const artP = Promise.all(GAMES.map((g) => g.preload()));
+const artP = Promise.all(GAMES.map((g) => g.preload())); // only this page's game on a game page
 artP.catch(() => {});
 // Games with songs only know their songs (and so their leaderboards) once
 // preloaded; the shell was built before that, so fetch the boards again.
@@ -160,7 +173,7 @@ async function boot() {
   running = true;
   // Deep links from the landing page (arcade/?game=dance): open that game
   // straight away - its song list, or its how-to-play cards.
-  const wanted = params.get("game");
+  const wanted = SINGLE ?? params.get("game");
   if (wanted && shell.registry[wanted]) shell.choose(wanted);
   requestAnimationFrame(tick);
 }
@@ -197,9 +210,11 @@ async function startModel(gpu) {
 
 // --- the loop ---
 
-const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, selected: params.get("game"),
+const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, selected: SINGLE ?? params.get("game"),
+  single: !!SINGLE,
   // ?leaderboard=<url> points this browser at another leaderboard server (local testing).
   board: createBoard(params.get("leaderboard") ? { url: params.get("leaderboard") } : LEADERBOARD) });
+if (SINGLE) shell.onHome = () => { location.href = SITE_HOME; }; // ALL GAMES on the game's title screen
 const extrapolator = new PoseExtrapolator({ gain: 0.7, maxLead: 0.12 });
 const mapper = new ControlMapper(W, H);
 let last = performance.now() / 1000;
