@@ -17,7 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MEDIA = ROOT / "web" / "media"
-CLIPS = ("snack", "flappy", "dance")
+CLIPS = ("snack", "flappy", "dance", "golf")
 
 
 def _load_tool():
@@ -85,6 +85,29 @@ def test_frames_are_deterministic(clip):
     for x, y in zip(a, b):
         assert np.array_equal(x, y)
     assert not np.array_equal(a[0], a[1]), "the clip moves"
+
+
+def test_golf_clip_swings_and_hits_through_the_real_detector():
+    """The golf bot's swing is read by the real SwingDetector (not a scripted
+    event): one stroke, a real backswing's power, and the ball on its way."""
+    tool = _load_tool()
+    sc = tool.make("golf")
+    frames = sum(1 for _ in tool.clip_frames(sc))
+    g = sc.game
+    assert frames == int(round(sc.timing.seconds * tool.FPS))
+    assert g.strokes == 1 and g.last_shot is not None
+    assert 0.6 < g.last_shot["power"] <= 1.0 and g.last_shot["overswing"] == 0.0
+    assert g.flight is not None and g.flight.state != "water"
+
+
+def test_golf_mascot_is_a_transparent_png():
+    import cv2
+
+    img = cv2.imread(str(MEDIA / "golf_lenny.png"), cv2.IMREAD_UNCHANGED)
+    assert img is not None and img.shape[2] == 4
+    alpha = img[..., 3]
+    assert alpha[0, 0] == 0 and alpha.max() == 255
+    assert (MEDIA / "golf_lenny.png").stat().st_size <= 60 * 1024
 
 
 def test_snack_elbows_never_rise_above_the_shoulders():

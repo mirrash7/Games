@@ -7,7 +7,7 @@
 //
 // The render loop never waits on the camera or the model.
 //
-// URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy|dance (open that game once started),
+// URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy|dance|golf (open that game once started),
 // ?source=<image or video url> (stand-in for the webcam), ?debug=1 (skeleton + stats),
 // ?leaderboard=<url> (a different leaderboard server, e.g. a local `wrangler dev`).
 
@@ -76,8 +76,11 @@ gpuP.then((gpu) => {
       snack: "Snack Attack is playable at this speed.",
       flappy: "Flappy Raccoon will feel sluggish at this speed.",
       dance: "Raccoon Dance is best on EASY at this speed.",
+      // A swing is measured against its own address and impact on the grip's
+      // swept path, so a slow model delays a shot but doesn't change it.
+      golf: "Raccoon Golf is playable at this speed, but Lenny will lag behind your swing.",
     };
-    const fit = SINGLE ? verdict[SINGLE] ?? "" : "Snack Attack is playable; Flappy Raccoon will feel sluggish.";
+    const fit = SINGLE ? verdict[SINGLE] ?? "" : "Snack Attack and Raccoon Golf are playable; Flappy Raccoon will feel sluggish.";
     ui.device.textContent = cpuForced
       ? `CPU only (you asked for it): about 6 pose updates a second on a fast laptop, slower elsewhere. ${fit}`
       : `No WebGPU in this browser, so the model runs on your CPU: about 6 pose updates a second on a fast laptop, slower elsewhere. ${fit} Chrome or Edge on a recent computer uses the GPU.`;

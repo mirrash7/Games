@@ -16,9 +16,16 @@ export const NAME_MAX = 3;
 //          count <= 5; game.js bonus = count * 2.)
 //  flappy: one point per pipe; pipes come at least 1.55 s apart at the
 //          hardest, so <= 0.65/s. (web/js/games/flappy/game.js intervalMin.)
+//  golf:   points arrive only when a hole is finished, at most 1000 (an ace)
+//          per hole, and no hole can be finished sooner than
+//          FASTEST_HOLE_SECONDS (8.7 s: the intro, an address hold, a swing
+//          and an ace's flight), so <= 1000 / 8.7 = 115/s; 125/s with no
+//          slack. Three holes: at most 3000. (web/js/games/golf/game.js
+//          POINTS_ACE, FASTEST_HOLE_SECONDS.)
 export const GAMES = {
   snack: { perSecond: 25, slack: 20, max: 100000 },
   flappy: { perSecond: 1 / 1.5, slack: 3, max: 100000 },
+  golf: { perSecond: 125, slack: 0, max: 3000 },
 };
 
 // Raccoon Dance has one board per song: "dance-<song id>" (docs/DANCE.md

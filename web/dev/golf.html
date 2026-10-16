@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raccoon Golf harness</title>
+<style>
+  :root { --bg: #15161a; --fg: #e8e6e3; --dim: #9a978f; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 10px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+  header b { font-size: 15px; }
+  #perf, #status { color: var(--dim); font-variant-numeric: tabular-nums; }
+  nav a { color: #ffd246; margin-right: 10px; }
+  canvas#sheet { display: block; width: 100%; max-width: 1316px; height: auto; margin: 0 auto; }
+</style>
+</head>
+<body>
+<!-- Dev-only harness (not published): the browser port of tools/golf_contact_sheet.py.
+     The same 13 scripted moments, with the desktop sheet's wind and overswing
+     curve (the Python's random draws can't be reproduced in the browser), so the
+     two sheets can be compared side by side. ?moment=N shows one at 1280x720. -->
+<header>
+  <b>Raccoon Golf harness</b>
+  <span id="status">loading art...</span>
+  <span id="perf"></span>
+  <nav id="nav"></nav>
+</header>
+<canvas id="sheet" width="1316" height="2854"></canvas>
+<script type="module">
+import { RaccoonGolfGame, Phase } from "../js/games/golf/game.js";
+import { holePoints } from "../js/games/golf/game.js";
+import * as P from "../js/games/golf/physics.js";
+import { swingEvent } from "../js/games/golf/swing.js";
+import { KP, Pose } from "../js/core/pose.js";
+import { emptyControls } from "../js/core/controls.js";
+import { GAMES } from "../js/games/index.js";
+import { Shell } from "../js/shell.js";
+
+const W = 1280, H = 720, DT = 1 / 60;
+const SW = 200, CX = 640, CY = 330;
+const status = document.getElementById("status");
+const params = new URLSearchParams(location.search);
+
+// The desktop sheet's draws (seed 3): hole 1 and hole 2 winds, the overswing's curve.
+const PY_WIND = { 0: [2.0, 3.4194930721172536], 1: [2.0, 3.7945415132189377] };
+const PY_CURVE = 0.885238424748126;
+
+/** The stand-in camera picture: a dim room, as golf_contact_sheet.camera_frame. */
+const cam = document.createElement("canvas");
+cam.width = W;
+cam.height = H;
+{
+  const g = cam.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "rgb(55,60,70)");
+  grad.addColorStop(1, "rgb(32,35,40)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgb(120,80,90)";
+  g.beginPath();
+  g.ellipse(CX, CY + 260, 150, 300, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "rgb(180,140,120)";
+  g.beginPath();
+  g.arc(CX, CY - 140, 80, 0, Math.PI * 2);
+  g.fill();
+}
+
+function poseFrom(pts) {
+  const xy = new Float32Array(34), c = new Float32Array(17);
+  for (const [n, [x, y]] of Object.entries(pts)) {
+    xy[2 * KP[n]] = x;
+    xy[2 * KP[n] + 1] = y;
+    c[KP[n]] = 0.9;
+  }
+  return new Pose(xy, c, 0.9);
+}
+
+/** Controls for a grip at (u, h) shoulder widths from the shoulder midpoint (u = null: no hands). */
+function grip(u, h, apart = 0.15) {
+  const pts = { left_shoulder: [CX + SW / 2, CY], right_shoulder: [CX - SW / 2, CY], nose: [CX, CY - 0.7 * SW] };
+  if (u != null) {
+    const gx = CX + u * SW, gy = CY - h * SW;
+    pts.left_wrist = [gx + (apart * SW) / 2, gy];
+    pts.right_wrist = [gx - (apart * SW) / 2, gy];
+  }
+  const pose = poseFrom(pts);
+  return { ...emptyControls(pose), present: true, stepPose: pose };
+}
+const arc = (a, r = 1.35) => [r * Math.sin(a), -r * Math.cos(a)];
+
+function run(game, controls, seconds) {
+  for (let i = 0; i < Math.round(seconds / DT); i++) game.update(typeof controls === "function" ? controls(game.clock) : controls, DT);
+}
+
+function snap(game) {
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(cam, 0, 0);
+  const t0 = performance.now();
+  game.render(ctx, cam);
+  times.push(performance.now() - t0);
+  return c;
+}
+const times = [];
+
+function swing(game, top, shots) {
+  run(game, grip(...arc(0)), 0.7);
+  const t0 = game.clock;
+  run(game, (t) => grip(...arc(top * Math.min(1.0, (t - t0) / 0.7))), 0.85);
+  shots.push(snap(game));
+  const t1 = game.clock;
+  run(game, (t) => grip(...arc(top - (top + 2.0) * Math.min(1.0, (t - t1) / 0.45))), 0.5);
+}
+
+function newGame(hole = 0) {
+  const g = new RaccoonGolfGame({ width: W, height: H, seed: 3 });
+  if (hole) g._startHole(hole);
+  g.setWind(...PY_WIND[hole]);
+  g._hit = (ev) => RaccoonGolfGame.prototype._hit.call(g, ev, ev.overswing > 0 ? PY_CURVE : 0.0);
+  return g;
+}
+const none = grip(null, null);
+
+function buildSheet() {
+  const shots = [], labels = [];
+  const game = newGame(0);
+  run(game, none, 1.1);
+  shots.push(snap(game)); labels.push("1. Hole intro");
+  run(game, none, 2.2);
+  run(game, grip(...arc(0)), 0.7);
+  shots.push(snap(game)); labels.push("2. Tee shot: READY at address");
+  run(game, none, 0.3);
+  swing(game, 2.45, shots); labels.push("3. Backswing into the overswing zone");
+  run(game, none, 1.3);
+  shots.push(snap(game)); labels.push("4. Ball in flight");
+  while (game.phase === Phase.FLIGHT) run(game, none, 0.1);
+  run(game, none, 0.25);
+  shots.push(snap(game)); labels.push(`5. Result: ${game.message ? game.message.text : "-"}`);
+
+  const w = newGame(1);
+  w.phase = Phase.AIM; w.phaseT = 0;
+  w._hit(swingEvent(0, 0.55, 1.0, 1, 9, false));
+  while (w.phase === Phase.FLIGHT) run(w, none, 0.1);
+  run(w, none, 0.4);
+  shots.push(snap(w)); labels.push("6. Water hazard");
+
+  const g = newGame(0);
+  g.phase = Phase.AIM;
+  const [px, py] = g.hole.pin;
+  g.ball = [px - 3.0, py - 6.0];
+  g.lie = "green";
+  g._setupShot();
+  run(g, grip(...arc(0)), 0.7);
+  shots.push(snap(g)); labels.push("7. On the green: putter, slope grid");
+  let best = null;
+  for (let off = 0; off <= 40 && best == null; off++) {
+    for (const sign of [1, -1]) {
+      g.aimOffset = sign * P.radians(off * 0.5);
+      for (let k = 1; k < 200; k++) {
+        if (P.simulate(g.hole, g.ball, P.makeShot(P.PUTTER, k / 200, g.heading, "green")).state === "holed") { best = k / 200; break; }
+      }
+      if (best != null) break;
+    }
+  }
+  g.strokes = 2;
+  g._hit(swingEvent(0, best ?? 0.4, 1.0, 1, 2, false));
+  while (g.phase === Phase.FLIGHT) run(g, none, 0.1);
+  run(g, none, 1.0);
+  shots.push(snap(g)); labels.push(`8. Hole out: ${g.message ? g.message.text : "-"}`);
+  run(g, none, 1.7);
+  shots.push(snap(g)); labels.push("9. Scorecard");
+
+  const o = newGame(0);
+  [4, 2, 6].forEach((s, i) => { o.card[i].strokes = s; o.card[i].done = true; o.card[i].points = holePoints(s, o.card[i].par); });
+  o.phase = Phase.GAME_OVER;
+  shots.push(snap(o)); labels.push("10. Game over");
+
+  const a = newGame(0);
+  a.phase = Phase.AIM;
+  const pose = poseFrom({ left_shoulder: [CX + SW / 2, CY], right_shoulder: [CX - SW / 2, CY], left_wrist: [1010, 455],
+    left_elbow: [900, 470], right_wrist: [CX - 140, CY + 280] });
+  run(a, { ...emptyControls(pose), present: true, stepPose: pose }, 0.45);
+  shots.push(snap(a)); labels.push("11. Adjusting aim (hands apart)");
+
+  const sh = new Shell({ width: W, height: H, games: GAMES });
+  const menu = document.createElement("canvas");
+  menu.width = W; menu.height = H;
+  const mctx = menu.getContext("2d");
+  mctx.drawImage(cam, 0, 0);
+  sh.update(emptyControls(), DT);
+  sh.render(mctx, cam);
+  shots.push(menu); labels.push("12. Welcome screen, four games");
+
+  const tut = new Shell({ width: W, height: H, games: GAMES, selected: "golf" });
+  tut.choose("golf");
+  tut.tutorialT = 1.6;
+  const card = document.createElement("canvas");
+  card.width = W; card.height = H;
+  const cctx = card.getContext("2d");
+  cctx.drawImage(cam, 0, 0);
+  tut.render(cctx, cam);
+  shots.push(card); labels.push("13. How to play");
+  return [shots, labels];
+}
+
+async function main() {
+  await RaccoonGolfGame.preload();
+  status.textContent = "rendering...";
+  const [shots, labels] = buildSheet();
+  const one = params.get("moment");
+  const sheet = document.getElementById("sheet");
+  const ctx = sheet.getContext("2d");
+  const nav = document.getElementById("nav");
+  labels.forEach((l, i) => {
+    const a = document.createElement("a");
+    a.href = `?moment=${i + 1}`;
+    a.textContent = String(i + 1);
+    a.title = l;
+    nav.append(a);
+  });
+  if (one) {
+    sheet.width = W; sheet.height = H;
+    ctx.drawImage(shots[Number(one) - 1], 0, 0);
+    status.textContent = labels[Number(one) - 1];
+  } else {
+    // The Python sheet's layout: 2 columns at half size, a label above each.
+    const tw = W / 2, th = H / 2, pad = 12, lab = 34;
+    ctx.fillStyle = "rgb(30,28,34)";
+    ctx.fillRect(0, 0, sheet.width, sheet.height);
+    shots.forEach((img, i) => {
+      const r = Math.floor(i / 2), c = i % 2;
+      const x = pad + c * (tw + pad), y = pad + r * (th + lab + pad);
+      ctx.drawImage(img, x, y + lab, tw, th);
+      ctx.fillStyle = "rgb(235,235,235)";
+      ctx.font = "20px -apple-system, system-ui, sans-serif";
+      ctx.fillText(labels[i], x + 4, y + 24);
+    });
+    status.textContent = `${shots.length} moments`;
+  }
+  const mean = times.reduce((s, v) => s + v, 0) / Math.max(1, times.length);
+  document.getElementById("perf").textContent = `render ${mean.toFixed(2)} ms mean, ${Math.max(...times).toFixed(2)} ms max`;
+  window.__golfReady = true;
+}
+main().catch((err) => { status.textContent = String(err); console.error(err); });
+</script>
+</body>
+</html>

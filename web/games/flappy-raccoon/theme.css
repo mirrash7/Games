@@ -74,6 +74,3 @@
 .corners { --c: rgba(22, 16, 38, .55); --o: -16px; }
 .s-feather { width: 26px; right: 6%; top: -40px; --r0: -30deg; --r1: 20deg; --dy: 14px; --dur: 4s; filter: none; }
 .s-feather2 { width: 20px; right: -24px; top: 30%; --r0: 40deg; --r1: -10deg; --dy: 18px; --dur: 5s; --delay: -2s; filter: none; }
-
-@media (max-width: 979px) {
-  

@@ -79,9 +79,11 @@ this; see below.)
 web/
   index.html                the landing page: hero, experiences catalog, how it works (see "Landing page")
   landing/                  landing.css, landing.js (catalog + menu), hero.js (three.js hero), catalog.json
-  media/                    showcase videos + posters for the landing page (snack, flappy, dance, hero)
+  media/                    showcase videos + posters for the landing page (snack, flappy, dance, golf,
+                            hero), and golf_lenny.png (the golf page's mascot); tools/render_showcase.py
   arcade/index.html, style.css   the arcade: intro card, canvas, toolbar (camera picker, fullscreen, skeleton)
-  games/<slug>/index.html   one page per game (snack-attack, flappy-raccoon, raccoon-dance): its own
+  games/<slug>/index.html   one page per game (snack-attack, flappy-raccoon, raccoon-dance,
+                            raccoon-golf): its own
                             intro and theme, then straight into that game (see "Game pages")
   games/play.css            shared styles for the game pages
   coi-sw.js                 cross-origin isolation for static hosting
@@ -94,11 +96,13 @@ web/
   js/model/                 loader.js (chunks + cache), engine.js (main thread), worker.js (ORT)
   js/core/                  decode (rf-detr PostProcess), pose, hand, controls, extrapolate,
                             random, theme, gfx
-  js/games/                 base.js (the Game interface), index.js (registry), snack/, flappy/
+  js/games/                 base.js (the Game interface), index.js (registry), snack/, flappy/,
+                            dance/, golf/
   models/                   model chunks + manifests (the unsplit .onnx files are gitignored)
   tests/                    node:test suites (also run by pytest via tests/test_web.py)
   dev/                      dev-only harness pages (not published)
-assets/<game>/generated/    game art, mounted into the site at assets/snack, assets/flappy
+assets/<game>/generated/    game art, mounted into the site at assets/snack, assets/flappy,
+                            assets/dance, assets/golf (golf mounts assets/golf: course.json + generated/)
 ```
 
 The render loop never waits on the model. Inference runs in a module Web
@@ -117,7 +121,7 @@ Open `http://localhost:8765/` for the landing page and `http://localhost:8765/ar
 for the arcade. The arcade's URL options:
 
 - `?debug=1` shows the skeleton and the timings (or press D).
-- `?game=snack`, `?game=flappy` or `?game=dance` opens that game once the
+- `?game=snack`, `?game=flappy`, `?game=dance` or `?game=golf` opens that game once the
   player has started the camera.
 - `?source=../dev/people-walking.jpg` uses an image or video in place of the
   webcam. Sample media is gitignored; this one is Roboflow's public
@@ -128,7 +132,10 @@ Dev pages:
 - `dev/pipeline.html?model=fp16&ep=webgpu&threshold=0.2` runs the model path
   on a still and reports backend, timing and scores.
 - `dev/snack.html` and `dev/flappy.html` render contact sheets of key moments
-  from scripted poses.
+  from scripted poses. `dev/golf.html` is the browser twin of
+  `tools/golf_contact_sheet.py`: the same 13 moments (with the desktop sheet's
+  wind and overswing curve), laid out like it, for a side-by-side check;
+  `?moment=N` shows one at full size.
 - `dev/tutorial.html?game=snack&t=1` freezes the how-to-play cards at a
   time, and `&screen=entry` or `&screen=results` shows the leaderboard
   screens. `&crop=x0,y0,x1,y1` enlarges part of the screen.
@@ -137,7 +144,7 @@ Dev pages:
 
 Each game has its own page at `games/<slug>/`, and the landing page's PLAY
 buttons go there, not to the arcade. A game page is the arcade page with
-`<body data-game="snack|flappy|dance">`, the same element ids, and its own
+`<body data-game="snack|flappy|dance|golf">`, the same element ids, and its own
 intro card, video and colours. `js/main.js` reads `data-game`, loads only that
 game (its art, its leaderboard) and builds the shell in **single mode**: the
 title screen offers PLAY and ALL GAMES (back to the site), never the other

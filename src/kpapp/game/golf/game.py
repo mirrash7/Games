@@ -64,6 +64,14 @@ ROLL_SPEED = 1.7  # ...and while it rolls (a long roll is dull at 1x)
 PUTT_SPEED = 1.3
 FOLLOW_SECONDS = 0.3  # Lenny's follow-through
 CHASE_BLEND = 0.9  # s from the address view to the chase camera after a shot
+HOLED_PULL = 0.9  # s from the last shot's view to the hole-out view
+# The hole-out view (holed_camera): back and up from the pin, turned so the flag
+# stands right of the result text with Lenny celebrating left of it, and pitched
+# down far enough that the horizon (and the trees beyond the green) sit behind
+# the top HUD row's panels only as sky, not as trunks and canopies.
+HOLED_BACK, HOLED_UP, HOLED_PITCH = 10.0, 6.5, math.radians(21.0)
+HOLED_TURN = math.radians(-14.0)  # look left of the pin: it lands right of centre
+LENNY_BY_PIN = (-6.8, 0.5)  # Lenny's spot from the pin, m: (right of the line, along it)
 MAX_OVER_PAR = 5  # pick up at par + 5
 
 # --- scoring ---
@@ -117,6 +125,16 @@ class Camera:
 
     def copy(self) -> "Camera":
         return Camera(self.x, self.y, self.z, self.yaw, self.pitch)
+
+
+def holed_camera(pin: tuple[float, float], heading: float) -> tuple[Camera, tuple[float, float]]:
+    """The hole-out view along `heading` (the last shot's), and where Lenny celebrates."""
+    px, py = pin
+    sh, ch = math.sin(heading), math.cos(heading)
+    cam = Camera(px - sh * HOLED_BACK, py - ch * HOLED_BACK, HOLED_UP, heading + HOLED_TURN, HOLED_PITCH)
+    right, along = LENNY_BY_PIN
+    spot = (px + ch * right + sh * along, py - sh * right + ch * along)
+    return cam, spot
 
 
 def address_camera(x: float, y: float, heading: float, putt: bool) -> Camera:
@@ -218,6 +236,7 @@ class GolfGame(Game):
         self.practice_t = -1.0
         self.last_pose = None
         self.shots_taken = 0
+        self.celebrate_spot: tuple[float, float] | None = None  # where Lenny cheers after holing out
         self._start_hole(0)
 
     def on_resume(self) -> None:
@@ -435,7 +454,7 @@ class GolfGame(Game):
             if self.phase_t >= self._result_for:
                 self._after_result()
         elif self.phase is Phase.HOLED:
-            u = min(1.0, self.phase_t / 1.2)  # pull back to look at the green
+            u = min(1.0, self.phase_t / HOLED_PULL)  # pull back to look at the green
             self.camera = _lerp_cam(self.holed_from, self.holed_to, u * u * (3 - 2 * u))
             if self.phase_t >= HOLED_MESSAGE + SCORECARD_SECONDS:
                 if self.hole_i + 1 < self.n_holes:
@@ -600,9 +619,8 @@ class GolfGame(Game):
             self.fx.flash = 0.6 if row.strokes < self.hole.par else 0.0
         self.phase, self.phase_t = Phase.HOLED, 0.0
         hd = self.flight.shot.heading if self.flight is not None else self.auto_heading
-        px, py = self.hole.pin
         self.holed_from = self.camera.copy()
-        self.holed_to = Camera(px - math.sin(hd) * 16, py - math.cos(hd) * 16, 6.0, hd, math.radians(13.0))
+        self.holed_to, self.celebrate_spot = holed_camera(self.hole.pin, hd)
 
     # --- effects and Lenny ---
 

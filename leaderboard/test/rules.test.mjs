@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { DANCE, GAMES, gameRules, nameError, scoreError, MIN_ROUND } from "../src/rules.js";
 import { DEFAULT_RULES } from "../../web/js/games/flappy/game.js";
 import { COMBO_MIN } from "../../web/js/games/snack/game.js";
+import { FASTEST_HOLE_SECONDS, POINTS_ACE } from "../../web/js/games/golf/game.js";
 
 test("flappy: the cap allows a pipe every intervalMin seconds", () => {
   assert.ok(GAMES.flappy.perSecond >= 1 / DEFAULT_RULES.intervalMin);
@@ -14,6 +15,17 @@ test("snack: the cap allows full waves of cookies, all eaten in one combo", () =
   const perWave = 5 * 2 + 5 * 2; // five 2-point snacks plus a 2-per-snack combo bonus
   assert.ok(COMBO_MIN <= 5);
   assert.ok(GAMES.snack.perSecond >= perWave / 0.8);
+});
+
+test("golf: the cap allows an ace on every hole at the fastest pace, and 3000 at most", () => {
+  assert.ok(GAMES.golf.perSecond * FASTEST_HOLE_SECONDS >= POINTS_ACE, "an ace as soon as a hole can end");
+  for (const holes of [1, 2, 3]) {
+    assert.equal(scoreError("golf", holes * POINTS_ACE, holes * FASTEST_HOLE_SECONDS), null, `${holes} aces`);
+  }
+  assert.equal(GAMES.golf.max, 3 * POINTS_ACE);
+  assert.ok(scoreError("golf", 3010, 600), "above a perfect round");
+  assert.ok(scoreError("golf", 2000, 10), "two holes can't finish in 10 s");
+  assert.equal(gameRules("golf"), GAMES.golf);
 });
 
 test("names", () => {

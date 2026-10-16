@@ -8,7 +8,7 @@
 import { HandTracker } from "./core/hand.js";
 import { qualifies, nameAllowed, cleanName, NAME_MAX, BOARD_SIZE } from "./leaderboard.js";
 import {
-  ACCENT, CYAN, DIM, PANEL, WHITE, GOOD, WARN, centredText, panel, wrap, dim, text, css, roundRectPath,
+  ACCENT, CYAN, DIM, PANEL, WHITE, GOOD, WARN, centredText, panel, wrap, dim, text, css, roundRectPath, textWidth,
 } from "./core/theme.js";
 
 export const COUNTDOWN_SECONDS = 3.0;
@@ -22,6 +22,12 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const HOT_FILL = [34, 38, 46];
 const IDLE_BORDER = [120, 110, 110];
 const HINT = [165, 150, 150];
+
+/** `scale`, or smaller if the text would be wider than `width` px (shell.py's _fit). */
+export function fitScale(ctx, str, width, scale, opts = {}) {
+  const tw = textWidth(ctx, str, scale, opts);
+  return tw <= width ? scale : (scale * width) / tw;
+}
 
 export class Button {
   constructor(action, label, rect, sub = "", keyHint = "") {
@@ -455,6 +461,8 @@ export class Shell {
         else if (k === "r" || space || enter) this.restart();
         else if (esc) this.toMenu();
         else return false;
+      } else if (this.game?.handleKey?.(key)) {
+        // the game used it (Raccoon Golf: arrows aim and pick the club)
       } else if (space || k === "p") this.pause();
       else if (k === "r") this.restart();
       else if (esc) this.toMenu();
@@ -549,7 +557,9 @@ export class Shell {
     }
     if (this.screen === "menu") {
       const n = Math.max(1, this.menuGames.length);
-      const tw = Math.floor(w * 0.3), th = Math.floor(h * 0.34), gap = Math.floor(w * 0.04);
+      // Three tiles at 30% of the width; more shrink to fit (four: ~22% each).
+      const gap = Math.floor(w * (n <= 3 ? 0.04 : 0.02));
+      const tw = Math.min(Math.floor(w * 0.3), Math.floor((w * 0.95 - (n - 1) * gap) / n)), th = Math.floor(h * 0.34);
       let x = Math.floor((w - (n * tw + (n - 1) * gap)) / 2);
       const y0 = Math.floor(h * 0.36);
       return this.menuGames.map((id, i) => {
@@ -678,13 +688,17 @@ export class Shell {
       const cx = (x0 + x1) / 2;
       if (tiles && /^(start|song):/.test(b.action)) {
         const compact = y1 - y0 < 200; // a grid of song cards
-        centredText(ctx, b.label, cx, y0 + (compact ? 44 : 62), compact ? 0.9 : 1.05, hot ? ACCENT : WHITE);
+        centredText(ctx, b.label, cx, y0 + (compact ? 44 : 62), fitScale(ctx, b.label, x1 - x0 - 28, compact ? 0.9 : 1.05),
+          hot ? ACCENT : WHITE);
         wrap(ctx, b.sub, x1 - x0 - 40, 0.58).slice(0, compact ? 1 : 3).forEach((line, i) =>
           centredText(ctx, line, cx, y0 + (compact ? 74 : 108) + i * 28, 0.58, DIM, { body: true, shadow: false }));
         centredText(ctx, `hover to play  -  or press ${b.keyHint}`, cx, y1 - (compact ? 14 : 24), 0.5, HINT,
           { body: true, shadow: false });
         const [line, colour] = this._tileScoreline(b.action);
-        if (line) centredText(ctx, line, cx, compact ? y0 + 104 : y1 - 62, 0.56, colour, { shadow: false, weight: 700 });
+        if (line) {
+          centredText(ctx, line, cx, compact ? y0 + 104 : y1 - 62, fitScale(ctx, line, x1 - x0 - 20, 0.56, { weight: 700 }),
+            colour, { shadow: false, weight: 700 });
+        }
       } else {
         centredText(ctx, b.label, cx, y0 + 46, 0.85, hot ? ACCENT : WHITE);
         if (b.keyHint) centredText(ctx, b.keyHint, cx, y1 + 24, 0.45, HINT, { body: true, shadow: false });

@@ -1,0 +1,96 @@
+/* Raccoon Golf: a sunny island. The game's own sky and sea, a mown fairway,
+   sand, and a paper-white card with a fairway-green edge. Colours come from
+   assets/golf/generated (manifest ground colours, sky and sea). */
+
+:root {
+  --g-bg: #64abec;
+  --g-surface: rgba(252, 251, 245, .94);
+  --g-surface-line: rgba(14, 34, 30, .1);
+  --g-text: #0f2420;
+  --g-text-2: rgba(15, 36, 32, .78);
+  --g-text-3: rgba(15, 36, 32, .62);
+  --g-line: rgba(15, 36, 32, .13);
+  --g-accent: #3f9d2f;
+  --g-accent-ink: #2c7420;
+  --g-sand: #f2e2b0;
+  --g-sea: #218dc6;
+  --g-fairway: #80cc56;
+  --g-focus: #218dc6;
+  --g-frame: #ffffff;
+  --g-shadow: 0 40px 90px -40px rgba(10, 60, 100, .55);
+}
+
+/* Sky over the sea, a beach, and the fairway's mowing stripes along the bottom. */
+.intro, .failure {
+  background:
+    repeating-linear-gradient(90deg, #80cc56 0 72px, #70be4a 72px 144px) left bottom / 100% 58px no-repeat,
+    linear-gradient(#e9d79f, #f2e2b0) left calc(100% - 58px) / 100% 14px no-repeat,
+    url("../../assets/golf/generated/sea.png") left calc(100% - 72px) / auto 170px repeat-x,
+    url("../../assets/golf/generated/sky.png") center top / cover no-repeat,
+    #64abec;
+}
+.intro::before { background: none; }
+.intro-grid { padding-bottom: 92px; }
+
+/* Glints drifting on the water. */
+.waves {
+  position: absolute; left: 0; right: 0; bottom: 72px; height: 150px; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .55), transparent) 0 0 / 90px 6px repeat;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 90%);
+          mask-image: linear-gradient(to top, #000 0%, transparent 90%);
+  opacity: .5;
+  animation: glint 14s linear infinite;
+}
+@keyframes glint { to { background-position: 180px 12px; } }
+
+.topbar .back, .topbar .arcade-link { color: rgba(15, 36, 32, .8); }
+.topbar .back:hover, .topbar .arcade-link:hover { color: #0f2420; }
+.arcade-link { background: rgba(255, 255, 255, .6); border-color: rgba(15, 36, 32, .14); }
+.crumb { color: rgba(15, 36, 32, .66); }
+
+.title { color: #0f2420; font-weight: 300; }
+.card { border-top: 3px solid var(--g-accent); box-shadow: 0 30px 70px -40px rgba(10, 60, 100, .6); }
+.device { background: rgba(63, 157, 47, .09); }
+.device.cpu { color: #6b4300; background: rgba(240, 160, 60, .14); }
+
+/* Lenny cheers on the card's corner, club up, swaying like after a birdie. */
+.mascot.lenny {
+  width: 74px; right: 18px; top: -96px; transform-origin: 50% 100%;
+  animation: cheer 1.8s ease-in-out infinite alternate;
+  filter: drop-shadow(0 10px 14px rgba(10, 40, 30, .35));
+}
+@keyframes cheer { from { transform: rotate(-4deg); } to { transform: translateY(-6px) rotate(4deg); } }
+@media (max-width: 599px) { .mascot.lenny { width: 58px; top: -76px; } }
+
+/* The course at a glance. */
+.meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.meta li {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  font: 400 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--g-text-2);
+  border: 1px solid var(--g-line); border-radius: 2px; background: rgba(255, 255, 255, .5);
+}
+.meta li b { font-weight: 500; color: var(--g-text); }
+.meta .holes { gap: 0; padding: 0; overflow: hidden; }
+.meta .holes span { padding: 0 10px; height: 100%; display: inline-flex; align-items: center; }
+.meta .holes span + span { border-left: 1px solid var(--g-line); }
+
+/* The how-to row sits on the sky: give it a soft white panel. */
+.howto {
+  background: rgba(255, 255, 255, .64); border: 1px solid rgba(255, 255, 255, .8); border-radius: 6px;
+  padding: 16px 20px 12px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.howto .steps { border-top-color: rgba(15, 36, 32, .12); }
+
+/* A white photo frame round the feed, a ball and a palm beside it. */
+.feed { z-index: 1; box-shadow: var(--g-shadow), 0 0 0 6px rgba(255, 255, 255, .85); }
+.feed video { border-color: transparent; }
+.feed-tag { left: -6px; bottom: calc(100% + 12px); background: linear-gradient(90deg, #2c7420, #3f9d2f); }
+.corners { --c: rgba(15, 36, 32, .55); --o: -16px; }
+.s-ball { width: 30px; right: 8%; top: -46px; --r0: 0deg; --r1: 180deg; --dy: -16px; --dur: 2.4s; filter: drop-shadow(0 8px 6px rgba(0, 0, 0, .3)); }
+.s-palm { width: 120px; left: -78px; bottom: -40px; z-index: 0; --r0: -2deg; --r1: 2deg; --dy: 0px; --dur: 5s; filter: none; transform-origin: 50% 100%; }
+
+@media (max-width: 979px) {
+  .s-palm { display: none; }
+  .s-ball { right: 4%; top: -34px; width: 24px; }
+}

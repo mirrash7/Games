@@ -4,5 +4,6 @@
 import { SnackAttackGame } from "./snack/game.js";
 import { FlappyRaccoonGame } from "./flappy/game.js";
 import { DanceRaccoonGame } from "./dance/game.js";
+import { RaccoonGolfGame } from "./golf/game.js";
 
-export const GAMES = [SnackAttackGame, FlappyRaccoonGame, DanceRaccoonGame];
+export const GAMES = [SnackAttackGame, FlappyRaccoonGame, DanceRaccoonGame, RaccoonGolfGame];

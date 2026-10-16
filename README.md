@@ -11,8 +11,8 @@ into game control input.
 **https://mirrash7.github.io/Games/**: no install. The same model runs inside
 the browser (onnxruntime-web), on the GPU via WebGPU when available (~20-30 ms a
 frame on an M5 Max, as fast as this desktop app) and on the CPU otherwise
-(~150 ms, ~6 pose updates a second: Snack Attack is playable, Flappy Raccoon
-is not). Video never leaves the computer. Each game has a how-to-play screen and its
+(~150 ms, ~6 pose updates a second: Snack Attack and Raccoon Golf are playable,
+Flappy Raccoon is not). Video never leaves the computer. Each game has a how-to-play screen and its
 own leaderboard ([docs/LEADERBOARD.md](docs/LEADERBOARD.md)). How it's built,
 measured and deployed: [docs/WEB_HOSTING.md](docs/WEB_HOSTING.md). The rest of this README
 covers the desktop Python app, which is the reference implementation.
@@ -441,7 +441,9 @@ visor, with your arms as the club. Stand back so your hands show at waist height
 The HUD scores golf (E, +1, -2); the leaderboard ranks points per hole: hole in one
 1000, albatross 800, eagle 500, birdie 300, par 200, bogey 100, double 50, worse 10.
 Art from `tools/generate_golf_assets.py`; the course is data in `assets/golf/course.json`;
-`tools/golf_contact_sheet.py` renders the key moments for review.
+`tools/golf_contact_sheet.py` renders the key moments for review. On the website it is
+`games/raccoon-golf/` (the port in `web/js/games/golf/`, checked number for number against
+this code by `tools/make_golf_parity_fixture.py`).
 
 ### Hole in the Wall (off the menu)
 

@@ -15,6 +15,7 @@ const MOUNTS = {
   "assets/snack/": "assets/fruitninja/generated/",
   "assets/flappy/": "assets/flappy/generated/",
   "assets/dance/": "assets/dance/",
+  "assets/golf/": "assets/golf/",
 };
 /** A site-relative path -> the file that serves it, locally and on Pages. */
 function siteFile(path) {
@@ -28,6 +29,7 @@ const PAGES = [
   { slug: "snack-attack", game: "snack", title: "Snack Attack" },
   { slug: "flappy-raccoon", game: "flappy", title: "Flappy Raccoon" },
   { slug: "raccoon-dance", game: "dance", title: "Raccoon Dance" },
+  { slug: "raccoon-golf", game: "golf", title: "Raccoon Golf" },
 ];
 
 // Element ids js/main.js reads (plus the progress bar's parts).

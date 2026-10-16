@@ -494,6 +494,24 @@ def test_projection_survives_the_camera_inside_polygons():
     assert img[: int(view.horizon) - 2, :].max() == 0
 
 
+def test_hole_out_view_frames_the_flag_beside_the_text_and_lenny_cheering():
+    """After holing out the camera pulls back and turns so the flag stands right
+    of the result text (centred at y ~288) and Lenny cheers left of it, both on
+    dry land, below the text and clear of the top HUD row and the map. The old
+    close-up put the pole straight through "BIRDIE!"."""
+    from kpapp.game.golf.game import holed_camera
+
+    for hole in COURSE.holes:
+        for hd in (-0.3, 0.0, 0.25, math.atan2(hole.pin[0] - hole.path[-2][0], hole.pin[1] - hole.path[-2][1])):
+            cam, spot = holed_camera(hole.pin, hd)
+            view = R.View(cam, W, H, 1000.0)
+            px, py, _ = view.point(*hole.pin)
+            lx, ly, _ = view.point(*spot)
+            assert 760 <= px <= 1000 and 480 <= py <= 680, (hole.number, hd, px, py)
+            assert 300 <= lx <= 560 and 420 <= ly <= 640, (hole.number, hd, lx, ly)
+            assert hole.lie_at(*spot) not in ("water", "ob")
+
+
 def test_tutorial_cards_draw_only_inside_their_rects():
     from kpapp.game.golf.tutorial import GOLF_TUTORIAL
 

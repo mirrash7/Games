@@ -147,10 +147,10 @@ def build_sheet(seed: int = 3) -> tuple[list[np.ndarray], list[str]]:
     g._hit(SwingEvent(t=0, power=best, quality=1.0, side=1, speed=2, practice=False))
     while g.phase is Phase.FLIGHT:
         run(g, grip(None, None), 0.1)
-    run(g, grip(None, None), 0.5)
+    run(g, grip(None, None), 1.0)
     shots.append(snap(g, frame))
     labels.append(f"8. Hole out: {g.message.text if g.message else '-'}")
-    run(g, grip(None, None), 2.2)
+    run(g, grip(None, None), 1.7)
     shots.append(snap(g, frame))
     labels.append("9. Scorecard")
 

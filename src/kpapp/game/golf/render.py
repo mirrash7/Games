@@ -36,7 +36,7 @@ from ...gfx import alpha_composite
 from ...overlay import outlined_text
 from . import physics as P
 from .course import YARDS_PER_M, Hole
-from .game import CardRow, GolfGame, to_par_text
+from .game import HOLED_PULL, CardRow, GolfGame, to_par_text
 
 NEAR = 0.4  # m: the near clipping plane
 SHIFT = 2  # sub-pixel bits for polygon fills
@@ -52,6 +52,7 @@ THETA_TOP = 2.75  # radians of arm swing at a full backswing (swing angle 1)
 THETA_FINISH = 2.6  # radians of follow-through (swing angle -1)
 ARC_TOP = 118  # px: the dotted arc stops short of the top HUD row
 LOW_RES = 2  # moving-camera frames draw the world at 1/LOW_RES and scale it up
+LENNY_FOOT = (133.0, 292.0)  # px in lenny.png between his shoes: where he stands when not addressing
 
 PIP = (944, 16, 1264, 196)  # x0, y0, x1, y1: the live camera window (a quarter frame)
 MAP = (1146, 208, 1264, 630)  # the course overview
@@ -635,7 +636,7 @@ class GolfRenderer:
         cam = game.camera
         view = View(cam, W, H, self.f, ox, oy)
         moving = game.phase.value in ("intro", "flight") or shake > 0 or (
-            game.phase.value == "holed" and game.phase_t < 1.3)
+            game.phase.value == "holed" and game.phase_t < HOLED_PULL + 0.1)
         key = (game.hole_i, round(cam.x, 3), round(cam.y, 3), round(cam.z, 3), round(cam.yaw, 5),
                round(cam.pitch, 5))
         if not moving and key == self._cache_key and self._cache_img is not None:
@@ -666,6 +667,8 @@ class GolfRenderer:
         self._draw_particles(frame, view, game)
         if phase in ("aim", "flight", "result", "intro"):
             self._draw_lenny(frame, view, game)
+        elif phase == "holed":
+            self._draw_celebration(frame, view, game)
         self._draw_ball(frame, view, game)
         if game.fx.flash > 0:
             f = min(1.0, game.fx.flash) * 0.6
@@ -865,6 +868,16 @@ class GolfRenderer:
             hinge = max(theta, -1.4) * 0.6
         c = a - hinge if not putt else a
         head = (grip[0] + club * math.sin(c), grip[1] + club * math.cos(c))
+        big = 1.35 if (game.club.key in ("1W", "3W") if game.phase.value == "aim" else False) else 1.0
+        self._draw_arms(img, (ox, oy), k, s, grip, head, c, putt, big)
+
+    def _draw_arms(self, img, origin, k: float, s: float, grip, head, c: float, putt: bool, big: float) -> None:
+        """Lenny's club (shaft from the grip to `head`, at angle `c` from straight down),
+        both arms from his shoulders to the grip, and the glove. `origin` and `k` place
+        the body sprite (its top-left and scale), `s` is his size."""
+        spec = self.lenny_spec
+        sb, sf = spec["shoulder_back"], spec["shoulder_front"]
+        ox, oy = origin
         col = {k_: tuple(int(v) for v in vv) for k_, vv in spec["colours"].items()}
         ink = col["ink"]
         # Club first (behind the hands), then both arms to the grip, then the glove.
@@ -878,7 +891,6 @@ class GolfRenderer:
             _capsule(img, p0, p1, max(1.5, 5 * s), ink)
             _capsule(img, p0, p1, max(1.0, 3.4 * s), col["head"])
         else:
-            big = 1.35 if (game.club.key in ("1W", "3W") if game.phase.value == "aim" else False) else 1.0
             cv2.ellipse(img, (int(head[0] * ONE), int(head[1] * ONE)),
                         (max(ONE, int(11 * s * big * ONE)), max(ONE, int(6 * s * big * ONE))),
                         math.degrees(math.atan2(hd[1], hd[0])) + 90, 0, 360, ink, -1, cv2.LINE_AA, SHIFT)
@@ -896,6 +908,45 @@ class GolfRenderer:
         cv2.circle(img, (int(grip[0] * ONE), int(grip[1] * ONE)), int((10 * s + 2) * ONE), ink, -1, cv2.LINE_AA, SHIFT)
         cv2.circle(img, (int(grip[0] * ONE), int(grip[1] * ONE)), int(10 * s * ONE), col["glove"], -1, cv2.LINE_AA,
                    SHIFT)
+
+    def _draw_celebration(self, img, view: View, game: GolfGame) -> None:
+        """After holing out: Lenny by the green, hopping, club raised over his head."""
+        spot = game.celebrate_spot
+        if spot is None:
+            return
+        pt = view.point(spot[0], spot[1], 0.0)
+        if pt is None or pt[2] < 2.0:
+            return
+        fx, fy, depth = pt
+        s = self.lenny_scale(depth)
+        if s < 0.08:
+            return
+        t = game.phase_t
+        hop = abs(math.sin(t * 7.0)) * 26.0 * s * max(0.0, 1.0 - t / 2.4)  # three hops, dying away
+        spr = self.lenny.get(int(round(self.art.lenny.shape[0] * s)))
+        k = spr.shape[0] / self.art.lenny.shape[0]
+        ox, oy = fx - LENNY_FOOT[0] * k, fy - LENNY_FOOT[1] * k - hop
+        # A shadow that shrinks as he leaves the ground.
+        rx = max(2, int(48 * k * (1.0 - min(0.4, hop / max(1.0, 80 * k)))))
+        cv2.ellipse(img, (int(fx * ONE), int(fy * ONE)), (rx * ONE, max(1, int(rx * 0.26)) * ONE), 0, 0, 360,
+           (40, 90, 46), -1, cv2.LINE_AA, SHIFT)
+        alpha_composite(img, spr, int(round(ox)), int(round(oy)))
+        self.draw_cheer(img, (ox, oy), k, s, math.sin(t * 7.0) * 0.12)  # the arms pump with the hops
+
+    def draw_cheer(self, img, origin, k: float, s: float, pump: float = 0.0) -> None:
+        """Lenny's cheering arms and club, for his body sprite placed at `origin` (top-left,
+        scale k, size s): arms straight (longer than the bent address arm), up and out in
+        front of his face rather than across it, the club held high, nearly upright."""
+        spec = self.lenny_spec
+        ox, oy = origin
+        sb, sf = spec["shoulder_back"], spec["shoulder_front"]
+        mid = (ox + (sb[0] + sf[0]) / 2 * k, oy + (sb[1] + sf[1]) / 2 * k)
+        a = math.pi - 0.85 + pump
+        arm, club = spec["arm"] * s * 1.3, spec["club"] * s
+        grip = (mid[0] + arm * math.sin(a), mid[1] + arm * math.cos(a))
+        c = math.pi - 0.1 - pump * 1.5
+        head = (grip[0] + club * math.sin(c), grip[1] + club * math.cos(c))
+        self._draw_arms(img, (ox, oy), k, s, grip, head, c, False, 1.0)
 
     # --- HUD ---
 

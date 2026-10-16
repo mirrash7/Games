@@ -55,6 +55,12 @@ subtitle then says "ON THIS DEVICE" instead of "WORLDWIDE".
   The score must be one the game's rules could produce in that time:
   - Snack Attack: at most 25 points a second, plus 20.
   - Flappy Raccoon: at most one pipe every 1.5 s, plus 3.
+  - Raccoon Dance (`dance-<song>`, one board per song): at most 400 points a
+    second, 10000 in all.
+  - Raccoon Golf (`golf`): points come only when a hole is finished, at most
+    1000 (a hole in one), and no hole can end sooner than 8.7 s
+    (`FASTEST_HOLE_SECONDS`: the intro, an address hold, a swing and an ace's
+    flight), so at most 125 points a second with no slack, 3000 in all.
 
   These caps come from the games' own tuning, and `test/rules.test.mjs` fails
   if a tuning change makes them too tight. Rounds shorter than 3 s, or older

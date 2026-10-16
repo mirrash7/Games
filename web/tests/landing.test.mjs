@@ -24,6 +24,7 @@ const MOUNTS = {
   "assets/snack/": "assets/fruitninja/generated/",
   "assets/flappy/": "assets/flappy/generated/",
   "assets/dance/": "assets/dance/",
+  "assets/golf/": "assets/golf/",
 };
 /** A site-relative path -> the file that serves it, locally and on Pages. */
 function siteFile(path) {
@@ -51,10 +52,10 @@ test("experience and category ids are unique, and every category exists", () => 
   for (const e of CATALOG.experiences) assert.ok(cat.includes(e.category), `${e.id}: ${e.category}`);
 });
 
-test("the three arcade games are live, in Body-Controlled Games", () => {
+test("the four arcade games are live, in Body-Controlled Games", () => {
   const live = CATALOG.experiences.filter((e) => e.status === "live");
   assert.deepEqual(live.map((e) => e.href).sort(),
-    ["games/flappy-raccoon/", "games/raccoon-dance/", "games/snack-attack/"]);
+    ["games/flappy-raccoon/", "games/raccoon-dance/", "games/raccoon-golf/", "games/snack-attack/"]);
   for (const e of live) assert.equal(e.category, "body-games");
   const dance = live.find((e) => e.href.includes("dance"));
   assert.match(dance.summary, /EASY, NORMAL or HARD/);
@@ -160,7 +161,7 @@ test("resolveCategory accepts only categories that have experiences", () => {
 });
 
 test("filtering: one category, or all with live experiences first", () => {
-  assert.deepEqual(filterExperiences(CATALOG, "body-games").map((e) => e.id), ["snack-attack", "flappy-raccoon", "raccoon-dance"]);
+  assert.deepEqual(filterExperiences(CATALOG, "body-games").map((e) => e.id), ["snack-attack", "flappy-raccoon", "raccoon-dance", "raccoon-golf"]);
   const all = filterExperiences(CATALOG, null);
   assert.equal(all.length, CATALOG.experiences.length);
   const firstSoon = all.findIndex((e) => e.status === "soon");
@@ -175,11 +176,11 @@ test("filtering: one category, or all with live experiences first", () => {
 test("counts and groups follow the catalog", () => {
   const counts = countByCategory(CATALOG);
   assert.equal(counts.total, CATALOG.experiences.length);
-  assert.equal(counts.live, 3);
-  assert.equal(counts.byCategory["body-games"], 3);
+  assert.equal(counts.live, 4);
+  assert.equal(counts.byCategory["body-games"], 4);
   const menu = menuCategories(CATALOG);
   assert.deepEqual(menu.map((c) => c.id), CATALOG.categories.map((c) => c.id));
-  assert.equal(menu[0].live, 3);
+  assert.equal(menu[0].live, 4);
   assert.deepEqual(groupsFor(mini(), "b").map((g) => g.category.id), ["b"]);
   assert.equal(groupsFor(CATALOG, null).length, menu.length);
 });

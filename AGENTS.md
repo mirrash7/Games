@@ -346,9 +346,11 @@ re-run the model on offline. Analyse these before tuning anything.
   `SwingDetector` (swing.py) reads `step_pose`: wrists together low and still = address,
   backswing height = power, the grip's swept path crossing the midline fast = impact.
   Bots with 150 ms lag play it near par (tests/test_golf.py). Review the look with
-  `uv run python tools/golf_contact_sheet.py`. Desktop only so far: the browser port and
-  its `leaderboard/src/rules.js` entry are still to do (tests/test_leaderboard.py lists it
-  as pending). Not yet tested with a live player.
+  `uv run python tools/golf_contact_sheet.py`; after holing out the camera pulls back
+  beside the flag and Lenny cheers (`holed_camera`, `GolfRenderer.draw_cheer`). In both
+  builds: the browser port is `web/js/games/golf/`, checked against the Python by
+  `tools/make_golf_parity_fixture.py` (§11); board `golf`, max 3000. Not yet tested with
+  a live player.
 - **Off the menu:** Hole in the Wall (`--game holeinwall`), Catch (`--game catch`),
   Template (`--game template`).
 - Ideas the platform already supports: dodge games (`steer` / torso lean),
@@ -357,7 +359,7 @@ re-run the model on offline. Analyse these before tuning anything.
   (`--max-people 2`; you'd need identity tracking, because pose order is by
   score and can swap between frames).
 - **Website:** the browser build in `web/` (GitHub Pages) runs the same model
-  with onnxruntime-web and a JavaScript port of the runtime, shell and both
+  with onnxruntime-web and a JavaScript port of the runtime, shell and all four
   games. See §11 and `docs/WEB_HOSTING.md`.
 - Known limits: one player is the tuned case. Latency is ~100 ms+. The preview
   keypoint model is the only checkpoint available (no smaller variant).
@@ -376,8 +378,19 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
   `web/js/core/decode.js` is a tested port of rf-detr's PostProcess.
 - **The Python code is the reference; the JS is a port.** Module for module:
   `core/hand.js`, `core/controls.js`, `core/extrapolate.js`, `shell.js`,
-  `games/snack/*` (fruitninja), `games/flappy/*` (incl. `gesture.js`). A behaviour
-  change goes into both, with tests in `tests/` and `web/tests/`. Colours in JS
+  `games/snack/*` (fruitninja), `games/flappy/*` (incl. `gesture.js`), `games/dance/*`,
+  `games/golf/*` (swing, physics, course, game, render, art, tutorial). A behaviour
+  change goes into both, with tests in `tests/` and `web/tests/`.
+- **Parity fixtures** pin the ports that must agree to the number: the Python writes
+  what it computes on fixed inputs, the JS replays it. Dance:
+  `tools/make_dance_parity_fixture.py`; golf: `tools/make_golf_parity_fixture.py`
+  (swing streams frame by frame, ~100 physics shots, lies, aim, whole scripted holes;
+  `tests/test_golf_parity.py` fails when it is stale). Python's `random.Random` can't be
+  reproduced in JS, so fixtures carry the random draws (wind, curve) explicitly. Keypoints
+  are float32 on both sides: where numpy sums float32s, the JS uses `Math.fround`; where
+  the Python averages with `sum()` (Neumaier-compensated in 3.12), the JS uses `pySum`.
+- **Game keys:** while playing, the shell passes keys to the game's `handleKey(key)`
+  (`handle_key` in Python) before its own; golf uses the arrows (aim and club). Colours in JS
   are **RGB** (`core/theme.js`), not OpenCV's BGR: convert, or purple turns orange.
 - **A new browser game:** a class extending `games/base.js` (`static id/title/blurb/tip`,
   `static async preload()` for art, `update(controls, dt)`, `render(ctx, frame)`,

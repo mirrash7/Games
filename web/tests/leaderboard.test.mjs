@@ -382,3 +382,65 @@ test("without a home link the title screen just offers PLAY", () => {
   const sh = new Shell({ games: [Songs], selected: "songs", single: true });
   assert.deepEqual(sh._layout().map((b) => b.action), ["start:songs"]);
 });
+
+// --- the welcome screen and game keys ---
+
+const named = (id) => class extends Scored {
+  static id = id;
+  static title = id.toUpperCase();
+};
+
+test("the welcome screen fits four games: tiles inside the frame, apart, in order", () => {
+  for (const n of [1, 2, 3, 4, 5]) {
+    const sh = new Shell({ games: Array.from({ length: n }, (_, i) => named(`g${i}`)) });
+    const tiles = sh._layout().map((b) => b.rect);
+    assert.equal(tiles.length, n);
+    assert.ok(tiles[0][0] >= 0 && tiles[n - 1][2] <= 1280, `n=${n}`);
+    for (let i = 1; i < n; i++) assert.ok(tiles[i - 1][2] < tiles[i][0], `n=${n}: tiles ${i - 1} and ${i} overlap`);
+    if (n <= 2) assert.equal(tiles[0][2] - tiles[0][0], Math.floor(1280 * 0.3), "one or two keep their size");
+  }
+});
+
+test("a long title shrinks to fit its tile", async () => {
+  const { fitScale } = await import("../js/shell.js");
+  const ctx = { save() {}, restore() {}, measureText: (s) => ({ width: s.length * 30 }) };
+  assert.equal(fitScale(ctx, "SHORT", 400, 1.0), 1.0);
+  assert.ok(Math.abs(fitScale(ctx, "A MUCH LONGER TITLE", 285, 1.0) - 0.5) < 1e-9);
+});
+
+test("while playing, keys go to the game's handleKey first; the rest work as before", () => {
+  const seen = [];
+  class Keys extends Scored {
+    static id = "keys";
+    handleKey(key) {
+      seen.push(key);
+      return key.startsWith("Arrow");
+    }
+  }
+  const sh = new Shell({ games: [Keys] });
+  sh.handleKey("1");
+  if (sh.screen === "tutorial") sh.handleKey("Enter");
+  step(sh, 3.1);
+  assert.equal(sh.screen, "playing");
+  assert.equal(sh.handleKey("ArrowLeft"), true);
+  assert.equal(sh.screen, "playing");
+  sh.handleKey(" ");
+  assert.equal(sh.screen, "paused", "space still pauses");
+  assert.deepEqual(seen, ["ArrowLeft", " "]);
+  sh.handleKey("ArrowRight");
+  assert.equal(seen.length, 2, "not while paused");
+});
+
+test("single-game mode still works with a game that takes keys", () => {
+  class Keys extends Scored {
+    static id = "keys";
+    handleKey() { return true; }
+  }
+  const sh = new Shell({ games: [Keys], selected: "keys", single: true });
+  assert.deepEqual(sh._layout().map((b) => b.action), ["start:keys"]);
+  sh.handleKey("Enter");
+  if (sh.screen === "tutorial") sh.handleKey("Enter");
+  step(sh, 3.1);
+  assert.equal(sh.screen, "playing");
+  assert.ok(sh.handleKey("ArrowUp"));
+});

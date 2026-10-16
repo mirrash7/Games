@@ -22,6 +22,7 @@ MOUNTS = {
     "assets/snack": REPO / "assets" / "fruitninja" / "generated",
     "assets/flappy": REPO / "assets" / "flappy" / "generated",
     "assets/dance": REPO / "assets" / "dance",
+    "assets/golf": REPO / "assets" / "golf",  # course.json and generated/
 }
 
 # Development-only files that should not be published.

@@ -1,17 +1,19 @@
 """Render the landing page's looping showcase clips from the real games.
 
-    uv run python tools/render_showcase.py                 # all three clips + the hero montage
-    uv run python tools/render_showcase.py --only snack    # one clip (snack | flappy | dance | hero)
+    uv run python tools/render_showcase.py                 # all four clips + the hero montage
+    uv run python tools/render_showcase.py --only snack    # one clip (snack | flappy | dance | golf | hero)
     uv run python tools/render_showcase.py --sheet out.png # also write a contact sheet (6 frames a clip)
 
-Writes, for each live game (`snack`, `flappy`, `dance`), into `web/media/`:
+Writes, for each live game (`snack`, `flappy`, `dance`, `golf`), into `web/media/`:
 
 - `<id>.mp4`  H.264 (libx264, yuv420p, crf 28, +faststart), 960x540, 30 fps, no audio
 - `<id>.webm` VP9 (libvpx-vp9, crf 38), same frames
 - `<id>.jpg`  the poster: the clip's most striking frame, 1280x720, at most 120 KB
 
-and `hero.mp4/.webm/.jpg`: a ~10 s montage cutting between the three games with
-quick crossfades, for the landing hero when WebGL isn't available.
+and `hero.mp4/.webm/.jpg`: a ~10 s montage cutting between the first three games
+(HERO_IDS) with quick crossfades, for the landing hero when WebGL isn't available.
+For Raccoon Golf it also writes `golf_lenny.png`, Lenny cheering with his club
+up (the game's own drawing, matted onto transparency), for its page.
 
 **Real games, no people.** Every frame is the real Python game (`update` at
 60 Hz, `render` at 1280x720, the shipped art) with no shell around it, so there
@@ -35,6 +37,9 @@ stepped, lagged input:
   arm downstrokes read by the real `FlapDetector`.
 - Raccoon Dance: a near-perfect dancer (the coach's pose, 0.1 s late, as in
   tests/test_dance_game.py) on Neon Nights, NORMAL, around the gold move.
+- Raccoon Golf: a golfer on hole 2 addresses the ball, swings back and
+  through with both arms (read by the real `SwingDetector`), at the power
+  that its plan in the game's own simulator says lands on the green.
 
 **Deterministic.** Games are seeded; the few unseeded `np.random.default_rng()`
 calls in the games (sparks, feathers) are routed to a seeded stream while a
@@ -78,7 +83,8 @@ OUT_SIZE = (960, 540)
 LOOP_FADE = 0.4  # s: the end of a clip crossfades into what precedes its start
 POSTER_MAX = 120 * 1024
 CLIP_MAX = 1_500_000
-IDS = ("snack", "flappy", "dance")
+IDS = ("snack", "flappy", "dance", "golf")
+HERO_IDS = ("snack", "flappy", "dance")  # the hero montage cuts between these
 
 # --- the look of the synthetic player (BGR) ---------------------------------
 CV_PURPLE = (235, 51, 128)  # #8033EB: the detection box and its tag
@@ -900,7 +906,105 @@ class DanceShowcase(Showcase):
         self.ticks += 1
 
 
-SHOWCASES = {"snack": SnackShowcase, "flappy": FlappyShowcase, "dance": DanceShowcase}
+# --- Raccoon Golf ---
+
+class GolfShowcase(Showcase):
+    """Raccoon Golf, hole 2 (Coral Carry: an island green over the water). The
+    bot addresses the ball, swings back and through with both arms (a real
+    swing for the real SwingDetector, read from `step_pose`), and the ball
+    flies onto the green. The power comes from planning in the game's own
+    simulator, wind and all, as the fairness bot in tests/test_golf.py does."""
+
+    id = "golf"
+    seed = 3
+    ADDRESS, BACK, PAUSE, DOWN = 0.8, 0.7, 0.15, 0.45  # s: the swing's phases
+    timing = Timing(start=3.3, seconds=7.5, poster=1.6, hero=0.6)
+
+    def __init__(self) -> None:
+        super().__init__()
+        from kpapp.game.golf.game import GolfGame
+
+        self.game = GolfGame((W, H), seed=self.seed)
+        self.game._start_hole(1)
+        self.body = Body(shoulder_px=160.0, shoulder_y=250.0)
+        self.pipe = PosePipeline(seed=self.seed)
+        self.cam = SyntheticCamera(scale=3.2, seed=self.seed, glow=1.2)
+        self.t0: float | None = None  # when the bot starts its address
+        self.top = 0.0
+
+    def _plan(self) -> float:
+        """The power that lands nearest the pin (dry), from the game's simulator."""
+        from kpapp.game.golf import physics as P
+
+        g = self.game
+        best = None
+        for k in range(30, 101):
+            f = P.simulate(g.hole, g.ball, P.Shot(g.club, k / 100, g.heading, g.lie, wind=g.wind))
+            cost = (-1.0 if f.state == "holed" else g.hole.distance_to_pin(f.x, f.y)) + (
+                1e4 if f.state in ("water", "ob") else 0.0)
+            if best is None or cost < best[0]:
+                best = (cost, k / 100)
+        return best[1]
+
+    def grip(self, t: float) -> tuple[float, float, float] | None:
+        """The bot's grip (u, h) in shoulder widths from the shoulder midpoint,
+        and the gap between its wrists; None = hands apart at the sides."""
+        if self.t0 is None or t < self.t0 - 0.8:
+            return None
+        u = t - self.t0
+        r = 1.35
+        arc = lambda a: (r * math.sin(a), -r * math.cos(a))  # noqa: E731
+        top = self.top
+        if u < self.ADDRESS:
+            return (*arc(0.0), 0.15)
+        u -= self.ADDRESS
+        if u < self.BACK:
+            return (*arc(top * _ease(u / self.BACK)), 0.15)
+        u -= self.BACK
+        if u < self.PAUSE:
+            return (*arc(top), 0.15)
+        u -= self.PAUSE
+        k = min(1.0, u / self.DOWN)
+        return (*arc(top - 1.9 * top * k * k * (3 - 2 * k)), 0.15)  # through to a high finish, held
+
+    def _pose(self) -> Pose:
+        b, sw = self.body, self.body.sw
+        fr = b.frame(W / 2)
+        mid = (fr["r_shoulder"] + fr["l_shoulder"]) / 2
+        g = self.grip(self.t)
+        arms = []
+        for side in (1, -1):  # screen-right, screen-left
+            sh = fr["r_shoulder"] if side > 0 else fr["l_shoulder"]
+            if g is None:
+                target = sh + np.array([side * 0.25 * sw, 1.4 * sw])  # arms hanging at the sides
+            else:
+                u, h, gap = g
+                target = mid + np.array([u * sw + side * gap * sw / 2, -h * sw])
+            arms.append(two_link(sh, target, 0.75 * sw, 0.75 * sw, bend=-side))
+        return b.pose(fr, arms[0], arms[1])
+
+    def step(self) -> None:
+        from kpapp.game.golf.game import Phase
+
+        dt = 1.0 / SIM_HZ
+        g = self.game
+        if self.t0 is None and g.phase is Phase.INTRO and g.phase_t > 2.4:
+            from kpapp.game.golf.swing import FULL_H
+
+            # Address from here; the swing starts 0.2 s into aiming. The top of
+            # the backswing is the height that reads as the planned power.
+            self.t0 = self.t + (3.0 - g.phase_t) + 0.2
+            power = min(0.97, self._plan())
+            h = -1.35 + power * (FULL_H + 1.35)
+            self.top = math.acos(max(-1.0, min(1.0, -h / 1.35)))
+        self.controls = self.pipe.step(self.t, self._pose)
+        with self.numpy.active():
+            g.update(self.controls, dt)
+        self.t += dt
+        self.ticks += 1
+
+
+SHOWCASES = {"snack": SnackShowcase, "flappy": FlappyShowcase, "dance": DanceShowcase, "golf": GolfShowcase}
 
 
 def make(clip_id: str) -> Showcase:
@@ -1018,7 +1122,36 @@ def render_clip(clip_id: str, write: bool = True, sheet: list | None = None):
     if enc is not None:
         enc.close()
         write_poster(poster, MEDIA / f"{clip_id}.jpg")
+        if clip_id == "golf":
+            golf_mascot(MEDIA / "golf_lenny.png")
     return hero, poster
+
+
+def golf_mascot(path: Path) -> None:
+    """Lenny cheering, club raised: the game's own drawing (body sprite plus
+    GolfRenderer.draw_cheer) on black and on white, matted to RGBA from the
+    difference. Deterministic: no randomness, no time."""
+    from kpapp.game.golf.art import load_art
+    from kpapp.game.golf.render import LENNY_FOOT, GolfRenderer
+    from kpapp.gfx import alpha_composite
+
+    art = load_art()
+    r = GolfRenderer((W, H), art)
+    w, h = 300, 430
+    ox, oy = w / 2 - LENNY_FOOT[0], h - 8 - LENNY_FOOT[1]
+    shots = []
+    for bg in (0, 255):
+        img = np.full((h, w, 3), bg, np.uint8)
+        alpha_composite(img, art.lenny, int(round(ox)), int(round(oy)))
+        r.draw_cheer(img, (ox, oy), 1.0, 1.0)
+        shots.append(img.astype(np.float32))
+    black, white = shots
+    alpha = np.clip(1.0 - (white - black).mean(axis=2) / 255.0, 0.0, 1.0)
+    colour = np.where(alpha[..., None] > 1e-3, black / np.maximum(alpha[..., None], 1e-3), 0.0)
+    out = np.dstack([np.clip(colour, 0, 255), alpha * 255]).round().astype(np.uint8)
+    ys, xs = np.nonzero(out[..., 3] > 0)
+    out = out[max(0, ys.min() - 4):ys.max() + 5, max(0, xs.min() - 4):xs.max() + 5]
+    cv2.imwrite(str(path), out, [cv2.IMWRITE_PNG_COMPRESSION, 9])
 
 
 def render_hero(segments: list[list[np.ndarray]], posters: list[np.ndarray]) -> None:
@@ -1060,19 +1193,21 @@ def contact_sheet(rows: list, path: Path) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--only", choices=(*IDS, "hero"), help="one clip (hero renders all three, writes only the montage)")
+    ap.add_argument("--only", choices=(*IDS, "hero"),
+                    help="one clip (hero renders the montage's three games, writes only the montage)")
     ap.add_argument("--sheet", type=Path, help="also write a contact sheet PNG here")
     args = ap.parse_args(argv)
     MEDIA.mkdir(parents=True, exist_ok=True)
-    ids = IDS if args.only in (None, "hero") else (args.only,)
+    ids = IDS if args.only is None else HERO_IDS if args.only == "hero" else (args.only,)
     sheet: list | None = [] if args.sheet else None
     segments, posters = [], []
     for cid in ids:
         print(f"[showcase] {cid} ...", flush=True)
         hero, poster = render_clip(cid, write=args.only != "hero", sheet=sheet)
-        segments.append(hero)
-        posters.append(poster)
-    if len(ids) == len(IDS):
+        if cid in HERO_IDS:
+            segments.append(hero)
+            posters.append(poster)
+    if len(segments) == len(HERO_IDS):
         print("[showcase] hero ...", flush=True)
         render_hero(segments, posters)
     for p in sorted(MEDIA.glob("*")):

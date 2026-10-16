@@ -345,11 +345,7 @@ def test_desktop_games_share_the_browser_and_server_leaderboard_ids():
     web = set(re.findall(r'static id = "(\w+)"', "".join(
         p.read_text() for p in (root / "web/js/games").glob("*/game.js"))))
     sh = Shell((W, H), REGISTRY)
-    # Desktop games whose browser port (and server rule) is still to come. The
-    # port adds the game to web/js/games and leaderboard/src/rules.js and takes
-    # it out of here; until then its scores stay on this computer.
-    pending_port = {"golf"}
-    fixed = {sh._board_name(n) for n in sh.menu_games if not sh.variants(n)} - pending_port
+    fixed = {sh._board_name(n) for n in sh.menu_games if not sh.variants(n)}
     per_song = [k for n in sh.menu_games if sh.variants(n) for k in sh.board_keys() if k.startswith(sh._board_name(n))]
     assert fixed == server_fixed, (fixed, server_fixed)
     assert fixed <= web, (fixed, web)
