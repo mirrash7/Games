@@ -16,7 +16,7 @@ import { stubArt } from "../js/games/dance/art.js";
 import {
   CARD_BIG, CARD_SMALL, COACH_ROI, COACH_X, CoachPainter, DanceRenderer, FOOTER_Y, GROW_BEATS, HUD_BADGE_ORG, INTRO_C,
   LABEL_Y, LANE_CLIP_BOTTOM, LANE_RECT, LANE_Y, PAUSE_RECT, PIP_RECT, PX_PER_BEAT, RESULTS_RECT, RING, SUPERSEDE_FADE,
-  TARGET_X, cardWidth, endingStart, kick, ratingKey,
+  TARGET_X, PictogramCards, cardWidth, endingStart, glyphLabel, kick, ratingKey,
 } from "../js/games/dance/render.js";
 import { DANCE_TUTORIAL } from "../js/games/dance/tutorial.js";
 import { keypointsFor } from "../js/games/dance/pose.js";
@@ -373,4 +373,26 @@ test("nothing of ours enters the PAUSE button or the footer; the intro stays cle
     }
   }
   assert.ok(lane > 50, "the lane draws");
+});
+
+test("one-letter moves get a letter badge on their card (render.glyph_label)", () => {
+  assert.equal(glyphLabel("Y"), "Y");
+  assert.equal(glyphLabel(" a "), "A");
+  assert.equal(glyphLabel("Grapevine"), null);
+  assert.equal(glyphLabel(null), null);
+  const log = [];
+  const cards = new PictogramCards(stubArt(), { makeCanvas: fakeCanvasFactory(log) });
+  const pose = { la: [140, 140], ra: [140, 140] };
+  const plain = cards.get(pose, false, CARD_BIG);
+  assert.ok(!log.some((e) => e[0] === "fillText"), "no letter without a glyph");
+  const lettered = cards.get(pose, false, CARD_BIG, "Y");
+  assert.notEqual(lettered, plain, "cached separately");
+  assert.deepEqual(log.filter((e) => e[0] === "fillText").map((e) => e[1]), ["Y"]);
+  assert.equal(cards.get(pose, false, CARD_BIG, "Y"), lettered, "and cached");
+  // The lane passes the label through: a song whose keyframes are labelled shows their letters.
+  const lib = parseMoves({ spell: { label: "Letters", beats: 4, keyframes: [
+    { beat: 0, label: "Y", pose: { la: [140, 140], ra: [140, 140] } },
+    { beat: 2, label: "A", pose: { la: [201, 201], ra: [201, 201] } }] } }, "t");
+  const song = parseSong({ title: "T", bpm: 120, duration: 20, moves: [{ move: "spell", beat: 16 }] }, "t", lib);
+  assert.deepEqual(song.pictograms().map((p) => p.label), ["Y", "A"]);
 });

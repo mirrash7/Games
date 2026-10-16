@@ -956,7 +956,40 @@ const poseKey = (pose) => {
     : p[k].toFixed(1))).join("|");
 };
 
-/** Pictogram cards (frame + figure), built once per (pose, gold, width) and cached. */
+const GLYPH_DISC = bgr([150, 40, 220]); // the letter badge's hot pink (gold cards: ACCENT)
+
+/**
+ * A one-character move label ("Y", "M", "C", "A") is drawn on its card too, so
+ * a letter reads from across the room before its card reaches the ring
+ * (render.glyph_label).
+ */
+export function glyphLabel(label) {
+  const s = String(label ?? "").trim();
+  return s.length === 1 ? s.toUpperCase() : null;
+}
+
+/**
+ * A round badge with a letter in it: an ink ring, a hot-pink disc (gold on gold
+ * cards) and the letter, white (ink on gold), about a radius tall
+ * (render.draw_glyph_badge).
+ */
+export function drawGlyphBadge(g, ch, cx, cy, r, gold) {
+  const ring = Math.max(1.5, 0.17 * r);
+  for (const [colour, rad] of [[INK, r + ring], [gold ? ACCENT : GLYPH_DISC, r]]) {
+    g.beginPath();
+    g.arc(cx, cy, rad, 0, 2 * Math.PI);
+    g.fillStyle = css(colour);
+    g.fill();
+  }
+  const scale = (1.5 * r) / 31; // theme.fontPx: 31 px a unit of scale; caps are ~0.72 of it
+  g.font = font(scale);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+  g.fillStyle = css(gold ? INK : [255, 255, 255]);
+  g.fillText(ch, cx, cy + fontPx(scale) * 0.36);
+}
+
+/** Pictogram cards (frame + figure, and a letter badge for one-letter moves), built once per (pose, gold, width, glyph) and cached. */
 export class PictogramCards {
   constructor(art, { makeCanvas = defaultMakeCanvas } = {}) {
     this.frames = { false: art.card, true: art.cardGold };
@@ -964,9 +997,9 @@ export class PictogramCards {
     this._cache = new Map();
   }
 
-  get(pose, gold, width) {
+  get(pose, gold, width, glyph = null) {
     width = Math.round(width);
-    const key = `${poseKey(pose)}/${Boolean(gold)}/${width}`;
+    const key = `${poseKey(pose)}/${Boolean(gold)}/${width}/${glyph ?? ""}`;
     let card = this._cache.get(key);
     if (!card) {
       const frame = this.frames[Boolean(gold)];
@@ -977,6 +1010,8 @@ export class PictogramCards {
       g.drawImage(frame, 0, 0, width, h);
       const inset = 0.135 * width;
       drawPictogramFigure(g, pose, [inset, inset * 0.95, width - inset, h - inset * 0.95], gold);
+      // Bottom right, over the floor: the corner the letters' arms and legs leave free.
+      if (glyph) drawGlyphBadge(g, glyph, 0.8 * width, h - 0.2 * width, 0.13 * width, gold);
       this._cache.set(key, card);
     }
     return card;
@@ -1354,7 +1389,7 @@ export class DanceRenderer {
         fade = Math.max(0.0, 1.0 + d / 0.65);
         x = TARGET_X + d * PX_PER_BEAT * 0.6;
       }
-      const card = this._cards.get(it.pose, it.gold, w);
+      const card = this._cards.get(it.pose, it.gold, w, glyphLabel(it.moveLabel ?? it.label));
       drawC(ctx, card, Math.round(x), LANE_Y, card.width, card.height, fade);
       if (it.gold && fade > 0.3) { // twinkles on gold cards
         for (let s = 0; s < 2; s++) {

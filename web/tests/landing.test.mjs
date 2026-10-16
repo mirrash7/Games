@@ -59,7 +59,7 @@ test("the four arcade games are live, in Body-Controlled Games", () => {
   for (const e of live) assert.equal(e.category, "body-games");
   const dance = live.find((e) => e.href.includes("dance"));
   assert.match(dance.summary, /EASY, NORMAL or HARD/);
-  assert.match(dance.summary, /Two .*songs/);
+  assert.match(dance.summary, /Three .*songs/);
 });
 
 test("live hrefs open a real page and a registered game", () => {

@@ -42,7 +42,7 @@ def sim(target: dict, performed: dict, visible=None, unseen_legs=None, **kw) -> 
 
 def test_every_listed_song_loads_and_validates():
     ids = song_ids()
-    assert ids and ids[0] == "neon_nights"
+    assert ids and ids[0] == "spell_it_out", "the letters song is the first on the song list (and preselected)"
     assert [s.id for s in SONGS] == ids
     for song in SONGS:
         jp = song.judge_points()
@@ -286,6 +286,129 @@ def test_pumpkin_patch_bounce_idle_players_cannot_score():
         assert sim(p.pose, REST, ELBOWS_HIDDEN) < FREEZE_MAX, f"{p.label} at {p.beat:g}, elbows hidden"
 
 
+# --- Spell It Out: the letters everyone knows ----------------------------------------
+
+SPELL = next(s for s in SONGS if s.id == "spell_it_out")
+SPELL_CHORUSES = (48, 112, 160)
+LETTERS = {LIB["letters"].keyframes[i].label: LIB["letters"].keyframes[i].pose for i in LIB["letters"].judge}
+
+
+def test_spell_it_out_metadata():
+    data = json.loads((SPELL.folder / "song.json").read_text())
+    for key, value in {"id": "spell_it_out", "title": "Spell It Out", "artist": "KP Arcade", "bpm": 127,
+                       "offset": 0.0, "duration": 100.5, "audio": "audio.m4a", "difficulty": 1,
+                       "coach": {"outfit": "disco"}, "preview": [48, 64]}.items():
+        assert data[key] == value, key
+    assert [(s["name"], s["beat"]) for s in SPELL.sections] == SECTIONS, "the same sections as Neon Nights"
+    assert 208 < SPELL.beat_of(SPELL.duration) < 214, "208 beats of music plus a tail"
+    assert "ymca" not in json.dumps(data).lower().replace(" ", "").replace(".", "")
+
+
+def test_spell_it_out_spells_in_every_chorus():
+    """Each chorus opens on the letters (as the crowd does it: the letters
+    first), a grapevine right and left answers, then the letters again.
+    The outro spells it once more before the bow. Gold goes on the letters:
+    the second set of each chorus, both sets of the final one."""
+    song = SPELL
+    assert not section_moves(song, 0, 16) and song.first_move_beat == 16
+    for lo in SPELL_CHORUSES:
+        c = section_moves(song, lo, lo + 32)
+        assert [(p.beat - lo, p.move.name) for p in c] == [
+            (0, "letters"), (8, "vine_point_r"), (12, "vine_point_l"),
+            (16, "letters"), (24, "vine_point_r"), (28, "vine_point_l")]
+    gold = sorted(p.beat for p in song.chart if p.gold)
+    assert gold == [64, 128, 160, 176] and all(song.chart[[q.beat for q in song.chart].index(b)].move.name == "letters"
+                                               for b in gold)
+    outro = section_moves(song, 192, 214)
+    assert [(p.beat, p.move.name) for p in outro] == [(192, "letters"), (202, "bow")]
+    assert song.judge_points()[-1].label == "A" and song.judge_points()[-1].beat == 198
+    for level in chart.DIFFICULTIES:  # every set is spelled in full, on every difficulty
+        lv = song.for_difficulty(level)
+        sets = [p.beat for p in lv.chart if p.move.name == "letters"]
+        assert sets == [48, 64, 112, 128, 160, 176, 192], level
+        spelled = [(p.beat, p.label) for p in lv.judge_points() if p.label in LETTERS]
+        assert spelled == [(b + o, ch) for b in sets for o, ch in zip((0, 2, 4, 6), "YMCA")], level
+    # The verses share their last two 8-counts; every 8-count starts a move on its downbeat.
+    v1 = [(p.beat - 16, p.move.name) for p in section_moves(song, 32, 48)]
+    v2 = [(p.beat - 80, p.move.name) for p in section_moves(song, 96, 112)]
+    assert v1 == v2
+    starts = {p.beat for p in song.chart}
+    assert all(b in starts for b in range(16, 200, 8))
+
+
+def test_the_letters_are_labelled_and_carded_one_by_one():
+    """One move, four cards: each judged keyframe of `letters` carries its own
+    label, so the lane, the label under the ring and the rating popup say
+    Y, M, C, A (a keyframe's `label` overrides its move's)."""
+    move = LIB["letters"]
+    assert move.label == "Letters" and move.beats == 8 and move.judge == (0, 2, 4, 6)
+    assert [move.keyframes[i].label for i in move.judge] == list("YMCA")
+    assert all(move.keyframes[i].label is None for i in (1, 3, 5, 7)), "the bounces in between aren't judged"
+    cards = [(p.beat, p.label) for p in SPELL.pictograms() if 48 <= p.beat < 56]
+    assert cards == [(48, "Y"), (50, "M"), (52, "C"), (54, "A")]
+    # A held keyframe on EASY keeps its own label; mirroring keeps labels too.
+    moves = chart.parse_moves({"a": {"beats": 2, "keyframes": [{"beat": 0, "label": "Q", "pose": {"la": [90, 90]}}]},
+                               "b": {"mirror_of": "a"}}, "t")
+    assert moves["b"].keyframes[0].label == "Q"
+    held = chart.derive_easy([chart.Placed(moves["a"], 16), chart.Placed(moves["a"], 17)])
+    assert [(p.beat, p.move.keyframes[0].label) for p in held] == [(16, "Q")]
+    for bad in ("", 7, "much too long a label"):
+        with pytest.raises(chart.ChartError, match="'label' must be a short name"):
+            chart.parse_moves({"a": {"beats": 1, "keyframes": [{"beat": 0, "label": bad}]}}, "t")
+
+
+@pytest.mark.parametrize("held,target", [("Y", "M"), ("M", "C"), ("C", "A")])
+def test_consecutive_letters_are_told_apart(held, target):
+    """The letters follow the poses a player struck for us (docs/DANCE.md 6c).
+    Holding a letter scores below the freeze line (0.55) on the next one: seen
+    whole, feet out of frame (arms only) and without elbows. Letters that are
+    never consecutive needn't be: in those reference poses M and A are nearly
+    the same arms (hands on the head, hands together just above it) and Y and C
+    share an upper arm, so the chart never puts them back to back."""
+    t, h = LETTERS[target], LETTERS[held]
+    assert sim(t, h, **FULL_BODY) < FREEZE_MAX, f"{held} held scores on {target}"
+    assert sim(t, h) < FREEZE_MAX, f"{held} held scores on {target}, feet out of frame"
+    assert sim(t, h, ELBOWS_HIDDEN) < FREEZE_MAX, f"{held} held scores on {target} without elbows"
+    assert sim(LETTERS["A"], LETTERS["M"], **FULL_BODY) > FREEZE_MAX, "M and A alike: pinned so a change shows up"
+    for level in chart.DIFFICULTIES:
+        labels = [p.label for p in SPELL.for_difficulty(level).judge_points()]
+        for a, b in zip(labels, labels[1:]):
+            assert {a, b} not in ({"M", "A"}, {"Y", "C"}), (level, a, b)
+
+
+def test_the_c_reads_the_right_way_round_on_screen():
+    """Poses are in screen space as the player sees it (docs/DANCE.md section
+    2), so the C must open to the screen's right on the coach, and the player,
+    copying like a mirror, makes the same C in their own mirrored camera image.
+    As the reference player struck it: the body leans (head to the screen's
+    right) and both arms reach right, the screen-left arm up and over the head
+    (the top stroke), the screen-right arm down and out (the bottom stroke);
+    the leaning body is the back of the C."""
+    from kpapp.config import KP
+    from kpapp.game.dance.pose import forward, mirror_pose, side_keypoints
+
+    c = normalize_pose(LETTERS["C"])
+    j = forward(c)
+    assert c["lean"] > 30, "the body leans: head to the screen's right"
+    assert j["l_hand"][1] < j["head"][1] and j["l_hand"][0] > j["l_elbow"][0], "top stroke: over the head, pointing right"
+    assert j["r_elbow"][0] > j["r_shoulder"][0] and j["r_elbow"][1] > j["r_shoulder"][1], "bottom stroke: down and out"
+    assert j["r_hand"][0] > j["r_elbow"][0], "bottom stroke: its hand points right"
+    assert min(j["l_hand"][0], j["r_hand"][0]) > j["hip"][0] + 0.4, "the back (the body) on the left, the tips right"
+    assert j["l_hand"][1] < j["r_hand"][1] - 0.6, "a tall C: one tip above the other"
+    # The player's mirrored image: keypoints a perfect C makes, read back by the judge.
+    kp = keypoints_for(c, **FULL_BODY)
+    sides = side_keypoints(True)
+    left_hand, left_elbow = kp.xy[KP[f"{sides['l']}_wrist"]], kp.xy[KP[f"{sides['l']}_elbow"]]
+    assert left_hand[0] > left_elbow[0] and left_hand[1] < kp.xy[KP["nose"]][1], "the same C in the camera image"
+    m = measure(kp)
+    for s in "lr":
+        assert m.arms[s].upper == pytest.approx(c[f"{s}a"][0], abs=0.5)
+        assert m.arms[s].fore == pytest.approx(c[f"{s}a"][1] - 360 if c[f"{s}a"][1] > 180 else c[f"{s}a"][1], abs=0.5)
+    assert sim(c, c, **FULL_BODY) > 0.99
+    assert sim(c, mirror_pose(c)) < 0.3, "a reversed C is a miss (OK starts at 0.40, even on EASY)"
+    assert sim(c, mirror_pose(c), **FULL_BODY) < 0.3 and sim(c, mirror_pose(c), ELBOWS_HIDDEN) < 0.45
+
+
 # --- difficulties (docs/DANCE.md section 7a) ---------------------------------------
 
 def test_difficulty_ids_fall_back_to_normal():
@@ -308,15 +431,19 @@ def test_hard_dances_the_normal_chart():
 def test_easy_judges_about_one_pose_per_bar(song):
     """EASY: fewer moves, held longer. At least two beats between judged poses,
     at most one per bar where the normal chart's moves are short, and far
-    fewer points overall."""
+    fewer points overall. Slow moves stay whole (their poses are two beats
+    apart already: a bridge's 4-beat moves, Spell It Out's letters, which
+    EASY spells in full), so the short moves are where the points go."""
     easy, normal = song.for_difficulty("easy"), song.judge_points()
     pts = easy.judge_points()
-    assert pts and len(pts) <= 0.42 * len(normal), (len(pts), len(normal))
     beats = [p.beat for p in pts]
     assert all(b - a >= chart.EASY_MIN_GAP for a, b in zip(beats, beats[1:]))
     short = {p.beat for p in pts if easy.chart[p.placed].move.name.endswith("~held")}
     bars = [math.floor(b / chart.BAR_BEATS) for b in sorted(short)]
     assert len(bars) == len(set(bars)), "one held pose per bar"
+    whole = len(pts) - len(short)  # judged poses of the slow moves EASY keeps as they are
+    assert pts and len(short) <= 0.42 * (len(normal) - whole), (len(short), len(normal) - whole)
+    assert len(pts) <= 0.5 * len(normal), (len(pts), len(normal))
     if "easy" not in song.charts:  # derived, not hand-made
         assert all(any(abs(p.beat - q.beat) < 1e-9 and p.pose == q.pose for q in normal) for p in pts), \
             "easy only asks for poses the normal chart asks for, on the same beats"

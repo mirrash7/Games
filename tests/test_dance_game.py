@@ -666,7 +666,8 @@ def test_the_tuning_is_pinned():
     assert game.score == 6075
 
 
-LEVEL_POINTS = {"neon_nights": {"easy": 49, "normal": 123, "hard": 123},
+LEVEL_POINTS = {"spell_it_out": {"easy": 58, "normal": 128, "hard": 128},
+                "neon_nights": {"easy": 49, "normal": 123, "hard": 123},
                 "pumpkin_patch_bounce": {"easy": 40, "normal": 99, "hard": 99}}
 SLOPPY_STARS = {"easy": (4, 4), "normal": (3, 4), "hard": (2, 3)}
 

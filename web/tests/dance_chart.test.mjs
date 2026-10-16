@@ -10,7 +10,7 @@ import {
   parseLibrary, parseMoves, parseSong, parseSongIds,
 } from "../js/games/dance/chart.js";
 import { keyframeTravel } from "../js/games/dance/motion.js";
-import { FULL_BODY, REST, keypointsFor, measure, normalizePose, similarity } from "../js/games/dance/pose.js";
+import { FULL_BODY, REST, forward, keypointsFor, measure, mirrorPose, normalizePose, similarity } from "../js/games/dance/pose.js";
 import { DanceRaccoonGame, loadSongs, loadedSongs, songVariants } from "../js/games/dance/game.js";
 
 const ASSETS = new URL("../../assets/dance/", import.meta.url);
@@ -32,7 +32,7 @@ const sim = (target, performed, opts = {}, unseenLegs = null) =>
 // --- every song --------------------------------------------------------------
 
 test("every listed song loads and validates", () => {
-  assert.ok(IDS.length && IDS[0] === "neon_nights");
+  assert.ok(IDS.length && IDS[0] === "spell_it_out", "the letters song is the first on the song list (and preselected)");
   assert.deepEqual(SONGS.map((s) => s.id), IDS);
   for (const song of SONGS) {
     const jp = song.judgePoints();
@@ -217,12 +217,16 @@ test("easy judges about one pose per bar", () => {
   for (const song of SONGS) {
     const easy = song.forDifficulty("easy"), normal = song.judgePoints();
     const pts = easy.judgePoints();
-    assert.ok(pts.length && pts.length <= 0.42 * normal.length, `${pts.length} vs ${normal.length}`);
     const beats = pts.map((p) => p.beat);
     for (let i = 1; i < beats.length; i++) assert.ok(beats[i] - beats[i - 1] >= EASY_MIN_GAP);
     const short = pts.filter((p) => easy.chart[p.placed].move.name.endsWith("~held")).map((p) => p.beat).sort((a, b) => a - b);
     const bars = short.map((b) => Math.floor(b / BAR_BEATS));
     assert.equal(bars.length, new Set(bars).size, "one held pose per bar");
+    // Slow moves stay whole (a bridge's 4-beat moves, Spell It Out's letters), so
+    // the short moves are where the points go; and at most half overall.
+    const whole = pts.length - short.length;
+    assert.ok(pts.length && short.length <= 0.42 * (normal.length - whole), `${short.length} vs ${normal.length - whole}`);
+    assert.ok(pts.length <= 0.5 * normal.length, `${pts.length} vs ${normal.length}`);
     if (!Object.hasOwn(song.charts, "easy")) {
       assert.ok(pts.every((p) => normal.some((q) => Math.abs(p.beat - q.beat) < 1e-9 && q.pose === p.pose)),
         "easy only asks for poses the normal chart asks for, on the same beats");
@@ -362,8 +366,11 @@ test("loadSongs fetches the library, the index and every song", async () => {
   const out = await loadSongs({ base: ASSETS, fetchJSON: diskFetch });
   assert.deepEqual(out.ids, IDS);
   assert.equal(out.library.size, LIB.size);
-  assert.equal(out.songs[0].judgePoints().length, NEON.judgePoints().length);
+  assert.equal(out.songs[0].judgePoints().length, SONGS[0].judgePoints().length);
   assert.deepEqual(songVariants(out.songs)[0], {
+    id: "spell_it_out", title: "Spell It Out", subtitle: "KP Arcade - 1:40", boardId: "dance-spell_it_out",
+  });
+  assert.deepEqual(songVariants(out.songs)[1], {
     id: "neon_nights", title: "Neon Nights", subtitle: "KP Arcade - 1:46", boardId: "dance-neon_nights",
   });
 });
@@ -398,4 +405,66 @@ test("a broken song is skipped, not fatal; a missing library means no shared mov
 test("variants() is empty before preload and lists the songs after", () => {
   if (loadedSongs() == null) assert.deepEqual(DanceRaccoonGame.variants(), []);
   assert.throws(() => new DanceRaccoonGame({}), /preload/);
+});
+
+// --- Spell It Out: the letters everyone knows (tests/test_dance_chart.py) -------------
+
+const SPELL = SONGS.find((s) => s.id === "spell_it_out");
+const LETTERS_MOVE = LIB.get("letters");
+const LETTERS = Object.fromEntries(LETTERS_MOVE.judge.map((i) => [LETTERS_MOVE.keyframes[i].label,
+  LETTERS_MOVE.keyframes[i].pose]));
+
+test("the letters are labelled one by one and spelled in every chorus, on every difficulty", () => {
+  assert.equal(LETTERS_MOVE.label, "Letters");
+  assert.deepEqual(LETTERS_MOVE.judge, [0, 2, 4, 6]);
+  assert.deepEqual(LETTERS_MOVE.judge.map((i) => LETTERS_MOVE.keyframes[i].label), ["Y", "M", "C", "A"]);
+  assert.ok([1, 3, 5, 7].every((i) => LETTERS_MOVE.keyframes[i].label == null));
+  for (const level of DIFFICULTIES) {
+    const lv = SPELL.forDifficulty(level);
+    const sets = lv.chart.filter((p) => p.move.name === "letters").map((p) => p.beat);
+    assert.deepEqual(sets, [48, 64, 112, 128, 160, 176, 192], level);
+    const spelled = lv.judgePoints().filter((p) => p.label in LETTERS).map((p) => [p.beat, p.label]);
+    assert.deepEqual(spelled, sets.flatMap((b) => ["Y", "M", "C", "A"].map((ch, k) => [b + 2 * k, ch])), level);
+  }
+  // Mirroring and EASY's held moves keep a keyframe's label; a bad one is refused.
+  const moves = parseMoves({ a: { beats: 2, keyframes: [{ beat: 0, label: "Q", pose: { la: [90, 90] } }] },
+    b: { mirror_of: "a" } }, "t");
+  assert.equal(moves.get("b").keyframes[0].label, "Q");
+  const held = deriveEasy([new Placed(moves.get("a"), 16), new Placed(moves.get("a"), 17)]);
+  assert.deepEqual(held.map((p) => [p.beat, p.move.keyframes[0].label]), [[16, "Q"]]);
+  for (const bad of ["", 7, "much too long a label"]) {
+    assert.throws(() => parseMoves({ a: { beats: 1, keyframes: [{ beat: 0, label: bad }] } }, "t"),
+      /'label' must be a short name/);
+  }
+});
+
+test("consecutive letters are told apart (as tests/test_dance_chart.py)", () => {
+  // The letters follow a player's reference poses: M and A are nearly the same
+  // arms and Y and C share an upper arm, so the chart never puts them back to back.
+  for (const [h, t] of [["Y", "M"], ["M", "C"], ["C", "A"]]) {
+    assert.ok(sim(LETTERS[t], LETTERS[h], FULL_BODY) < FREEZE_MAX, `${h} held scores on ${t}`);
+    assert.ok(sim(LETTERS[t], LETTERS[h]) < FREEZE_MAX, `${h} held scores on ${t}, feet out of frame`);
+    assert.ok(sim(LETTERS[t], LETTERS[h], { visible: ELBOWS_HIDDEN }) < FREEZE_MAX, `${h} held scores on ${t} without elbows`);
+  }
+  assert.ok(sim(LETTERS.A, LETTERS.M, FULL_BODY) > FREEZE_MAX, "M and A alike: pinned so a change shows up");
+  for (const level of DIFFICULTIES) {
+    const labels = SPELL.forDifficulty(level).judgePoints().map((p) => p.label);
+    for (let i = 1; i < labels.length; i++) {
+      const pair = [labels[i - 1], labels[i]].sort().join("");
+      assert.ok(pair !== "AM" && pair !== "CY", `${level}: ${pair}`);
+    }
+  }
+});
+
+test("the C reads the right way round on screen", () => {
+  const c = normalizePose(LETTERS.C);
+  const j = forward(c);
+  // As the reference player struck it: a lean, both arms reaching right, the body the back of the C.
+  assert.ok(c.lean > 30, "the body leans: head to the screen's right");
+  assert.ok(j.l_hand[1] < j.head[1] && j.l_hand[0] > j.l_elbow[0], "top stroke: over the head, pointing right");
+  assert.ok(j.r_elbow[0] > j.r_shoulder[0] && j.r_elbow[1] > j.r_shoulder[1], "bottom stroke: down and out");
+  assert.ok(j.r_hand[0] > j.r_elbow[0], "bottom stroke: its hand points right");
+  assert.ok(Math.min(j.l_hand[0], j.r_hand[0]) > j.hip[0] + 0.4, "the back (the body) on the left, the tips right");
+  assert.ok(sim(c, c, FULL_BODY) > 0.99);
+  assert.ok(sim(c, mirrorPose(c)) < 0.3, "a reversed C is a miss (OK starts at 0.40, even on EASY)");
 });

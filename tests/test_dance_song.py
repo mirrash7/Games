@@ -5,9 +5,9 @@ them: beat b at b * 60 / bpm seconds, beat 0 at the very first sample. These
 tests check the generator's own output and the shipped AAC files, whose
 encoder adds priming samples that the container's edit list must hide.
 
-Songs: "Neon Nights" (120 BPM, A minor) and "Pumpkin Patch Bounce" (116 BPM,
-D minor). Each is a module in tools/dance_songs/ on the shared engine
-tools/dance_synth.py.
+Songs: "Neon Nights" (120 BPM, A minor), "Pumpkin Patch Bounce" (116 BPM,
+D minor) and "Spell It Out" (127 BPM, B-flat major). Each is a module in
+tools/dance_songs/ on the shared engine tools/dance_synth.py.
 """
 
 from __future__ import annotations
@@ -25,10 +25,11 @@ import dance_synth  # noqa: E402
 import generate_dance_song as gen  # noqa: E402
 from dance_songs import neon_nights as neon  # noqa: E402
 from dance_songs import pumpkin_patch_bounce as pumpkin  # noqa: E402
+from dance_songs import spell_it_out as spell  # noqa: E402
 
 TOLERANCE_MS = 5.0
 SR = dance_synth.SR
-SONGS = [neon, pumpkin]
+SONGS = [neon, pumpkin, spell]
 
 
 def kick_onsets_ms(song, pcm: np.ndarray, beats, first_sample: int = 0) -> np.ndarray:
@@ -66,7 +67,7 @@ def decode(path: Path) -> tuple[np.ndarray, float]:
 
 
 def test_every_song_is_registered():
-    assert gen.SONG_IDS == ("neon_nights", "pumpkin_patch_bounce")
+    assert gen.SONG_IDS == ("neon_nights", "pumpkin_patch_bounce", "spell_it_out")
     for song in SONGS:
         assert gen.load(song.ID) is song and song.SPEC.id == song.ID
         assert song.OUT == REPO / "assets" / "dance" / "songs" / song.ID / "audio.m4a"
@@ -109,6 +110,86 @@ def test_pumpkin_patch_bounce_timing_matches_the_spec():
     assert max(kicks) == 160, "the final hit on beat 160"
     assert set(song.RISERS) == {12, 44, 76, 108, 124, 156}, "a riser in the bar before each section"
     assert song.PROGRESSION[4:12] == song.PROGRESSION[20:28] == song.PROGRESSION[32:40], "the hook repeats"
+
+
+def test_spell_it_out_timing_matches_the_spec():
+    song = spell
+    assert song.BPM == 127 and song.SPEC.spb == pytest.approx(44100 * 60 / 127)
+    assert song.MUSIC_BEATS == 208 and song.DURATION == 100.5
+    assert song.MUSIC_BEATS * 60 / song.BPM == pytest.approx(98.268, abs=1e-3)
+    assert song.SPEC.n_total == round(100.5 * 44100)
+    assert [(n, a, b) for n, a, b in song.SECTIONS] == [
+        ("intro", 0, 16), ("verse", 16, 48), ("chorus", 48, 80), ("verse", 80, 112),
+        ("chorus", 112, 144), ("bridge", 144, 160), ("chorus", 160, 192), ("outro", 192, 208)]
+    kicks = set(song.kick_beats())
+    assert all(b in kicks for b in range(0, 144)) and all(b in kicks for b in range(160, 201)), "four-on-the-floor"
+    assert not kicks & set(range(144, 160)), "the bridge drops the kick"
+    assert max(kicks) == 200, "the final hit on beat 200"
+    assert {44, 108, 156} <= set(song.RISERS), "a build in the bar before each chorus"
+    assert song.PROGRESSION[12:20] == song.PROGRESSION[28:36] == song.PROGRESSION[40:48], "the chorus repeats"
+
+
+def test_spell_it_out_leaves_one_clear_hit_per_letter():
+    """The chart's `letters` move (Y, M, C, A two beats apart) lands on the
+    chorus's four stabs: every letter set in the chart is a set of stabs in
+    the music, each stab a step higher than the last, with a snare under it
+    and the claps on 2 and 4 in between (the crowd's bounce)."""
+    from kpapp.game.dance import chart
+
+    song_chart = chart.load_song(chart.SONGS / "spell_it_out")
+    sets = [p.beat for p in song_chart.chart if p.move.name == "letters"]
+    assert tuple(sets) == spell.LETTERS
+    assert [p.label for p in song_chart.judge_points() if p.beat in {b + o for b in sets for o in (0, 2, 4, 6)}] \
+        == list("YMCA") * len(sets)
+    assert [off for off, _ in spell.STABS] == [0, 2, 4, 6]
+    tops = [max(v) for _, v in spell.STABS]
+    assert tops == sorted(tops) and len(set(tops)) == 4, "each letter a step higher"
+    mix = dance_synth.Mix(spell.SPEC, 0, spell.SPEC.n_total, shots=spell.make_shot)
+    spell.arrange(mix)
+    snares = {b for _, name, b in mix.hits if name == "snare"}
+    claps = {b for _, name, b in mix.hits if name == "clap"}
+    for start in sets:
+        assert {start + o for o in (0, 2, 4, 6)} <= snares
+        assert {start + o for o in (1, 3, 5, 7)} <= claps
+    assert {b for b in snares if b < 16} == set(spell.COUNT_IN) == {12, 13, 14}, "the game's 3, 2, 1"
+    assert sorted(b for _, name, b in mix.hits if name == "crash") == list(spell.CRASHES)
+
+
+def test_shipped_spell_it_out_stabs_rise_and_stand_out():
+    """Listening by numbers: at each letter of the first chorus the loudest
+    note in the brass register is the stab's top note (B-flat, C, D, F), and
+    the letters are louder than the chorus's other beats."""
+    path = spell.OUT
+    assert path.exists(), "run: uv run python tools/generate_dance_song.py --song spell_it_out"
+    pcm, _ = decode(path)
+    mono = pcm[:spell.SPEC.n_total].astype(np.float64).mean(axis=1)
+    peak = np.abs(pcm).max()
+    assert 20 * np.log10(peak) == pytest.approx(-1.0, abs=0.5), "peaks about -1 dBFS, never clipped"
+    n = 8192
+    tops = []
+    for off, _ in spell.STABS:
+        s = spell.SPEC.sample(48 + off) + int(0.05 * SR)
+        spec = np.abs(np.fft.rfft(mono[s:s + n] * np.hanning(n)))
+        f = np.fft.rfftfreq(n, 1 / SR)
+        band = (f > 440) & (f < 760)
+        tops.append(round(69 + 12 * np.log2(f[np.argmax(spec * band)] / 440)))
+    assert tops == [max(v) for _, v in spell.STABS] == [70, 72, 74, 77]
+    mid = dance_synth.spectral_filter(mono, lo=200, hi=4000)
+
+    def level(beat):
+        s = spell.SPEC.sample(beat)
+        return 20 * np.log10(np.sqrt((mid[s:s + int(0.15 * SR)] ** 2).mean()))
+    letters = [b + o for b in spell.LETTERS[:-1] for o in (0, 2, 4, 6)]
+    others = [b for b in range(48, 192, 2) if spell.section_of(b)[0] == "chorus" and b not in letters]
+    assert np.mean([level(b) for b in letters]) > np.mean([level(b) for b in others]) + 1.5
+
+
+def test_spell_excerpt_is_deterministic_and_on_the_beat():
+    a = gen.render(spell, 42, 52, master=False)   # verse 1's build into the first letters
+    b = gen.render("spell_it_out", 42, 52, master=False)
+    assert hashlib.md5(a.tobytes()).hexdigest() == hashlib.md5(b.tobytes()).hexdigest()
+    errors = kick_onsets_ms(spell, a, range(42, 52), first_sample=spell.SPEC.sample(42))
+    assert np.abs(errors).max() < TOLERANCE_MS, errors
 
 
 def test_pumpkin_count_in_and_phrase_marks():

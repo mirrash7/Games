@@ -565,15 +565,16 @@ const ASSETS = new URL("../../assets/dance/", import.meta.url);
 const readJSON = (p) => JSON.parse(readFileSync(new URL(p, ASSETS), "utf8"));
 const diskFetch = async (href) => JSON.parse(readFileSync(new URL(href), "utf8"));
 
-test("the shell lists Neon Nights and builds the game for it", async () => {
+test("the shell lists the songs (Spell It Out first) and builds the game for one", async () => {
   const { Shell } = await import("../js/shell.js");
   await DanceRaccoonGame.preload({ base: ASSETS, fetchJSON: diskFetch, art: false });
   assert.ok(GAMES.includes(DanceRaccoonGame), "registered");
   assert.equal(GAMES.indexOf(DanceRaccoonGame), 2, "after Flappy");
   assert.deepEqual(DanceRaccoonGame.variants().map((v) => [v.id, v.boardId]),
-    [["neon_nights", "dance-neon_nights"], ["pumpkin_patch_bounce", "dance-pumpkin_patch_bounce"]]);
+    [["spell_it_out", "dance-spell_it_out"], ["neon_nights", "dance-neon_nights"],
+      ["pumpkin_patch_bounce", "dance-pumpkin_patch_bounce"]]);
   const sh = new Shell({ games: GAMES });
-  assert.ok(sh.boardKeys().includes("dance-neon_nights"));
+  assert.ok(sh.boardKeys().includes("dance-neon_nights") && sh.boardKeys().includes("dance-spell_it_out"));
   const warn = console.warn;
   console.warn = () => {}; // no Web Audio under Node: the game falls back to silence
   try {
@@ -679,7 +680,8 @@ const neon = (level, make, opts = {}) => play("neon_nights", level, make, opts);
 /** Every limb within 10 degrees and every foot within 0.06 SW, 200 ms behind the coach. */
 const precise = (game) => sloppy(game, { late: 0.2, off: [0.0, 10.0], feet: [0.0, 0.06] });
 
-const LEVEL_POINTS = { neon_nights: { easy: 49, normal: 123, hard: 123 },
+const LEVEL_POINTS = { spell_it_out: { easy: 58, normal: 128, hard: 128 },
+  neon_nights: { easy: 49, normal: 123, hard: 123 },
   pumpkin_patch_bounce: { easy: 40, normal: 99, hard: 99 } };
 const SLOPPY_STARS = { easy: [4, 4], normal: [3, 4], hard: [2, 3] };
 

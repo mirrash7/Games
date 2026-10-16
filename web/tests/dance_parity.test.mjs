@@ -80,6 +80,7 @@ for (const [name, want] of Object.entries(FIXTURE.easy)) {
     const easy = song.forDifficulty("easy");
     assert.deepEqual(easy.chart.map((p) => [p.beat, p.move.name, p.move.beats, p.gold, [...p.move.judge]]), want.chart);
     assert.deepEqual(easy.judgePoints().map((p) => p.beat), want.judge_beats);
+    assert.deepEqual(easy.judgePoints().map((p) => p.label), want.judge_labels);
     if (name === "neon_nights") assert.equal(want.judge_beats.length, 49);
   });
 }

@@ -340,12 +340,17 @@ re-run the model on offline. Analyse these before tuning anything.
   Songs are folders in `assets/dance/songs/` (audio + `song.json` chart). The shell shows a song list for games with
   `variants()`, with one leaderboard per song (`dance-<id>`). Add songs with
   `kp dance-import` (from a recording) and check them with `kp dance-preview`.
-  Two songs, both original and synthesised (`tools/generate_dance_song.py
+  Three songs, all original and synthesised (`tools/generate_dance_song.py
   --all`; one arrangement file per song in `tools/dance_songs/`, sharing the
-  engine in `tools/dance_synth.py`): "Neon Nights" (synth-pop, 120 BPM) and
-  "Pumpkin Patch Bounce" (a TikTok-style hook routine with an October flavour,
-  116 BPM, pumpkin coach outfit). Choreography is original: viral-dance
-  *style* and generic moves, never a creator's routine. Bots prove fairness (whole body
+  engine in `tools/dance_synth.py`), in menu order (`songs/index.json`; the
+  first is preselected): "Spell It Out" (127 BPM party disco, disco coach
+  outfit: the chorus spells four letters with the arms, Y M C A, the crowd
+  move everyone knows; one `letters` move whose keyframes carry their own
+  labels, and letter badges on the cards; docs/DANCE.md 6c), "Neon Nights"
+  (synth-pop, 120 BPM) and "Pumpkin Patch Bounce" (a TikTok-style hook routine
+  with an October flavour, 116 BPM, pumpkin coach outfit). Choreography is
+  original: viral-dance *style* and generic moves, never a creator's routine;
+  music borrows a genre's cadence, never a song's melody, harmony or lyrics. Bots prove fairness (whole body
   in view): a perfect dancer 150 ms late scores 10000 on every song and difficulty, and
   one whose legs are out of frame gets 8000 (never an X); perfect arms with the legs standing still
   score 2-3 stars; idle, frozen and random players stay at 1 star or below. The leg

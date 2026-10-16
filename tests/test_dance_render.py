@@ -320,7 +320,7 @@ def test_tutorial_without_art(monkeypatch):
         assert frame.any()
 
 
-def test_tutorial_costs_under_1_5ms_for_all_three():
+def test_tutorial_costs_under_2ms_for_all_three():
     frame = np.zeros((720, 1280, 3), np.uint8)
     times = [k / 60 for k in range(60 * 6)]
     for t in times:
@@ -331,7 +331,10 @@ def test_tutorial_costs_under_1_5ms_for_all_three():
         for step, rect in zip(T.DANCE_TUTORIAL, RECTS):
             step.draw(frame, rect, t)
     ms = (time.perf_counter() - start) * 1000 / len(times)
-    assert ms < 1.5, f"{ms:.2f} ms per frame"
+    # The cards draw the legs too since the lower body is judged: ~1.5-1.7 ms on
+    # a busy machine. The tutorial is all that's drawn while it shows, so 2 ms
+    # stays well inside the 4 ms game-frame budget.
+    assert ms < 2.0, f"{ms:.2f} ms per frame"
 
 
 # --- the generator --------------------------------------------------------------------------
@@ -356,6 +359,8 @@ def test_generated_manifest_matches_the_loader():
     for key in ("fur", "top", "pants", "accent", "glove", "shoe", "ink", "rim", "glow", "fur_dark"):
         assert key in outfit and len(outfit[key]) == 3
     assert art.outfit("no-such-outfit") == outfit, "unknown outfits fall back to neon"
+    for name in ("pumpkin", "disco"):  # every song's coach has its own outfit
+        assert art.outfit(name) != outfit and set(art.outfit(name)) == set(outfit), name
     for k in ("perfect", "super", "good", "ok", "x"):
         assert art.words[k].shape[2] == 4 and art.rating_colour(k) != (255, 255, 255)
     assert art.stage.shape == (720, 1280, 3)
@@ -547,3 +552,24 @@ def test_the_intro_text_stays_clear_of_the_bigger_pip(song, monkeypatch):
     x0, y0, x1, y1 = R.PIP_RECT
     assert hit.any()
     assert not hit[y0:y1 + 8, x0 - 8:x1].any(), "intro text under the PiP"
+
+
+def test_one_letter_moves_get_a_letter_badge_on_their_card():
+    """Spell It Out's letters: a one-character label is drawn on its card as a
+    badge (bottom right, the corner the letters' arms and legs leave free), so
+    a letter reads before its card reaches the ring; other moves' cards don't."""
+    assert R.glyph_label("Y") == "Y" and R.glyph_label(" a ") == "A"
+    assert R.glyph_label("Grapevine") is None and R.glyph_label(None) is None
+    cards = R.PictogramCards(stub_art())
+    pose = {"la": [140, 140], "ra": [140, 140]}
+    plain = cards.get(pose, False, R.CARD_BIG)
+    lettered = cards.get(pose, False, R.CARD_BIG, "Y")
+    assert cards.get(pose, False, R.CARD_BIG, "Y") is lettered and lettered is not plain
+    w, h = lettered.w, lettered.h
+    corner = (slice(int(h - 0.3 * w), int(h - 0.1 * w)), slice(int(0.7 * w), int(0.9 * w)))
+    diff = np.abs(lettered.pre[corner].astype(int) - plain.pre[corner].astype(int)).sum(axis=2)
+    assert (diff > 60).mean() > 0.5, "the badge fills the corner"
+    top = (slice(0, int(0.6 * h)), slice(0, w))
+    assert np.array_equal(lettered.pre[top], plain.pre[top]), "and leaves the figure alone"
+    pink = lettered.pre[int(round(h - 0.2 * w)), int(round(0.7 * w))][:3]  # in the disc, beside the letter
+    assert np.abs(np.asarray(pink, float) - R.GLYPH_DISC).max() < 12, "hot pink (gold on gold cards)"

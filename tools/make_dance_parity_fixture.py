@@ -171,6 +171,7 @@ def easy_chart(song) -> dict:
     return {
         "chart": [[p.beat, p.move.name, p.move.beats, p.gold, list(p.move.judge)] for p in easy.chart],
         "judge_beats": [p.beat for p in easy.judge_points()],
+        "judge_labels": [p.label for p in easy.judge_points()],  # a keyframe's own label (Y, M, C, A) or its move's
         "freeze": [[a.index, b.index, chart.freeze_score(b.pose, a.pose)] for a, b in zip(normal, normal[1:])],
     }
 

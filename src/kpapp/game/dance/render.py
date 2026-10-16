@@ -1065,16 +1065,47 @@ def draw_pictogram_figure(img, pose, rect, gold: bool = False, alpha_plane=None)
             limb(img, [f"{s_}_shoulder", f"{s_}_elbow", f"{s_}_hand"], lw, arm)
 
 
+GLYPH_DISC = (150, 40, 220)  # BGR: the letter badge's hot pink (gold cards: theme.ACCENT)
+GLYPH_INK = (46, 24, 34)
+
+
+def glyph_label(label) -> str | None:
+    """A one-character move label ("Y", "M", "C", "A") is drawn on its card too,
+    so a letter reads from across the room before its card reaches the ring."""
+    s = str(label or "").strip()
+    return s.upper() if len(s) == 1 else None
+
+
+def draw_glyph_badge(img, alpha, ch: str, centre, r: float, gold: bool) -> None:
+    """A round badge with a letter in it: an ink ring, a hot-pink disc (gold on
+    gold cards) and the letter, white (ink on gold), about a radius tall."""
+    cx, cy = centre
+    c = (int(round(cx * ONE)), int(round(cy * ONE)))
+    ring = max(1.5, 0.17 * r)
+    for plane, colour, rad in ((img, GLYPH_INK, r + ring), (img, theme.ACCENT if gold else GLYPH_DISC, r),
+                               (alpha, 255, r + ring)):
+        if plane is not None:
+            cv2.circle(plane, c, int(round(rad * ONE)), colour, -1, cv2.LINE_AA, SHIFT)
+    font = theme.TITLE_FONT
+    thick = max(1, int(round(r / 6.5)))
+    (tw, th), _ = cv2.getTextSize(ch, font, 1.0, thick)
+    sc = 1.05 * r / th
+    (tw, th), _ = cv2.getTextSize(ch, font, sc, thick)
+    cv2.putText(img, ch, (int(round(cx - tw / 2)), int(round(cy + th / 2))), font, sc,
+                GLYPH_INK if gold else (255, 255, 255), thick, cv2.LINE_AA)
+
+
 class PictogramCards:
-    """Pictogram cards (frame + figure), built once per (pose, gold, width) and cached."""
+    """Pictogram cards (frame + figure, and a letter badge for one-letter moves),
+    built once per (pose, gold, width, glyph) and cached."""
 
     def __init__(self, art: DanceArt) -> None:
         self.frames = {False: art.card, True: art.card_gold}
         self._cache: dict[tuple, Sprite] = {}
 
-    def get(self, pose, gold: bool, width: int) -> Sprite:
+    def get(self, pose, gold: bool, width: int, glyph: str | None = None) -> Sprite:
         width = int(width)
-        key = (_pose_key(pose), bool(gold), width)
+        key = (_pose_key(pose), bool(gold), width, glyph or "")
         spr = self._cache.get(key)
         if spr is None:
             frame = self.frames[bool(gold)]
@@ -1086,6 +1117,8 @@ class PictogramCards:
             alpha = np.ascontiguousarray(card[..., 3])
             inset = 0.135 * w2
             draw_pictogram_figure(bgr, pose, (inset, inset * 0.95, w2 - inset, h2 - inset * 0.95), gold, alpha)
+            if glyph:  # bottom right, over the floor: the corner the letters' arms and legs leave free
+                draw_glyph_badge(bgr, alpha, glyph, (0.8 * w2, h2 - 0.2 * w2), 0.13 * w2, gold)
             spr = self._cache[key] = Sprite(_resize_bgra(np.dstack([bgr, alpha]), w2 / ss, h2 / ss))
         return spr
 
@@ -1502,7 +1535,8 @@ class DanceRenderer:
             if d < 0:
                 fade = max(0.0, 1.0 + d / 0.65)
                 x = TARGET_X + d * PX_PER_BEAT * 0.6
-            spr = self._cards.get(it.pose, bool(getattr(it, "gold", False)), w)
+            glyph = glyph_label(getattr(it, "move_label", None) or getattr(it, "label", None))
+            spr = self._cards.get(it.pose, bool(getattr(it, "gold", False)), w, glyph)
             spr.draw_c(frame, x, LANE_Y, fade=fade, clip=clip)
             if getattr(it, "gold", False) and fade > 0.3:  # twinkles on gold cards
                 for k in range(2):

@@ -393,8 +393,10 @@ art manifest. All art is original and procedural:
 ### Raccoon Dance (Just Dance-style)
 
 Pick **RACCOON DANCE**, then a song and a difficulty. The songs:
-**Neon Nights** (synth-pop) and **Pumpkin Patch Bounce** (a catchy, repeating
-TikTok-style hook routine with an October twist; the coach dresses for it). A raccoon coach dances
+**Spell It Out** (party disco: on every chorus you spell Y, M, C, A with your
+arms, the crowd move everyone knows; first on the list), **Neon Nights**
+(synth-pop) and **Pumpkin Patch Bounce** (a catchy, repeating TikTok-style
+hook routine with an October twist). The coach dresses for each. A raccoon coach dances
 on a neon stage; copy it **like a mirror** (when its arm on the screen's right
 goes up, raise the arm on the screen's right: your real right arm). Every move
 is judged PERFECT / SUPER / GOOD / OK / X from your keypoints, legs included:

@@ -82,7 +82,7 @@ function titleCase(s) {
 }
 
 /**
- * Move: {name, label, beats, keyframes: [{beat, pose}], judge: [indexes judged],
+ * Move: {name, label, beats, keyframes: [{beat, pose, label}], judge: [indexes judged],
  * pictogram: index of the keyframe drawn on the pictogram}.
  */
 function makeMove(name, label, beats, keyframes, judge, pictogram) {
@@ -241,7 +241,8 @@ function parseMove(name, spec, where, known) {
     if (src == null) throw new ChartError(`${where}: move '${name}' mirrors unknown move '${spec.mirror_of}'`);
     const label = has(spec, "label") ? spec.label : src.label;
     return makeMove(name, label, src.beats,
-      Object.freeze(src.keyframes.map((k) => Object.freeze({ beat: k.beat, pose: normalizePose(mirrorPose(k.pose)) }))),
+      Object.freeze(src.keyframes.map((k) => Object.freeze({ beat: k.beat, pose: normalizePose(mirrorPose(k.pose)),
+        label: k.label }))),
       src.judge, src.pictogram);
   }
   let beats, raw;
@@ -272,7 +273,11 @@ function parseMove(name, spec, where, known) {
     }
     if (b <= last) throw new ChartError(`${where}: move '${name}' keyframe beats must ascend (keyframe ${i})`);
     last = b;
-    frames.push(Object.freeze({ beat: b, pose }));
+    const klabel = has(k, "label") && k.label !== null ? k.label : null;
+    if (klabel !== null && !(typeof klabel === "string" && klabel.length > 0 && klabel.length <= 15)) {
+      throw new ChartError(`${where}: move '${name}' keyframe ${i}: 'label' must be a short name, got ${pyRepr(klabel)}`);
+    }
+    frames.push(Object.freeze({ beat: b, pose, label: klabel }));
   });
   const judge = has(spec, "judge") ? spec.judge : frames.map((_, i) => i);
   if (!Array.isArray(judge) || judge.some((i) => !Number.isInteger(i) || i < 0 || i >= frames.length)) {
@@ -370,7 +375,7 @@ function indexSong(song) {
       if (p.move.judge.includes(kIdx)) {
         song._judges.push(Object.freeze({
           index: song._judges.length, beat: b, time: song.timeOf(b), pose: k.pose, gold: p.gold,
-          weight: p.gold ? 2.0 : 1.0, label: p.move.label, placed: pIdx,
+          weight: p.gold ? 2.0 : 1.0, label: k.label || p.move.label, placed: pIdx,
         }));
       }
     });
@@ -436,13 +441,13 @@ export function deriveEasy(chart, bar = BAR_BEATS) {
       i += 1;
     }
     const cands = group.flatMap((g) => g.move.judge.map((k) => [g.beat + g.move.keyframes[k].beat,
-      g.move.keyframes[k].pose, g.gold, g]));
+      g.move.keyframes[k].pose, g.gold, g, g.move.keyframes[k].label ?? null]));
     const c = pick(cands);
     if (c == null) continue;
-    const [beat, pose, gold, src] = c;
+    const [beat, pose, gold, src, klabel] = c;
     const end = Math.max(...group.map((g) => g.end));
     const held = makeMove(`${src.move.name}~held`, src.move.label, end - beat,
-      Object.freeze([Object.freeze({ beat: 0.0, pose })]), Object.freeze([0]), 0);
+      Object.freeze([Object.freeze({ beat: 0.0, pose, label: klabel })]), Object.freeze([0]), 0);
     out.push(new Placed(held, beat, gold || group.some((g) => g.gold)));
   }
   return out;

@@ -68,6 +68,7 @@ class ChartError(ValueError):
 class Keyframe:
     beat: float  # offset within the move
     pose: dict  # complete (normalized) pose
+    label: str | None = None  # this pose's own name on its card ("Y", "M"...); else the move's label
 
 
 @dataclass(frozen=True)
@@ -231,7 +232,7 @@ def _index(song: Song) -> None:
             song._frames.append((b, k.pose))
             if k_idx in p.move.judge:
                 song._judges.append(JudgePoint(len(song._judges), b, song.time_of(b), k.pose, p.gold,
-                                               2.0 if p.gold else 1.0, p.move.label, p_idx))
+                                               2.0 if p.gold else 1.0, k.label or p.move.label, p_idx))
 
 
 def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
@@ -298,14 +299,14 @@ def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
         while (i < n and not slow(chart[i].move) and bar_of(chart[i].beat) == bar_of(p.beat)):
             group.append(chart[i])
             i += 1
-        cands = [(g.beat + g.move.keyframes[k].beat, g.move.keyframes[k].pose, g.gold, g)
+        cands = [(g.beat + g.move.keyframes[k].beat, g.move.keyframes[k].pose, g.gold, g, g.move.keyframes[k].label)
                  for g in group for k in g.move.judge]
         c = pick(cands)
         if c is None:
             continue
-        beat, pose, gold, src = c
+        beat, pose, gold, src, klabel = c
         end = max(g.end for g in group)
-        held = Move(f"{src.move.name}~held", src.move.label, end - beat, (Keyframe(0.0, pose),), (0,), 0)
+        held = Move(f"{src.move.name}~held", src.move.label, end - beat, (Keyframe(0.0, pose, klabel),), (0,), 0)
         out.append(Placed(held, beat, gold or any(g.gold for g in group)))
     return out
 
@@ -333,7 +334,7 @@ def _parse_move(name: str, spec: dict, where: str, known: dict[str, Move]) -> Mo
             raise ChartError(f"{where}: move '{name}' mirrors unknown move '{spec['mirror_of']}'")
         label = spec.get("label", src.label)
         return Move(name, label, src.beats,
-                    tuple(Keyframe(k.beat, normalize_pose(mirror_pose(k.pose))) for k in src.keyframes),
+                    tuple(Keyframe(k.beat, normalize_pose(mirror_pose(k.pose)), k.label) for k in src.keyframes),
                     src.judge, src.pictogram)
     try:
         beats = float(spec["beats"])
@@ -356,7 +357,10 @@ def _parse_move(name: str, spec: dict, where: str, known: dict[str, Move]) -> Mo
         if b <= last:
             raise ChartError(f"{where}: move '{name}' keyframe beats must ascend (keyframe {i})")
         last = b
-        frames.append(Keyframe(b, pose))
+        klabel = k.get("label")
+        if klabel is not None and not (isinstance(klabel, str) and 0 < len(klabel) <= 15):
+            raise ChartError(f"{where}: move '{name}' keyframe {i}: 'label' must be a short name, got {klabel!r}")
+        frames.append(Keyframe(b, pose, klabel))
     judge = tuple(spec.get("judge", range(len(frames))))
     if any(not isinstance(i, int) or not 0 <= i < len(frames) for i in judge):
         raise ChartError(f"{where}: move '{name}' judges a keyframe that doesn't exist: {list(judge)}")

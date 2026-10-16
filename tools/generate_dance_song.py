@@ -8,6 +8,7 @@ byte-identical run to run.
 
     uv run python tools/generate_dance_song.py                        # Neon Nights (the default)
     uv run python tools/generate_dance_song.py --song pumpkin_patch_bounce
+    uv run python tools/generate_dance_song.py --song spell_it_out
     uv run python tools/generate_dance_song.py --all                  # every song
 
 Each writes assets/dance/songs/<id>/audio.m4a (AAC 44.1 kHz stereo). The
@@ -31,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dance_synth  # noqa: E402
 from dance_synth import SR, to_int16  # noqa: E402
 
-SONG_IDS = ("neon_nights", "pumpkin_patch_bounce")
+SONG_IDS = ("neon_nights", "pumpkin_patch_bounce", "spell_it_out")
 
 
 def load(song_id: str) -> ModuleType:

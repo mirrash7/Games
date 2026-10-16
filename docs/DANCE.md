@@ -24,7 +24,7 @@ Matching Just Dance's *mechanics* is fine.
 ```
 assets/dance/
   moves.json                 shared move library (section 4)
-  songs/index.json           ["neon_nights", ...]: the song list, in menu order
+  songs/index.json           ["spell_it_out", "neon_nights", ...]: the song list, in menu order (the first is preselected)
   songs/<id>/song.json       metadata + chart (section 5)
   songs/<id>/audio.m4a       AAC, 44.1 kHz stereo; read by both builds
   generated/                 art from tools/generate_dance_assets.py (+ manifest.json)
@@ -225,15 +225,23 @@ a thinner bend. The tolerances are tuned in simulation only.
                             "lf": [0.7, 0], "rf": [0.7, 0], "shift": 0.32, "squat": 0.12}},
        {"beat": 1, "pose": {"ra": [80, -80], "la": [80, -80],          // touch: fists in, left toe taps
                             "lf": [0.22, 0.08], "rf": [0.22, 0], "shift": 0.1, "squat": 0.3}}
-     ],
+     ],                                // a keyframe may carry its own "label" (below)
      "judge": [0],                     // keyframe indexes that are judged (default: all)
      "pictogram": 0                    // the move's thumbnail in kp dance-preview (default: first judged)
    },
    "step_touch_l": {"mirror_of": "step_touch_r"}}}
 ```
 
-45 moves, 44 of them judge the legs (all but the bow). Version 2 is the feet
+49 moves, 48 of them judge the legs (all but the bow). Version 2 is the feet
 format (section 3); version 1 files (`ll`/`rl` leg angles) still load.
+
+- **Keyframe labels:** a keyframe may name itself (`"label": "Y"`, up to 15
+  characters). Its judge point, card, the name under the ring and the rating
+  popup then say that instead of the move's label. Spell It Out's `letters` is
+  one 8-beat move whose four judged keyframes are labelled Y, M, C and A: one
+  move keeps the four letters together (EASY keeps slow moves whole, so it
+  spells them too, section 7a), and each card still says its letter. Mirrored
+  twins and EASY's held moves keep a keyframe's label.
 
 - **Coach animation** eases between keyframes (smoothstep in beat time).
   It reaches each keyframe exactly on its beat and holds it until the next
@@ -246,7 +254,10 @@ format (section 3); version 1 files (`ll`/`rl` leg angles) still load.
   always agree; cards can come every beat. (Earlier, one card per move left
   60 of Neon Nights' 145 points without a card, and "Point Up" was labelled
   over a horizontal point.) `pictogram` now only picks the move's thumbnail
-  in `kp dance-preview`.
+  in `kp dance-preview`. A one-character label (the letters) is also drawn
+  on the card, as a hot-pink badge (gold on gold cards) in its bottom-right
+  corner, the one the letters' arms and legs leave free: the letter reads from
+  2 m before the card reaches the ring (`render.glyph_label`, `draw_glyph_badge`).
 - **Mirrored twins:** a move named `x_l` / `x_r` can be generated from the
   other side (`chart.mirror_pose`: swap `la`/`ra` and `lf`/`rf`, negate
   `lean`, `head` and `shift`). Prefer authoring one side and declaring
@@ -416,11 +427,12 @@ They are generic patterns, not anyone's routine.
 | `freeze` / `rest` | the freeze rule; a pose that standing still with arms down scores on |
 | `wander` | the coach travelling more than 1.5 SW from its spot |
 
-Both songs pass on every difficulty (EASY without the phrase checks: it
+Every song passes on every difficulty (EASY without the phrase checks: it
 keeps one pose a bar); the charts before this had 110 (Neon Nights) and 63
 (Pumpkin Patch Bounce) issues, mostly flow and whiplash. Hand travel now:
 median 1.52 SW a beat on Neon Nights (was 2.03), 1.70 on Pumpkin Patch Bounce
-(was 1.97), none over 2.3. `kp dance-preview` and `kp dance-import` print it;
+(was 1.97), 1.52 on Spell It Out (written against the lint from the start),
+none over 2.3. `kp dance-preview` and `kp dance-import` print it;
 `tests/test_dance_chart.py` and `web/tests/dance_chart.test.mjs` run it on
 every shipped song.
 
@@ -479,6 +491,91 @@ dangling forearms), Hands Up (jump out, arms up).
 identically, and that standing still scores on no judged pose.
 Judge points: EASY 40, NORMAL 99, HARD 99.
 
+## 6c. The letters song: "Spell It Out" (first on the song list)
+
+127 BPM, 4/4, B-flat major, offset 0.0, 100.5 s (208 beats = 98.27 s of
+music plus a ring-out), coach outfit `disco` (a gold jacket, white flares,
+hot-pink cuffs, belt and stripes). It is the first id in `songs/index.json`,
+so it heads the song list and is preselected in both builds (the landing
+page's hero still dances Neon Nights, by id).
+
+The dance everyone knows: spelling four letters with the arms on every
+chorus. The letter gesture is a generic crowd move; the song, the routine
+around it and every pose are our own, and no names from elsewhere appear
+(song, ids, files: the moves are just "Y", "M", "C", "A"). The music borrows
+only the cadence of late-70s party disco: four-on-the-floor at 127, an
+octave-bouncing bass, claps on 2 and 4, an open hat on every off-beat, string
+swoops and brass stabs. The chorus leaves the crowd room to spell: four tutti
+brass-and-string stabs two beats apart, each a step higher than the last
+(B-flat, C, D, F), with only the beat and the claps under them, and the
+letters land on them. Melody, harmony (verses I-iii-IV-V, I-iii-ii-V;
+choruses IV-V-iii-vi, IV-V-ii-V), bass line and arrangement are original, and
+it is instrumental like the others (`tools/dance_songs/spell_it_out.py`).
+
+| beats | section | moves | judged |
+|---|---|---|---|
+| 0-15 | intro | none; snare count-in on 12, 13, 14 under a riser and a string swoop | |
+| 16-47 | verse 1 | Step Touch R/L x2 / Step Clap R/L x2 (a clap overhead on the touch) / Disco Point R/L x2 / Hip Sway R, L, Step Touch R, L | 0.625 a beat |
+| 48-79 | chorus 1 | **Letters** (Y M C A on 48, 50, 52, 54) / Grapevine R, L (open, clap overhead, open, touch and point up) / **Letters** (gold, 64) / Grapevine R, L | 0.75 |
+| 80-111 | verse 2 | Side Kick R/L x2 / Knee Up L/R x2 (marching, the opposite arm up) / the verse's last two 8-counts again | 0.625 |
+| 112-143 | chorus 2 | as chorus 1, gold on 128 | |
+| 144-159 | bridge | the kick drops: Wave x4 (arms overhead swaying right, left, with the hips) / Step Touch R/L x2 | 0.75 |
+| 160-191 | final chorus | as chorus 1, gold on both sets (160, 176) | |
+| 192-207 | outro | Letters on 192 over the last four stabs, the final hit on 200, the bow on 202 | |
+
+**The letters** are one 8-beat move (`letters`), judged on beats 0, 2, 4, 6
+and labelled per keyframe (section 4), with a bounce on each off-beat between.
+They follow **reference poses a player struck in front of the camera**
+(`tools/capture_poses.py`: a countdown per pose, then a second of keypoints
+read by the judge's own `measure()`). The captures' arm angles became the
+targets, nudged at most ~20 degrees (inside the judge's no-penalty band, so
+the reference poses still score PERFECT) where the coach's big head and short
+arms needed it to read, or where consecutive letters had to be told apart:
+
+| letter | reference (upper / forearm) | chart | the shape |
+|---|---|---|---|
+| Y | 135 / 145 | 135 / 145 | arms up in a wide V, feet apart |
+| M | 137 / 237 | 150 / 250 | hands on top of the head, elbows up and out, a step right |
+| C | top 149 / 216, bottom 87 / 151, lean 44 | top 150 / 232, bottom 70 / 135, lean 44 | the body leans (head to the screen's right) and both arms reach right: the screen-left arm up and over the head, the screen-right arm down and out; the leaning body is the C's back |
+| A | 154 / 215 | 172 / 230 | hands meeting on top of the head, elbows bent out, feet wide |
+
+The C opens to the screen's right: the coach shows a C, and a player copying
+like a mirror makes the same C in their own mirrored camera image; a reversed
+C is a miss (`test_the_c_reads_the_right_way_round_on_screen`). The
+reference first C (the bottom arm curled across the chest) didn't read on the
+coach; capture the poses again to revise the letters.
+
+Consecutive letters (Y-M, M-C, C-A) score below the freeze line (0.55) when
+the previous one is held, seen whole, with the feet out of frame and without
+elbows (`test_consecutive_letters_are_told_apart`). Letters that never
+follow each other needn't be told apart, and in the reference poses two
+pairs aren't: **M and A** are nearly the same arms (hands on the head, hands
+together just above it) and **Y and C** share an upper arm. The chart never
+puts them back to back, which the same test checks on every difficulty. Each
+letter card carries its letter as a badge (section 4).
+
+Judge points: EASY 58, NORMAL 128, HARD 128. EASY keeps every letter (the
+`letters` move is slow: a bar or longer, judged poses 2 beats apart) and
+holds one pose a bar elsewhere. Results (section 7's input path, whole body
+in view; `tests/test_dance_game.py`):
+
+| player | EASY | NORMAL | HARD |
+|---|---|---|---|
+| perfect | 10000 | 10000 | 10000 |
+| perfect, legs out of frame | 8000, 0 X | 8000, 0 X | 5500, 0 X |
+| perfect, 250 ms behind the coach | 10000 | 10000 | 9972 |
+| precise (10 degrees, 0.06 SW, 200 ms late) | 10000 | 10000 | 9764 |
+| 10-20 degrees off, 200 ms late, 15 Hz / 200 ms | 9703 | 9347 | 8472 (4 stars) |
+| sloppy | 8203 (4 stars) | 7997 (3 stars) | 5639 (2 stars) |
+| perfect arms, legs standing still | 5973 (2 stars) | 5830 (2 stars) | 4309 (2 stars) |
+| frozen on the first pose | 3115 (1 star) | 3170 (1 star) | 1927 |
+| idle, arms down | 0 | 250 | 83 |
+| random arms | 1534 | 1566 | 667 |
+| wrong side (mirror image) | 6892 | 5444 | 4410 |
+
+The sloppy dancer, 250 ms late, scores a little less than on the slower songs:
+at 127 BPM a beat is 0.47 s, and lateness costs more of each pose's window.
+
 ## 7. Judging (`judge.py`)
 
 The numbers in this section are NORMAL's. EASY and HARD change the window,
@@ -529,7 +626,8 @@ the starting numbers (window `[t - 0.20, t + 0.40]`, PERFECT 0.86):
 | window end 0.40 -> 0.50 | A flawless dancer just 250 ms behind the coach took 15 X on Neon Nights (7138). The late edge minus the lag minus the hold left it under 0.2 s. At 0.50 it is all PERFECT. The frozen, idle, random and wrong-side players gained at most a few hundred points. |
 | PERFECT 0.86 -> 0.90 | A segment scores `1 - (d - 20) / 70`, so 0.86 meant "within 30 degrees", and the 25-30 degree dancer took PERFECT on 38% of moves. At 0.90 (about 27 degrees) it is 88% SUPER. 0.92 was too far: a dancer 10-20 degrees off and 200 ms late on a 15 Hz model dropped to 4 stars. |
 
-Results with these numbers on NORMAL (`tests/test_dance_game.py`; players
+Results with these numbers on NORMAL (Spell It Out's are in section 6c;
+`tests/test_dance_game.py`; players
 2.5-3 m back with the whole body in view, `FULL_BODY`, unless stated; the
 sloppy players are 25-30 degrees off on every arm segment, 0.12-0.2 SW off on
 every foot, the hips and squat sloppy too, 250 ms late):
@@ -612,7 +710,9 @@ every song gets it for free:
   short moves: one held pose for its bar.
 - On Neon Nights: verse 1 goes from 16 poses to 9 (one a bar, the pre-chorus
   Squat & Rise in full), each chorus from 26 to 8, the bridge keeps its 8,
-  plus the final pose: 49 points. The last one is at 96 s, well past the
+  plus the final pose: 49 points. On Spell It Out every set of letters stays
+  whole (28 points): 58 of 128. The short moves become one pose a bar (at most
+  0.42 of their normal points), and EASY has at most half the points overall. The last one is at 96 s, well past the
   leaderboard's 400-points-a-second cap (`leaderboard/src/rules.js`: a dance
   run must end its last judged move at least 25 s in; EASY's last points are
   at 96 s and 82.8 s).

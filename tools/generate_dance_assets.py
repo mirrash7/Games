@@ -102,6 +102,21 @@ OUTFITS = {
         "rim": rgb(255, 196, 90),  # warm candle-light line
         "glow": rgb(255, 110, 20),  # orange halo
     },
+    # "Spell It Out": a disco-night look. A gold jacket, white flares, hot-pink
+    # cuffs, belt, stripes and soles, a champagne rim and a warm gold halo.
+    "disco": {
+        "fur": rgb(160, 118, 222),
+        "fur_dark": rgb(92, 58, 150),
+        "top": rgb(255, 186, 36),  # gold
+        "top_hi": rgb(255, 240, 160),
+        "pants": rgb(238, 232, 250),  # white flares
+        "accent": rgb(255, 64, 160),  # hot pink
+        "glove": rgb(250, 246, 255),
+        "shoe": rgb(250, 248, 255),
+        "ink": INK,
+        "rim": rgb(255, 232, 150),  # champagne line
+        "glow": rgb(255, 160, 40),  # gold halo
+    },
 }
 
 # Rating words: fill colour (BGR) and sprite. PERFECT gold, SUPER cyan, GOOD
