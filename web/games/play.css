@@ -1,4 +1,4 @@
-/* RoboFlow Fun: one page per game (games/<slug>/index.html).
+/* ROBOFLOW Fun: one page per game (games/<slug>/index.html).
    Layout and components shared by every game page. Each game's theme.css sets
    the --g-* tokens and its own backdrop; the CTA stays the brand purple.
 

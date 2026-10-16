@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>RoboFlow Fun: computer vision you can play</title>
-  <meta name="description" content="Interactive computer-vision experiences that run live in your browser. Start with arcade games you control with your whole body, tracked by a pose model on your own device.">
+  <title>ROBOFLOW Fun: live computer vision you can try</title>
+  <meta name="description" content="Live computer-vision experiences powered by Roboflow's RF-DETR, running on your own device in the browser. Point a camera and see what vision AI can do: games today, more kinds of experiences on the way.">
   <meta name="theme-color" content="#161026">
   <meta name="color-scheme" content="dark light">
   <link rel="icon" href="assets/snack/raccoon_idle.png">
 
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="RoboFlow Fun">
-  <meta property="og:title" content="RoboFlow Fun: computer vision you can play">
-  <meta property="og:description" content="Interactive computer-vision experiences that run live in your browser. Body-controlled games today, more experiences on the way.">
+  <meta property="og:site_name" content="ROBOFLOW Fun">
+  <meta property="og:title" content="ROBOFLOW Fun: live computer vision you can try">
+  <meta property="og:description" content="Live computer-vision experiences powered by Roboflow's RF-DETR, running on your own device in the browser.">
   <meta property="og:url" content="https://mirrash7.github.io/Games/">
   <meta property="og:image" content="https://mirrash7.github.io/Games/media/hero.jpg">
   <meta property="og:image:alt" content="A glowing keypoint skeleton dancing inside a detection box">
@@ -43,7 +43,7 @@
 
   <header class="site-header">
     <div class="wrap header-row">
-      <a class="wordmark" href="./" aria-label="RoboFlow Fun, home">
+      <a class="wordmark" href="./" aria-label="ROBOFLOW Fun, home">
         <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5" fill="none" stroke="currentColor" stroke-width="1.5"/>
           <path d="M12 7.5 8.5 11.5l-1 4M12 7.5l3.5 4 1 4M12 7.5v6l-2 4.5M12 13.5l2 4.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
@@ -51,7 +51,7 @@
           <circle cx="8.5" cy="11.5" r="1.1" fill="currentColor"/><circle cx="15.5" cy="11.5" r="1.1" fill="currentColor"/>
           <circle cx="10" cy="18" r="1.1" fill="currentColor"/><circle cx="14" cy="18" r="1.1" fill="currentColor"/>
         </svg>
-        <span>RoboFlow Fun</span>
+        <span>ROBOFLOW Fun</span>
       </a>
       <nav class="top-nav" aria-label="Main">
         <a href="#experiences">Experiences</a>
@@ -72,15 +72,15 @@
       <div class="wrap hero-inner">
         <div class="hero-copy">
           <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Live in your browser<span class="wide">&nbsp;· On-device</span></p>
-          <h1 id="hero-title">RoboFlow <br>Fun</h1>
-          <p class="lede">Interactive computer-vision experiences that run live in your browser.
-            First up: arcade games you control with your whole body.</p>
+          <h1 id="hero-title">ROBOFLOW <br>Fun</h1>
+          <p class="lede">Live computer-vision experiences powered by Roboflow's RF-DETR models,
+            running on your own device, right in the browser. Point a camera and see what vision AI can do.</p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="arcade/">Play the arcade<span class="arrow" aria-hidden="true">→</span></a>
-            <a class="btn btn-ghost" href="#experiences">Explore experiences</a>
+            <a class="btn btn-primary" href="#experiences">Explore experiences<span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn btn-ghost" href="arcade/">Play the arcade</a>
           </div>
           <dl class="hero-stats">
-            <div><dt>Keypoints / person</dt><dd>17</dd></div>
+            <div><dt>Model</dt><dd>RF-DETR</dd></div>
             <div><dt>Runs on</dt><dd>WebGPU</dd></div>
             <div><dt>Frames uploaded</dt><dd>0</dd></div>
           </dl>
@@ -101,7 +101,7 @@
           <p class="eyebrow"><span class="idx">[01]</span> Experiences</p>
           <h2 id="experiences-title">Pick an experience</h2>
         </div>
-        <p class="section-note">Every experience runs on your device, in the browser. Start with the body-controlled games; more categories land here as they're built.</p>
+        <p class="section-note">Every experience runs on your device, in the browser, on a Roboflow model. Body-controlled games are the first category; more kinds of vision experiences land here as they're built.</p>
       </div>
 
       <nav id="category-menu" class="menu" aria-label="Experience categories">
@@ -144,7 +144,7 @@
               <path d="M16 4v6M24 4v6M32 4v6M16 38v6M24 38v6M32 38v6M4 16h6M4 24h6M4 32h6M38 16h6M38 24h6M38 32h6"/>
             </svg>
             <h3>RF-DETR, in your browser</h3>
-            <p>A real-time keypoint model finds 17 body points per person, on WebGPU when your browser has it.</p>
+            <p>Roboflow's real-time detection model runs on WebGPU when your browser has it. Today's experiences use its keypoint model: 17 body points per person.</p>
           </li>
           <li class="step">
             <span class="step-idx">03</span>
@@ -152,8 +152,8 @@
               <circle cx="24" cy="9" r="4"/><path d="M24 13v14M24 17l-10-6M24 17l10-6M24 27l-7 13M24 27l7 13"/>
               <circle cx="14" cy="11" r="1.8" class="dot"/><circle cx="34" cy="11" r="1.8" class="dot"/><circle cx="17" cy="40" r="1.8" class="dot"/><circle cx="31" cy="40" r="1.8" class="dot"/>
             </svg>
-            <h3>Your body drives it</h3>
-            <p>Hands become cursors, flaps become flight, poses become dance moves, swings become golf shots. The game draws at 60 frames a second.</p>
+            <h3>What it sees, you control</h3>
+            <p>Each experience turns what the model sees into something you can do. In the games: hands become cursors, flaps become flight, poses become dance moves, swings become golf shots.</p>
           </li>
         </ol>
       </div>
@@ -163,8 +163,8 @@
   <footer class="site-footer">
     <div class="wrap footer-grid">
       <div class="footer-brand">
-        <a class="wordmark" href="./"><span>RoboFlow Fun</span></a>
-        <p>Interactive computer-vision experiences that run live in your browser.</p>
+        <a class="wordmark" href="./"><span>ROBOFLOW Fun</span></a>
+        <p>Live computer-vision experiences powered by Roboflow's RF-DETR, running in your browser.</p>
         <p class="credit">Powered by <a href="https://github.com/roboflow/rf-detr" target="_blank" rel="noopener">RF-DETR</a> (Roboflow, Apache-2.0).</p>
       </div>
       <div>

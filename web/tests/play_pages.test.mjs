@@ -73,7 +73,7 @@ test("there is one page per registered game, and it names that game", () => {
     const html = read(pageUrl(p.slug));
     const body = html.match(/<body\b[^>]*>/i)?.[0] ?? "";
     assert.match(body, new RegExp(`\\bdata-game="${p.game}"`), `${p.slug}: <body data-game="${p.game}">`);
-    assert.match(html, new RegExp(`<title>${p.title} · RoboFlow Fun</title>`), `${p.slug}: <title>`);
+    assert.match(html, new RegExp(`<title>${p.title} · ROBOFLOW Fun</title>`), `${p.slug}: <title>`);
   }
 });
 

@@ -158,7 +158,7 @@ href opens a page whose `data-game` is a registered game.
 
 ## Landing page
 
-`web/index.html` is the site's front door: a "RoboFlow Fun" of
+`web/index.html` is the site's front door: a "ROBOFLOW Fun" of
 interactive computer-vision experiences, of which the arcade games are the
 first category. Roboflow-like colours and type (no logos; the footer says the
 project is independent) and a credit for RF-DETR.
