@@ -321,13 +321,23 @@ re-run the model on offline. Analyse these before tuning anything.
   frame on every downstroke, and at a 15-20 Hz model rate up to ~30% of flaps
   are missed. Not yet tested with a live player.
 - **Raccoon Dance** (`dance`, docs/DANCE.md): the coach (the raccoon) dances
-  to a song and the player copies it like a mirror. Poses are torso-frame limb
-  angles (`dance/pose.py`), judged per beat with a late-skewed window and a
-  0.12 s hold (`dance/judge.py`). The drawn coach performs the chart
-  (`dance/motion.py`: anticipation, overshoot that settles on the beat, groove,
-  follow-through) and is painted lit with depth; judged angles stay exact on
-  judged beats (`tests/test_dance_motion.py`, docs/DANCE.md 4a). Songs are folders in `assets/dance/songs/`
-  (audio + `song.json` chart). The shell shows a song list for games with
+  to a song and the player copies it like a mirror. Poses are torso-frame arm
+  angles plus the lower body as feet on the floor (`lf`/`rf` [out, up]),
+  hips over the feet (`shift`) and knee bend (`squat`); legs follow by IK
+  (`dance/pose.py`). The legs are judged on what a webcam 2.5-3 m away sees
+  (stance, weight over a foot, a lifted foot, knee bends: `read_lower`, the
+  same function for coach and player), weighing as much as both arms on a leg
+  move; legs out of view on a leg move earn half credit (never an X, never a
+  PERFECT; the game says SHOW YOUR FEET). Judged per beat with a late-skewed window and a 0.12 s hold
+  (`dance/judge.py`). The drawn coach performs the chart (`dance/motion.py`:
+  anticipation, overshoot that settles on the beat, groove, follow-through,
+  and steps: the supporting foot stays planted while the coach travels, the
+  stepping foot lifts) and is painted lit with depth; judged arms, lean and
+  lower-body features stay exact on judged beats (`tests/test_dance_motion.py`,
+  docs/DANCE.md 4a). Choreography follows written rules (docs/DANCE.md 5a:
+  8-counts that repeat or mirror, legs set the rhythm, smooth hand and foot
+  paths) checked by `chart.lint` for every song (`kp dance-preview` prints it).
+  Songs are folders in `assets/dance/songs/` (audio + `song.json` chart). The shell shows a song list for games with
   `variants()`, with one leaderboard per song (`dance-<id>`). Add songs with
   `kp dance-import` (from a recording) and check them with `kp dance-preview`.
   Two songs, both original and synthesised (`tools/generate_dance_song.py
@@ -335,9 +345,12 @@ re-run the model on offline. Analyse these before tuning anything.
   engine in `tools/dance_synth.py`): "Neon Nights" (synth-pop, 120 BPM) and
   "Pumpkin Patch Bounce" (a TikTok-style hook routine with an October flavour,
   116 BPM, pumpkin coach outfit). Choreography is original: viral-dance
-  *style* and generic moves, never a creator's routine. Bots prove fairness: a perfect dancer
-  150 ms late scores 10000; idle, frozen and random players stay at 1 star or
-  below. Not yet tested with a live player.
+  *style* and generic moves, never a creator's routine. Bots prove fairness (whole body
+  in view): a perfect dancer 150 ms late scores 10000 on every song and difficulty, and
+  one whose legs are out of frame gets 8000 (never an X); perfect arms with the legs standing still
+  score 2-3 stars; idle, frozen and random players stay at 1 star or below. The leg
+  judging (tolerances, a frontal camera's foreshortening of forward knee bends) has
+  not yet been tested with a live player.
 - **Raccoon Golf** (`golf`): three original island holes (par 4, 3, 5) with Wii Sports
   Resort Golf's mechanics: behind-the-ball pinhole view, auto club and aim (adjustable by
   hovering AIM / CLUB or the arrow keys, which the shell now passes to a game's

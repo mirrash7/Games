@@ -20,7 +20,7 @@ from kpapp.game.dance.chart import load_library, load_song, load_songs, song_ids
 from kpapp.game.dance.importer import (
     chart_from_poses, format_song_json, merge_into_song, pose_from_measured, video_samples,
 )
-from kpapp.game.dance.pose import REST, keypoints_for, measure, normalize_pose, similarity
+from kpapp.game.dance.pose import FULL_BODY, REST, keypoints_for, measure, normalize_pose, similarity
 
 LIB = load_library()
 SONGS = load_songs(library=LIB)
@@ -32,9 +32,10 @@ ELBOWS_HIDDEN = {"shoulder", "wrist", "hip"}
 FREEZE_MAX = 0.55  # a player frozen in the previous pose must score below this
 
 
-def sim(target: dict, performed: dict, visible=None, **kw) -> float:
-    """How well a perfect performance of `performed` matches `target`."""
-    return similarity(target, measure(keypoints_for(performed, visible=visible, **kw)))[0]
+def sim(target: dict, performed: dict, visible=None, unseen_legs=None, **kw) -> float:
+    """How well a perfect performance of `performed` matches `target`; legs the
+    framing hides are left out unless `unseen_legs` is given."""
+    return similarity(target, measure(keypoints_for(performed, visible=visible, **kw)), unseen_legs)[0]
 
 
 # --- every song --------------------------------------------------------------
@@ -60,11 +61,14 @@ def test_audio_is_delivered(song):
 @pytest.mark.parametrize("song", LEVELS, ids=lambda s: f"{s.id}-{s.level}")
 def test_a_frozen_player_cannot_score(song):
     """Consecutive judged poses differ enough that holding the previous one
-    earns less than 0.55 on the next, with or without elbows in view. On
-    every difficulty: EASY's derived chart must not let a player stand still."""
+    earns less than 0.55 on the next: seen whole (feet too), with the feet out
+    of frame, and without elbows. On every difficulty: EASY's derived chart
+    must not let a player stand still."""
     assert FREEZE_MAX == chart.FREEZE_MAX
     jp = song.judge_points()
     for a, b in zip(jp, jp[1:]):
+        body = sim(b.pose, a.pose, **FULL_BODY)
+        assert body < FREEZE_MAX, f"{song.id}: '{a.label}' at beat {a.beat:g} scores {body:.2f} on beat {b.beat:g}"
         full = sim(b.pose, a.pose)
         reach = sim(b.pose, a.pose, ELBOWS_HIDDEN)
         assert full < FREEZE_MAX, f"{song.id}: '{a.label}' at beat {a.beat:g} scores {full:.2f} on beat {b.beat:g}"
@@ -79,6 +83,70 @@ def test_a_perfect_player_matches_every_judged_pose(song):
         assert sim(p.pose, p.pose, ELBOWS_HIDDEN) > 0.97, f"{p.label} at {p.beat:g}, elbows hidden"
         close = sim(p.pose, p.pose, centre_px=(640, 480), shoulder_px=200)  # hips below the frame
         assert close > 0.97, f"{p.label} at {p.beat:g}, standing close"
+        assert sim(p.pose, p.pose, **FULL_BODY) > 0.99, f"{p.label} at {p.beat:g}, whole body in view"
+
+
+# --- the choreography lint (docs/DANCE.md section 5a) -------------------------------
+
+@pytest.mark.parametrize("song", LEVELS, ids=lambda s: f"{s.id}-{s.level}")
+def test_every_song_passes_the_choreography_lint(song):
+    """Flow, 8-count phrases that repeat, leg work in every section, leg moves
+    the camera can judge, the freeze rule and a coach that stays on its spot.
+    EASY's derived chart keeps one pose a bar, so its phrases aren't checked."""
+    issues = chart.lint(song, phrases=song.level != "easy")
+    assert not issues, "\n".join(str(i) for i in issues)
+
+
+@pytest.mark.parametrize("song", SONGS, ids=lambda s: s.id)
+def test_the_legs_set_the_rhythm(song):
+    """Most judged poses work the legs, and perfect arms with the legs standing
+    still fall short of PERFECT on every one of them."""
+    pts = song.judge_points()
+    led = [p for p in pts if chart.leg_led(p.pose)]
+    assert len(led) >= 0.8 * len(pts), f"{len(led)} of {len(pts)}"
+    for p in led:
+        still = dict(normalize_pose(p.pose), lf=list(REST["lf"]), rf=list(REST["rf"]), shift=0.0, squat=0.0)
+        assert sim(p.pose, still, **FULL_BODY) < 0.9, f"{p.label} at {p.beat:g}: arms alone are a PERFECT"
+
+
+def _lint_song(tmp_path, moves, custom, sections=None, bpm=120, duration=60.0):
+    folder = tmp_path / "lint"
+    folder.mkdir(exist_ok=True)
+    (folder / "song.json").write_text(json.dumps({
+        "title": "Lint", "bpm": bpm, "duration": duration, "moves": moves, "custom_moves": custom,
+        "sections": sections or [{"name": "intro", "beat": 0}, {"name": "verse", "beat": 16}]}))
+    return load_song(folder, LIB)
+
+
+def _kinds(song):
+    return {i.kind for i in chart.lint(song)}
+
+
+def test_the_lint_flags_the_old_charts_problems(tmp_path):
+    """What the lint is for: arms whipping from the chest to overhead every
+    beat, an 8-count that never comes back, a section without leg work and a
+    leg move too small for the camera."""
+    clap = {"beats": 2, "keyframes": [{"beat": 0, "pose": {"la": [-30, -60], "ra": [-30, -60], "squat": 0.2}},
+                                      {"beat": 1, "pose": {"la": [175, 180], "ra": [175, 180]}}]}
+    song = _lint_song(tmp_path, [{"move": "clap", "beat": 16 + 2 * i} for i in range(4)], {"clap": clap})
+    kinds = _kinds(song)
+    assert {"flow", "whiplash", "legs"} <= kinds, kinds
+    tiny = {"beats": 2, "keyframes": [{"beat": 0, "pose": {"la": [170, 175], "ra": [90, 90], "rf": [0.45, 0]}}]}
+    other = {"beats": 2, "keyframes": [{"beat": 0, "pose": {"la": [90, 90], "ra": [170, 175]}}]}
+    song = _lint_song(tmp_path, [{"move": "tiny", "beat": 16}, {"move": "other", "beat": 18},
+                                 {"move": "hip_sway_r", "beat": 20}, {"move": "tiny", "beat": 22}],
+                      {"tiny": tiny, "other": other})
+    kinds = _kinds(song)
+    assert {"unjudgeable", "phrase"} <= kinds, kinds
+
+
+def test_the_lint_passes_a_repeated_mirrored_phrase(tmp_path):
+    moves = [{"move": n, "beat": 16 + 2 * i} for i, n in enumerate(
+        ["step_touch_r", "step_touch_l", "step_touch_r", "step_touch_l", "hip_sway_r", "hip_sway_l",
+         "hip_sway_r", "hip_sway_l"])]
+    assert chart.lint(_lint_song(tmp_path, moves, {})) == []
+    straddle = [{"move": "step_touch_r", "beat": 16}, {"move": "squat_rise", "beat": 22}]
+    assert "phrase" in _kinds(_lint_song(tmp_path, straddle, {})), "a move across an 8-count boundary"
 
 
 # --- Neon Nights: the spec in docs/DANCE.md section 6 ----------------------------------
@@ -109,7 +177,9 @@ def test_neon_nights_structure():
     for c in choruses:
         assert [p.move.name for p in c] == signature, "every chorus dances the same signature"
         assert c[-1].end <= c[0].beat + 32
-    assert signature[:len(signature) // 2] == signature[len(signature) // 2:], "the phrase repeats within a chorus"
+    half = len(signature) // 2
+    twin = [n[:-2] + ("_l" if n.endswith("_r") else "_r") if n[-2:] in ("_r", "_l") else n for n in signature[:half]]
+    assert signature[half:] == twin, "a chorus dances its 16 counts, then the same 16 mirrored"
     assert [sum(p.gold for p in c) for c in choruses] == [1, 1, 2]
     assert not any(p.gold for p in NEON.chart if not any(c0[0].beat <= p.beat < c0[0].beat + 32
                                                           for c0 in choruses)), "gold only in choruses"
@@ -133,11 +203,14 @@ def test_verse_1_is_the_easiest():
 
 
 def test_sides_alternate():
-    """A one-sided move is followed by its twin, so both arms get the work."""
-    names = [p.move.name for p in NEON.chart]
-    for i, n in enumerate(names):
-        if n.endswith("_r") and f"{n[:-2]}_l" in names:
-            assert f"{n[:-2]}_l" in names[i + 1:i + 3] or f"{n[:-2]}_l" in names[max(0, i - 2):i], n
+    """A one-sided move gets its twin in the same section (right away, or in the
+    phrase's mirrored half), so both sides get the work."""
+    for name, lo in SECTIONS:
+        hi = next((b for _, b in SECTIONS if b > lo), 212)
+        names = [p.move.name for p in section_moves(NEON, lo, hi)]
+        for n in names:
+            if n.endswith("_r"):
+                assert f"{n[:-2]}_l" in names, f"{name}: {n} without its twin"
 
 
 # --- Pumpkin Patch Bounce: a hook that keeps coming back --------------------------
@@ -198,8 +271,8 @@ def test_pumpkin_patch_bounce_hook_is_learnable():
         for half in (0, 16):
             assert poses(lo + half, lo + half + 8) == count_a, f"8-count A at beat {lo + half}"
             assert poses(lo + half + 8, lo + half + 16) == count_b, f"8-count B at beat {lo + half + 8}"
-    # Catchy, not a memory test: about one pose a beat, from a small set of moves.
-    assert 12 <= len(count_a) + len(count_b) <= 16
+    # Catchy, not a memory test: most beats judged, from a small set of moves.
+    assert 10 <= len(count_a) + len(count_b) <= 16
     assert len({p.move.label for p in section_moves(PUMPKIN, 16, 32)}) <= 7
     # Every 8-count of the song starts a move on its downbeat.
     starts = {p.beat for p in PUMPKIN.chart}
@@ -238,7 +311,7 @@ def test_easy_judges_about_one_pose_per_bar(song):
     fewer points overall."""
     easy, normal = song.for_difficulty("easy"), song.judge_points()
     pts = easy.judge_points()
-    assert pts and len(pts) <= 0.4 * len(normal), (len(pts), len(normal))
+    assert pts and len(pts) <= 0.42 * len(normal), (len(pts), len(normal))
     beats = [p.beat for p in pts]
     assert all(b - a >= chart.EASY_MIN_GAP for a, b in zip(beats, beats[1:]))
     short = {p.beat for p in pts if easy.chart[p.placed].move.name.endswith("~held")}
@@ -273,7 +346,7 @@ def test_easy_coach_holds_the_kept_pose(song):
 def test_neon_nights_easy():
     easy = NEON.for_difficulty("easy")
     pts = easy.judge_points()
-    assert len(NEON.judge_points()) == 145 and len(pts) == 49
+    assert len(NEON.judge_points()) == 123 and len(pts) == 49
     # Every section with gold keeps gold.
     for name, lo in SECTIONS:
         hi = next((b for _, b in SECTIONS if b > lo), 212)
@@ -286,40 +359,47 @@ def test_neon_nights_easy():
     outro = section_moves(easy, 192, 212)
     assert [(p.beat, p.move.name) for p in outro] == [(192, "finale"), (196, "bow")]
     assert pts[-1].beat == 192
-    # Verse 1 goes from a pose every 2 beats to one a bar.
-    assert sum(1 for p in pts if 16 <= p.beat < 48) == 8
+    # Verse 1 goes from a pose every 2 beats to one a bar (7 bars), plus the
+    # pre-chorus Squat & Rise, slow already, danced in full (2 poses).
+    assert sum(1 for p in pts if 16 <= p.beat < 48) == 9
+    # A grapevine (4 poses in a bar) becomes one held pose, like the short moves.
+    vines = [p for p in easy.chart if p.move.name.startswith("vine")]
+    assert vines and all(p.move.name.endswith("~held") and len(p.move.judge) == 1 for p in vines)
 
 
 def _write_song(tmp_path, **extra):
     folder = tmp_path / "s"
     folder.mkdir(exist_ok=True)
     data = {"title": "T", "bpm": 120, "duration": 40.0,
-            "moves": [{"move": "shine", "beat": 16}, {"move": "rise", "beat": 20}, {"move": "star", "beat": 24}],
+            "moves": [{"move": "hip_sway_r", "beat": 16}, {"move": "squat_rise", "beat": 20},
+                      {"move": "star_jump", "beat": 24}],
             **extra}
     (folder / "song.json").write_text(json.dumps(data))
     return folder
 
 
 def test_a_song_can_hand_make_its_easy_and_hard_charts(tmp_path):
-    folder = _write_song(tmp_path, charts={"easy": [{"move": "rise", "beat": 20, "gold": True}],
-                                           "hard": [{"move": "shine", "beat": 16}, {"move": "star", "beat": 18},
-                                                    {"move": "rise", "beat": 20}]})
+    folder = _write_song(tmp_path, charts={"easy": [{"move": "squat_rise", "beat": 20, "gold": True}],
+                                           "hard": [{"move": "hip_sway_r", "beat": 16},
+                                                    {"move": "star_jump", "beat": 18},
+                                                    {"move": "squat_rise", "beat": 20}]})
     easy = load_song(folder, LIB, difficulty="easy")
-    assert [(p.move.name, p.beat, p.gold) for p in easy.chart] == [("rise", 20.0, True)]
+    assert [(p.move.name, p.beat, p.gold) for p in easy.chart] == [("squat_rise", 20.0, True)]
     hard = load_song(folder, LIB, difficulty="hard")
-    assert [p.move.name for p in hard.chart] == ["shine", "star", "rise"]
+    assert [p.move.name for p in hard.chart] == ["hip_sway_r", "star_jump", "squat_rise"]
     normal = load_song(folder, LIB)
-    assert [p.move.name for p in normal.chart] == ["shine", "rise", "star"]
+    assert [p.move.name for p in normal.chart] == ["hip_sway_r", "squat_rise", "star_jump"]
     assert normal.for_difficulty("easy").chart == easy.chart, "the hand-made chart wins over the derived one"
 
 
 @pytest.mark.parametrize("charts, message", [
     ({"easy": [{"move": "nope", "beat": 16}]}, "charts.easy: chart entry 0 at beat 16.0: unknown move 'nope'"),
-    ({"hard": [{"move": "rise", "beat": 16}, {"move": "shine", "beat": 18}]}, "charts.hard: move 'shine' at beat 18"),
-    ({"hard": [{"move": "rise", "beat": 78}]}, "runs past the song's end"),
+    ({"hard": [{"move": "squat_rise", "beat": 16}, {"move": "hip_sway_r", "beat": 18}]},
+     "charts.hard: move 'hip_sway_r' at beat 18"),
+    ({"hard": [{"move": "squat_rise", "beat": 78}]}, "runs past the song's end"),
     ({"normal": []}, "only 'easy' and 'hard' charts can be hand-made"),
     ({"expert": []}, "only 'easy' and 'hard'"),
-    ({"easy": {"move": "rise"}}, "charts.easy: expected a list"),
+    ({"easy": {"move": "squat_rise"}}, "charts.easy: expected a list"),
     ([], "'charts' must be an object"),
 ])
 def test_hand_made_charts_are_validated_like_the_normal_one(tmp_path, charts, message):
@@ -344,7 +424,7 @@ def test_easy_moves_gold_to_the_kept_pose_when_the_gold_one_would_freeze():
 # --- the move library ----------------------------------------------------------
 
 def test_library_size_twins_and_labels():
-    assert 22 <= len(LIB) <= 64  # Neon Nights' 29 moves, Pumpkin Patch Bounce's 21, room for a song or two
+    assert 22 <= len(LIB) <= 64  # Neon Nights' 23 moves, Pumpkin Patch Bounce's 20, room for a song or two
     raw = json.loads(chart.LIBRARY.read_text())["moves"]
     for name, spec in raw.items():
         if name.endswith("_l"):

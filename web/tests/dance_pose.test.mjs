@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { KP } from "../js/core/pose.js";
 import { ChartError, idleGroove, parseMoves, parseSong } from "../js/games/dance/chart.js";
 import {
-  angleDiff, forward, keypointsFor, measure, mirrorPose, normalizePose, similarity,
+  FULL_BODY, LEGS_WEIGHT, REST, SQUAT_BEND, angleDiff, forward, keypointsFor, legTarget, measure, mirrorPose, normalizePose, pelvis, similarity,
+  UNSEEN_LEGS,
 } from "../js/games/dance/pose.js";
 
 const ARMS_UP = { la: [170, 175], ra: [170, 175] };
@@ -153,4 +154,61 @@ test("bad custom moves fail", () => {
     /judges a keyframe that doesn't exist/);
   assert.throws(() => parseMoves({ constructor: { mirror_of: "toString" } }, "t"), /mirrors unknown move/,
     "move names never find Object's own properties");
+});
+
+// --- the lower body (docs/DANCE.md section 3a; as tests/test_dance_pose.py) ---
+
+const STEP_R = { lf: [0.7, 0], rf: [0.7, 0], shift: 0.32, squat: 0.12, ra: [95, 100], la: [20, -88] };
+const KNEE_R = { lf: [0.37, 0], rf: [0.2, 0.62], shift: -0.235, la: [138, 145], ra: [40, -45] };
+const PLIE = { lf: [0.72, 0], rf: [0.72, 0], squat: 0.6, la: [90, 90], ra: [90, 90] };
+const CROSS = { lf: [-0.06, 0], rf: [-0.06, 0], shift: 0.04, squat: 0.25, la: [168, 175], ra: [168, 175] };
+const LEG_POSES = [STEP_R, mirrorPose(STEP_R), KNEE_R, PLIE, CROSS, { lf: [0.37, 0], rf: [1.25, 0.5], shift: 0.06 }];
+
+test("the camera reads the coach's lower body back", () => {
+  for (const pose of LEG_POSES) {
+    for (const mirrored of [true, false]) {
+      const want = legTarget(normalizePose(pose)).lower;
+      const m = measure(keypointsFor(pose, { mirrored, ...FULL_BODY }), mirrored);
+      assert.ok(m.seesFeet);
+      for (const k of ["stance", "weight", "lift"]) assert.ok(Math.abs(m.lower[k] - want[k]) < 0.01, k);
+      for (const s of ["l", "r"]) assert.ok(Math.abs(m.lower.bend[s] - want.bend[s]) < 0.5, s);
+      assert.ok(similarity(pose, m)[0] > 0.99);
+    }
+  }
+});
+
+test("shift and squat mean what the camera reads", () => {
+  for (const shift of [-0.4, 0.0, 0.25]) {
+    const p = normalizePose({ lf: [0.5, 0], rf: [0.9, 0], shift });
+    assert.ok(Math.abs(legTarget(p).lower.weight - (shift - (0.9 - 0.5) / 2)) < 1e-9);
+    assert.ok(Math.abs(pelvis(p)[0] - shift) < 1e-12);
+  }
+  for (const squat of [0.2, 0.5, 0.8]) {
+    assert.ok(Math.abs(legTarget(normalizePose({ squat })).lower.bend.l - SQUAT_BEND * squat) < 0.5);
+    assert.ok(Math.abs(forward({ squat }).l_ankle[1] - forward({}).l_ankle[1]) < 1e-9, "the feet stay planted");
+  }
+});
+
+test("legs weigh half of a leg-led move, and legs out of view get half credit", () => {
+  assert.equal(LEGS_WEIGHT, 2.0);
+  const still = { ...STEP_R, lf: [...REST.lf], rf: [...REST.rf], shift: 0.0, squat: 0.0 };
+  const [score, parts] = similarity(STEP_R, measure(keypointsFor(still, FULL_BODY)));
+  assert.ok(parts.legs < 0.15 && score < 0.6, "perfect arms, legs standing still");
+  for (const visible of [["shoulder", "elbow", "wrist", "hip"], ["shoulder", "elbow", "wrist", "hip", "knee"]]) {
+    const m = measure(keypointsFor(STEP_R, { visible, ...FULL_BODY }));
+    assert.ok(m.lower === null && !m.seesFeet);
+    const [s2, p2] = similarity(STEP_R, m);
+    assert.ok(p2.legs === UNSEEN_LEGS && s2 >= 0.74 && s2 < 0.9, "never an X, never a PERFECT");
+    assert.ok(s2 > score, "hidden legs score above legs seen standing still");
+    assert.ok(similarity(STEP_R, m, null)[0] > 0.99, "null leaves them out: what the arms say");
+  }
+  const up = { la: [170, 175], ra: [170, 175] };
+  assert.ok(!legTarget(normalizePose(up)).active, "an arms move leaves the legs free");
+});
+
+test("old leg angles still load as feet", () => {
+  const p = normalizePose({ rl: [70, 0] });
+  assert.ok(!("rl" in p) && p.rf[1] > 0.5);
+  assert.throws(() => normalizePose({ rl: [70, 0], rf: [0.4, 0] }), /not both/);
+  assert.throws(() => normalizePose({ lf: [3.0, 0] }), /'lf' must be \[out -1\.\.2\.2, up 0\.\.1\.4\], got \[3\.0, 0\.0\]/);
 });

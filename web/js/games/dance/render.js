@@ -28,8 +28,8 @@ import { makeCanvas as defaultMakeCanvas } from "../../core/gfx.js";
 import { ACCENT, CYAN, DIM, GOOD, WARN, css, centredText, font, fontPx, panel, text, textWidth } from "../../core/theme.js";
 import { bgr } from "./art.js";
 import { coachMotion, stillMotion } from "./motion.js";
-import { FOREARM, HIP_W, REST, SHIN, SIDE, THIGH, TORSO, UPPER_ARM, forward, lerpPose, limbDir, normalizePose, smoothstep }
-  from "./pose.js";
+import { FOREARM, HIP_W, REST, SHIN, SIDE, THIGH, TORSO, UPPER_ARM, forward, legTarget, lerpPose, limbDir, normalizePose,
+  smoothstep } from "./pose.js";
 
 // --- layout (1280 x 720) ----------------------------------------------------
 export const COACH_X = 520, COACH_FEET = 660;
@@ -522,9 +522,10 @@ export class CoachPainter {
     const jj = forward(p);
     const S = this.S, [ox, oy] = origin ?? this.origin;
     const lift = m.lift * calm;
+    const dx = m.travel ?? 0.0; // steps travel; the bow stays where the dance left it
     const dy = REST_ANKLE_Y - Math.max(jj.l_ankle[1], jj.r_ankle[1]) - lift;
     const j = {};
-    for (const [k, v] of Object.entries(jj)) j[k] = [ox + v[0] * S, oy + (v[1] + dy) * S];
+    for (const [k, v] of Object.entries(jj)) j[k] = [ox + (v[0] + dx) * S, oy + (v[1] + dy) * S];
     if (bow > 0.0) {
       // A front-view bow: the upper body foreshortens towards the camera.
       const hipY = j.hip[1];
@@ -871,36 +872,73 @@ export class CoachPainter {
 
 const PICTO_BODY = bgr([222, 205, 236]);
 const PICTO_ARM = WHITE, PICTO_ARM_GOLD = bgr([170, 238, 255]);
+const PICTO_MARK = bgr([255, 220, 110]); // theme CYAN: the step / lift marks on a card
 
 /**
  * A bold pictogram dancer for `pose`, fitted into rect [x0, y0, x1, y1]: body
  * in light lavender, arms in white (gold-white on gold cards) over it with their
- * own keyline, because the arms are what the judge mostly reads.
+ * own keyline, because the arms are what the judge mostly reads. When the
+ * judge reads the legs too (legTarget), they are drawn like the arms, on a
+ * floor line, with an arrow on the floor towards the foot the weight goes over
+ * (a step or a sway) and a chevron over a lifted foot (a knee lift, a kick).
  */
 export function drawPictogramFigure(ctx, pose, rect, gold = false) {
-  const j = forward(pose);
+  const p0 = normalizePose(pose);
+  const j = forward(p0);
+  const lt = legTarget(p0);
   const [x0, y0, x1, y1] = rect;
   const headR = 0.36;
   const pts = Object.values(j);
   const lo = [Math.min(...pts.map((p) => p[0])) - 0.25, Math.min(...pts.map((p) => p[1])) - 0.2];
   const hi = [Math.max(...pts.map((p) => p[0])) + 0.25, Math.max(...pts.map((p) => p[1])) + 0.25];
   lo[1] = Math.min(lo[1], j.head[1] - headR - 0.12);
+  const floor = Math.max(j.l_ankle[1], j.r_ankle[1]) + 0.12;
+  if (lt.active) hi[1] = Math.max(hi[1], floor + 0.3);
   const bw = hi[0] - lo[0], bh = hi[1] - lo[1];
   const s = Math.min((x1 - x0) / bw, (y1 - y0) / bh, (y1 - y0) / 4.3);
   const cx = (x0 + x1) / 2 - (lo[0] + bw / 2) * s, cy = (y0 + y1) / 2 - (lo[1] + bh / 2) * s;
   const P = (name) => [cx + j[name][0] * s, cy + j[name][1] * s];
+  const Q = (x, y) => [cx + x * s, cy + y * s];
   const lw = 0.3 * s, ow = 0.3 * s + 0.16 * s;
   const limb = (names, width, colour) => strokeLine(ctx, names.map(P), colour, width);
   const torso = (grow, colour) => fillPolys(ctx,
     [hull([P("l_shoulder"), P("r_shoulder"), P("r_hip"), P("l_hip")], [0.16 * s, 0.16 * s, 0.16 * s, 0.16 * s], grow)],
     colour);
+  // The floor line, the weight arrow and the lift chevrons (grow > 0: their keyline).
+  const marks = (colour, grow) => {
+    const w = Math.max(1, 0.09 * s + grow);
+    const xs = [j.l_ankle[0], j.r_ankle[0]];
+    strokeLine(ctx, [Q(Math.min(...xs) - 0.35, floor), Q(Math.max(...xs) + 0.35, floor)], colour, 0.07 * s + grow);
+    const lb = lt.lower;
+    if (lt.step && Math.abs(lb.weight) > 0.12) {
+      const mid = (xs[0] + xs[1]) / 2, d = lb.weight > 0 ? 0.62 : -0.62;
+      const a = Q(mid - d * 0.5, floor + 0.2), b = Q(mid + d * 0.5, floor + 0.2);
+      const tip = 0.42 * Math.hypot(b[0] - a[0], b[1] - a[1]), ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      strokeLine(ctx, [a, b], colour, w);
+      for (const t of [Math.PI / 4, -Math.PI / 4]) {
+        strokeLine(ctx, [b, [b[0] - tip * Math.cos(ang + t), b[1] - tip * Math.sin(ang + t)]], colour, w);
+      }
+    }
+    if (lt.lift) {
+      const side = lb.lift > 0 ? "r" : "l";
+      const [ax, ay] = j[`${side}_ankle`];
+      const ox = SIDE[side] * 0.32;
+      for (const k of [0.0, 0.2]) {
+        strokeLine(ctx, [Q(ax + ox - 0.13, ay + 0.02 - k), Q(ax + ox, ay - 0.12 - k), Q(ax + ox + 0.13, ay + 0.02 - k)],
+          colour, w);
+      }
+    }
+  };
+  const legs = lt.active ? (gold ? PICTO_ARM_GOLD : PICTO_ARM) : PICTO_BODY;
   ctx.save();
   ctx.lineCap = ctx.lineJoin = "round";
+  if (lt.active) marks(INK, 0.12 * s);
   for (const sd of ["l", "r"]) limb([`${sd}_hip`, `${sd}_knee`, `${sd}_ankle`], ow, INK);
   torso(0.08 * s, INK);
   disc(ctx, P("head"), headR * s + 0.08 * s, INK);
   for (const sd of ["l", "r"]) limb([`${sd}_shoulder`, `${sd}_elbow`, `${sd}_hand`], ow, INK);
-  for (const sd of ["l", "r"]) limb([`${sd}_hip`, `${sd}_knee`, `${sd}_ankle`], lw, PICTO_BODY);
+  if (lt.active) marks(PICTO_MARK, 0.0);
+  for (const sd of ["l", "r"]) limb([`${sd}_hip`, `${sd}_knee`, `${sd}_ankle`], lw, legs);
   torso(0.0, PICTO_BODY);
   disc(ctx, P("head"), headR * s, PICTO_BODY);
   const [hx, hy] = P("head");

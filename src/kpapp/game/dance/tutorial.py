@@ -1,10 +1,12 @@
 """The "how to play" cards shown before a player's first Raccoon Dance song.
 
-Three cards in the house style (figure.py): stand back, copy the coach like a
-mirror, hit the poses on the beat. The second and third draw the real coach and
-pictogram cards from the game's renderer, so the tutorial teaches what the
-player will actually see. The art loads at the first draw; without it the cards
-fall back to the plain figure. All three together cost well under 1.5 ms a frame:
+Three cards in the house style (figure.py; the shell shows them side by side):
+stand back (feet in the picture too), copy the coach like a mirror, hit the
+poses on the beat, legs included. The second and third draw the real coach
+and pictogram cards from the game's renderer, so the tutorial teaches what
+the player will actually see: the lane's cards include leg moves (white legs
+on a floor line). The art loads at the first draw; without it the cards fall
+back to the plain figure. All three together cost well under 1.5 ms a frame:
 everything is a cached sprite or a handful of anti-aliased polygons.
 """
 
@@ -156,9 +158,9 @@ def _pop(age: float) -> float:
 
 DEMO_POSES = [
     {"la": [90, 90], "ra": [90, 90]},
-    {"ra": [150, 165], "la": [20, 10], "lean": 8},
+    {"ra": [150, 165], "la": [20, 10], "lean": 8, "lf": [0.7, 0], "rf": [0.7, 0], "shift": 0.32},
     {"la": [170, 175], "ra": [170, 175]},
-    {"la": [60, -20], "ra": [60, -20], "squat": 0.8},
+    {"la": [90, 170], "ra": [90, 170], "lf": [0.72, 0], "rf": [0.72, 0], "squat": 0.6},
 ]
 BEAT = 0.6  # seconds per beat in the demo
 
@@ -226,7 +228,7 @@ def _draw_lane(img, rect, t: float) -> None:
 DANCE_TUTORIAL = [
     stand_back_step(
         "STAND BACK",
-        "About 2 m from the screen, so your head, both arms and your body are in the picture.",
+        "About 2.5-3 m from the screen, so all of you is in the picture: head, both arms, and your feet.",
         arms_up=True,
     ),
     TutorialStep(
@@ -236,7 +238,7 @@ DANCE_TUTORIAL = [
     ),
     TutorialStep(
         "HIT THE POSES ON THE BEAT",
-        "Strike each pose as its card reaches the ring. Gold moves count double.",
+        "Strike each pose as its card reaches the ring. White legs: step, kick or squat too. Gold counts double.",
         demo(_draw_lane),
     ),
 ]

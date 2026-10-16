@@ -559,6 +559,19 @@ def cmd_game(args: argparse.Namespace) -> int:
     return _run_loop(args, game_name=args.game)
 
 
+def _print_lint(song) -> None:
+    """The choreography lint (docs/DANCE.md section 5a) for a song, one line per issue."""
+    from .game.dance import chart as dance_chart
+
+    issues = dance_chart.lint(song, phrases=song.level != "easy" or "easy" in song.charts)
+    if not issues:
+        print(f"[kp] lint: {song.id} ({song.level}) passes the choreography rules")
+        return
+    print(f"[kp] lint: {len(issues)} choreography issue(s) in {song.id} ({song.level}):")
+    for issue in issues:
+        print(f"[kp]   {issue}")
+
+
 def cmd_dance_preview(args: argparse.Namespace) -> int:
     """Contact sheet of a song's chart (or the move library) for review."""
     from pathlib import Path
@@ -570,7 +583,9 @@ def cmd_dance_preview(args: argparse.Namespace) -> int:
         if args.library:
             img = library_sheet(dance_chart.load_library())
         else:
-            img = chart_sheet(dance_chart.load_song(dance_chart.SONGS / args.song, difficulty=args.difficulty))
+            song = dance_chart.load_song(dance_chart.SONGS / args.song, difficulty=args.difficulty)
+            img = chart_sheet(song)
+            _print_lint(song)
     except dance_chart.ChartError as exc:
         print(f"[kp] {exc}", file=sys.stderr)
         return 1
@@ -670,7 +685,7 @@ def cmd_dance_import(args: argparse.Namespace) -> int:
     importer.write_song_json(out_path, merged)
     if out_path.name == "song.json":
         try:
-            dance_chart.load_song(out_path.parent)
+            _print_lint(dance_chart.load_song(out_path.parent))
         except dance_chart.ChartError as exc:
             print(f"[kp] warning: the imported chart doesn't validate: {exc}", file=sys.stderr)
     print(f"[kp] wrote {out_path}" + (f" (backup {out_path.with_suffix('.json.bak')})" if out_path == path else ""))

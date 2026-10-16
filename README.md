@@ -397,13 +397,19 @@ Pick **RACCOON DANCE**, then a song and a difficulty. The songs:
 TikTok-style hook routine with an October twist; the coach dresses for it). A raccoon coach dances
 on a neon stage; copy it **like a mirror** (when its arm on the screen's right
 goes up, raise the arm on the screen's right: your real right arm). Every move
-is judged PERFECT / SUPER / GOOD / OK / X from your keypoints. Gold moves count
+is judged PERFECT / SUPER / GOOD / OK / X from your keypoints, legs included:
+the routines are built from real steps (step touches, grapevines, hip sways,
+knee lifts, side kicks, lunges, squats), and on a leg move your stance, where
+your weight is, a lifted foot and your knee bend count for half the score
+(cards show white legs on a floor line, with an arrow for the weight). Gold moves count
 double, the star bar fills to five, and each song has a leaderboard per
 difficulty. **EASY** asks for about one pose a bar (the coach holds each one)
 and judges more forgivingly; **NORMAL** is the full routine; **HARD** is the
 full routine judged strictly (a longer hold, tighter angles). EASY is derived
 from each song's chart automatically, so every song has all three. Stand back
-far enough that your arms stay in view when raised. Music plays through your
+2.5-3 m, far enough that your feet are in the picture and your arms stay in
+view when raised; with your feet out of view leg moves earn half credit for the
+legs (never an X for legs the camera can't see) and the game says STEP BACK - SHOW YOUR FEET. Music plays through your
 speakers (`sounddevice`); with no audio device it plays silently on the same
 clock.
 
@@ -415,6 +421,10 @@ record someone dancing to the track and import it:
 uv run kp dance-import --song <id> --video take.mp4 --start <seconds of beat 0>
 uv run kp dance-preview --song <id> --out sheet.png   # --difficulty easy shows the derived EASY chart
 ```
+
+`kp dance-preview` (and the importer) also run the choreography lint: smooth
+arm and foot paths, 8-count phrases that repeat, leg work in every section,
+leg moves the camera can judge, and the freeze rule.
 
 Then add the id to `songs/index.json`. The format, the judging rules and the
 layout are in [docs/DANCE.md](docs/DANCE.md).

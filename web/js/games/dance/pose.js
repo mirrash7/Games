@@ -1,23 +1,32 @@
 // Dance poses: angles, forward kinematics, measuring a player, similarity
 // (port of src/kpapp/game/dance/pose.py; docs/DANCE.md section 3).
 //
-// A pose is limb angles in degrees in the torso frame (0 = straight down,
+// A pose is arm angles in degrees in the torso frame (0 = straight down,
 // positive = outward then up, 180 = straight up), in screen space as the
-// player sees it, plus lean/head/shift/squat. The coach is drawn from
-// forward(pose); the player is read into the same angles with measure();
-// similarity() compares the two.
+// player sees it, plus the lower body as a dancer thinks of it: where each
+// foot is on the floor (lf, rf: [out, up]), where the hips are over the feet
+// (shift) and how deep the knees bend (squat), plus lean/head. The legs follow
+// by two-bone IK, knees bending outward. The coach is drawn from
+// forward(pose); the player is read with measure(); similarity() compares the
+// two, the lower body on features both sides compute with readLower().
 //
 // No DOM: this module runs under Node for the tests.
 
 import { KP, Pose } from "../../core/pose.js";
 
+const RAD = Math.PI / 180;
+
 // --- representation ---------------------------------------------------------
 
-export const LIMBS = ["la", "ra", "ll", "rl"]; // arms then legs; "l"/"r" = screen-left/right
+export const ARMS = ["la", "ra"]; // "l"/"r" = screen-left/right
+export const FEET = ["lf", "rf"]; // [out, up]: SW outward from the floor's centre line, SW above the floor
+export const LIMBS = [...ARMS, ...FEET];
+export const LEGACY_LEGS = ["ll", "rl"]; // [thigh, shin] angles: still accepted (old and imported charts), turned into feet
 export const SCALARS = ["lean", "head", "shift", "squat"];
+export const FOOT_REST = 0.37; // each ankle this far out from the centre line when standing
 export const REST = Object.freeze({
   la: Object.freeze([10.0, 5.0]), ra: Object.freeze([10.0, 5.0]),
-  ll: Object.freeze([3.0, 2.0]), rl: Object.freeze([3.0, 2.0]),
+  lf: Object.freeze([FOOT_REST, 0.0]), rf: Object.freeze([FOOT_REST, 0.0]),
   lean: 0.0, head: 0.0, shift: 0.0, squat: 0.0,
 });
 
@@ -25,6 +34,13 @@ export const REST = Object.freeze({
 export const TORSO = 1.25, HIP_W = 0.6, NECK = 0.2, HEAD_R = 0.3;
 export const UPPER_ARM = 0.62, FOREARM = 0.58, HAND = 0.16;
 export const THIGH = 0.85, SHIN = 0.82;
+export const LEG = THIGH + SHIN;
+// The floor: the ankles' height below the rest hip centre (standing legs are straight).
+export const FLOOR = Math.sqrt(LEG * LEG - (FOOT_REST - HIP_W / 2) ** 2);
+export const SQUAT_BEND = 90.0; // degrees of knee bend at squat 1 (on the supporting leg)
+export const FOOT_RANGE = Object.freeze([Object.freeze([-1.0, 2.2]), Object.freeze([0.0, 1.4])]); // [out, up]
+export const SHIFT_RANGE = Object.freeze([-1.5, 1.5]);
+const REACH = LEG * (1.0 - 1e-7); // a leg never quite locks: the knee keeps a direction
 
 export const SIDE = Object.freeze({ l: -1.0, r: 1.0 }); // sign of "outward" in screen x
 
@@ -47,6 +63,27 @@ export function pyNum(x) {
 }
 
 const isNum = (v) => typeof v === "number" || typeof v === "boolean";
+const isPair = (v) => Array.isArray(v) && v.length === 2 && v.every(isNum);
+const round4 = (x) => Math.round(x * 1e4) / 1e4;
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * [thigh, shin] leg angles (the old format) -> feet: forward kinematics from
+ * the rest hips, the lower foot on the floor.
+ */
+function legacyFeet(legs) {
+  const ankles = {};
+  for (const s of ["l", "r"]) {
+    const v = legs[`${s}l`] ?? [3.0, 2.0];
+    const a = Number(v[0]) * RAD, b = Number(v[1]) * RAD;
+    ankles[s] = [SIDE[s] * (HIP_W / 2 + THIGH * Math.sin(a) + SHIN * Math.sin(b)),
+      THIGH * Math.cos(a) + SHIN * Math.cos(b)];
+  }
+  const floor = Math.max(ankles.l[1], ankles.r[1]);
+  const out = {};
+  for (const s of ["l", "r"]) out[`${s}f`] = [round4(SIDE[s] * ankles[s][0]), round4(floor - ankles[s][1])];
+  return out;
+}
 
 /**
  * A complete pose: missing keys from REST, values as numbers. Throws on
@@ -54,13 +91,25 @@ const isNum = (v) => typeof v === "number" || typeof v === "boolean";
  */
 export function normalizePose(pose) {
   const out = {
-    la: [...REST.la], ra: [...REST.ra], ll: [...REST.ll], rl: [...REST.rl],
+    la: [...REST.la], ra: [...REST.ra], lf: [...REST.lf], rf: [...REST.rf],
     lean: REST.lean, head: REST.head, shift: REST.shift, squat: REST.squat,
   };
-  for (const [key, value] of Object.entries(pose ?? {})) {
+  let items = Object.entries(pose ?? {});
+  const legacy = items.filter(([k]) => LEGACY_LEGS.includes(k));
+  if (legacy.length) {
+    if (items.some(([k]) => FEET.includes(k))) {
+      throw new Error("give the legs as feet ('lf'/'rf') or as angles ('ll'/'rl'), not both");
+    }
+    for (const [k, v] of legacy) {
+      if (!isPair(v)) throw new Error(`'${k}' must be [thigh, shin] angles in degrees, got ${pyRepr(v)}`);
+    }
+    items = [...items.filter(([k]) => !LEGACY_LEGS.includes(k)), ...Object.entries(legacyFeet(Object.fromEntries(legacy)))];
+  }
+  for (const [key, value] of items) {
     if (LIMBS.includes(key)) {
-      if (!(Array.isArray(value) && value.length === 2 && value.every(isNum))) {
-        throw new Error(`'${key}' must be [upper, lower] angles in degrees, got ${pyRepr(value)}`);
+      if (!isPair(value)) {
+        const what = ARMS.includes(key) ? "[upper, lower] angles in degrees" : "[out, up] in shoulder widths";
+        throw new Error(`'${key}' must be ${what}, got ${pyRepr(value)}`);
       }
       out[key] = [Number(value[0]), Number(value[1])];
     } else if (SCALARS.includes(key)) {
@@ -71,6 +120,15 @@ export function normalizePose(pose) {
     }
   }
   if (!(out.squat >= 0.0 && out.squat <= 1.0)) throw new Error(`'squat' must be 0..1, got ${pyNum(out.squat)}`);
+  const [[lo, hi], [ulo, uhi]] = FOOT_RANGE;
+  for (const k of FEET) {
+    if (!(out[k][0] >= lo && out[k][0] <= hi && out[k][1] >= ulo && out[k][1] <= uhi)) {
+      throw new Error(`'${k}' must be [out ${lo}..${hi}, up ${ulo}..${uhi}], got [${pyNum(out[k][0])}, ${pyNum(out[k][1])}]`);
+    }
+  }
+  if (!(out.shift >= SHIFT_RANGE[0] && out.shift <= SHIFT_RANGE[1])) {
+    throw new Error(`'shift' must be ${SHIFT_RANGE[0]}..${SHIFT_RANGE[1]}, got ${pyNum(out.shift)}`);
+  }
   return out;
 }
 
@@ -78,7 +136,7 @@ export function normalizePose(pose) {
 export function mirrorPose(pose) {
   const p = normalizePose(pose);
   return {
-    la: [...p.ra], ra: [...p.la], ll: [...p.rl], rl: [...p.ll],
+    la: [...p.ra], ra: [...p.la], lf: [...p.rf], rf: [...p.lf],
     lean: -p.lean, head: -p.head, shift: -p.shift, squat: p.squat,
   };
 }
@@ -90,7 +148,8 @@ export function smoothstep(u) {
 
 /**
  * Blend two complete poses (u = 0 -> a, 1 -> b). Angles blend linearly, so
- * authors keep consecutive keyframes within 180 degrees of each other.
+ * authors keep consecutive keyframes within 180 degrees of each other; feet
+ * slide across the floor (the drawn coach lifts a stepping foot: motion.js).
  */
 export function lerpPose(a, b, u) {
   const out = {};
@@ -102,8 +161,6 @@ export function lerpPose(a, b, u) {
 }
 
 // --- geometry ---------------------------------------------------------------
-
-const RAD = Math.PI / 180;
 
 /** Unit vector (torso frame, y down) for a limb angle on a side. */
 export function limbDir(side, angleDeg) {
@@ -134,17 +191,81 @@ export function angleDiff(a, b) {
   return d > 180.0 ? 360.0 - d : d;
 }
 
+/** Hip-to-ankle distance of a leg whose knee bends SQUAT_BEND * squat degrees. */
+export function squatReach(squat) {
+  const b = SQUAT_BEND * squat * RAD;
+  return Math.sqrt(THIGH * THIGH + SHIN * SHIN + 2.0 * THIGH * SHIN * Math.cos(b));
+}
+
+/** Where an ankle is (SW, y down, origin at the rest hip centre). */
+export function footPosition(pose, side) {
+  const [out, up] = pose[`${side}f`];
+  return [SIDE[side] * out, FLOOR - up];
+}
+
+/**
+ * The hip centre for a complete pose: `shift` across, and as low as the squat
+ * and the feet need. The supporting leg (planted, nearest under the hips)
+ * bends SQUAT_BEND * squat degrees; a foot planted wide pulls the hips down
+ * until the leg reaches it (a wide stance or a lunge sits lower).
+ */
+export function pelvis(pose) {
+  const px = pose.shift;
+  const want = squatReach(pose.squat);
+  let num = 0.0, den = 0.0;
+  let lowY = -Infinity, lowSq = 0.0;
+  let reachY = -Infinity;
+  for (const s of ["l", "r"]) {
+    const [ax, ay] = footPosition(pose, s);
+    const dx = Math.abs(ax - (px + SIDE[s] * HIP_W / 2));
+    reachY = Math.max(reachY, ay - Math.sqrt(Math.max(0.0, REACH * REACH - dx * dx)));
+    const ySq = ay - Math.sqrt(Math.max(0.0, want * want - dx * dx));
+    const planted = clamp(1.0 - pose[`${s}f`][1] / 0.15, 0.0, 1.0);
+    const w = planted / ((dx + 0.15) * (dx + 0.15));
+    num += w * ySq;
+    den += w;
+    if (ay > lowY) {
+      lowY = ay;
+      lowSq = ySq;
+    }
+  }
+  const y = den > 0.0 ? num / den : lowSq; // both feet off the floor: the lower one
+  return [px, Math.max(y, reachY)];
+}
+
+/**
+ * Two-bone IK: [knee, ankle] for a leg from `hip` reaching for `ankle`, the
+ * knee bending outward. An ankle out of reach is pulled in along the leg.
+ */
+function kneeIK(hip, ankle, side) {
+  let dx = ankle[0] - hip[0], dy = ankle[1] - hip[1];
+  let d = Math.hypot(dx, dy);
+  if (d > REACH) {
+    dx = dx * REACH / d;
+    dy = dy * REACH / d;
+    ankle = [hip[0] + dx, hip[1] + dy];
+    d = REACH;
+  }
+  if (d < 1e-9) return [[hip[0] + SIDE[side] * THIGH, hip[1]], ankle];
+  const ux = dx / d, uy = dy / d;
+  const a = Math.acos(clamp((THIGH * THIGH + d * d - SHIN * SHIN) / (2.0 * THIGH * d), -1.0, 1.0));
+  const t = -SIDE[side] * a; // rotate the hip-to-ankle line outward
+  const c = Math.cos(t), s = Math.sin(t);
+  return [[hip[0] + THIGH * (ux * c - uy * s), hip[1] + THIGH * (ux * s + uy * c)], ankle];
+}
+
 /**
  * Joint positions in shoulder widths, y down, origin at the rest hip centre.
  *
- * `shift` moves the body sideways; `squat` lowers the hips and bends the
- * knees outward (cosmetic). Arms hang from the leaning torso; legs stay in
- * the world frame so the feet stay planted.
+ * The feet stand where lf/rf put them on the floor (FLOOR below the rest
+ * hips), the hips sit at pelvis(pose), and the knees bend outward to join
+ * them (two-bone IK). Arms hang from the leaning torso; legs stay in the world
+ * frame, so the feet stay planted.
  */
 export function forward(pose) {
   const p = normalizePose(pose);
   const lean = p.lean;
-  const hip = [p.shift, p.squat * 0.42];
+  const hip = pelvis(p);
   const neck = add(hip, rot([0.0, -TORSO], lean));
   const j = { hip, neck };
   j.head = add(add(neck, rot([0.0, -NECK], lean)), rot([0.0, -HEAD_R], lean + p.head));
@@ -157,15 +278,11 @@ export function forward(pose) {
     j[`${s}_elbow`] = el;
     j[`${s}_wrist`] = wr;
     j[`${s}_hand`] = add(wr, rot(limbDir(s, fore), lean), HAND);
-    let [thigh, shin] = p[`${s}l`];
-    // Squatting bends the knees outward and the shins back in.
-    thigh += 38.0 * p.squat;
-    shin -= 12.0 * p.squat;
-    const hp = add(hip, [SIDE[s] * HIP_W / 2, 0.0]);
-    const kn = add(hp, limbDir(s, thigh), THIGH);
+    const hp = [hip[0] + SIDE[s] * HIP_W / 2, hip[1]];
+    const [kn, an] = kneeIK(hp, footPosition(p, s), s);
     j[`${s}_hip`] = hp;
     j[`${s}_knee`] = kn;
-    j[`${s}_ankle`] = add(kn, limbDir(s, shin), SHIN);
+    j[`${s}_ankle`] = an;
   }
   return j;
 }
@@ -180,6 +297,74 @@ export function targetReach(pose, side) {
   const [ux, uy] = limbDir(side, up);
   const [fx, fy] = limbDir(side, fore);
   return limbAngle(side, ux * UPPER_ARM + fx * FOREARM, uy * UPPER_ARM + fy * FOREARM);
+}
+
+// --- the lower body, as the camera sees it ------------------------------------
+
+function bendOf(hp, kn, an) {
+  const ax = kn[0] - hp[0], ay = kn[1] - hp[1];
+  const bx = an[0] - kn[0], by = an[1] - kn[1];
+  return Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by) / RAD);
+}
+
+/**
+ * Lower-body features from joints (pose.read_lower): `get(name)` gives [x, y]
+ * or null for l_hip, r_hip, l_knee, r_knee, l_ankle, r_ankle (screen sides).
+ * The same function reads the coach (forward()) and the player (measure()).
+ * In shoulder widths, scaled by the longer leg: {scale, stance (screen-right
+ * ankle x minus screen-left), weight (hips over the ankles' midpoint), lift
+ * (+ = the screen-right foot is higher), bend: {l, r} (degrees)}. null unless
+ * both legs are whole in view.
+ */
+export function readLower(get) {
+  const pts = {};
+  let longest = 0.0;
+  for (const s of ["l", "r"]) {
+    const hp = get(`${s}_hip`), kn = get(`${s}_knee`), an = get(`${s}_ankle`);
+    if (hp == null || kn == null || an == null) return null;
+    pts[s] = [hp, kn, an];
+    const length = Math.hypot(kn[0] - hp[0], kn[1] - hp[1]) + Math.hypot(an[0] - kn[0], an[1] - kn[1]);
+    longest = Math.max(longest, length);
+  }
+  if (longest <= 1e-9) return null;
+  const k = longest / LEG;
+  const [hl, , al] = pts.l, [hr, , ar] = pts.r;
+  return {
+    scale: k,
+    stance: (ar[0] - al[0]) / k,
+    weight: ((hl[0] + hr[0]) / 2 - (al[0] + ar[0]) / 2) / k,
+    lift: (al[1] - ar[1]) / k,
+    bend: { l: bendOf(...pts.l), r: bendOf(...pts.r) },
+  };
+}
+
+// What makes a target's lower body worth judging: how far it is from standing.
+export const STEP_STANCE = 0.30, STEP_WEIGHT = 0.15; // SW from the rest stance / of weight over a foot
+export const LIFT_MIN = 0.15; // SW: a foot off the floor (knee lift, kick, heel)
+export const BEND_MIN = 25.0; // degrees of knee bend: a squat, a dip, a bent free leg
+
+const getter = (j) => (name) => j[name] ?? null;
+export const REST_LOWER = readLower(getter(forward(REST)));
+const LEG_TARGETS = new Map();
+
+/**
+ * The lower-body features of a (complete) target pose and which are judged:
+ * {lower, step (stance and weight), lift, bend: [screen sides], active}.
+ * Cached: the judge asks every frame.
+ */
+export function legTarget(pose) {
+  const key = `${pose.lf[0]},${pose.lf[1]},${pose.rf[0]},${pose.rf[1]},${pose.shift},${pose.squat}`;
+  let t = LEG_TARGETS.get(key);
+  if (t == null) {
+    const lb = readLower(getter(forward(pose)));
+    const step = Math.abs(lb.stance - REST_LOWER.stance) > STEP_STANCE || Math.abs(lb.weight) > STEP_WEIGHT;
+    const bend = Object.freeze(["l", "r"].filter((s) => lb.bend[s] > BEND_MIN));
+    const lift = Math.abs(lb.lift) > LIFT_MIN;
+    t = Object.freeze({ lower: lb, step, lift, bend, active: step || lift || bend.length > 0 });
+    if (LEG_TARGETS.size > 4096) LEG_TARGETS.clear();
+    LEG_TARGETS.set(key, t);
+  }
+  return t;
 }
 
 // --- measuring a player -----------------------------------------------------
@@ -197,7 +382,8 @@ export function sideKeypoints(mirrored = true) {
 /**
  * A player's reading: lean (degrees), hasHips, shoulderPx, centrePx, and per
  * screen side `arms[s] = {upper, fore, reach}` (degrees or null) and, when the
- * hip, knee and ankle are all visible, `legs[s] = {thigh, shin}`.
+ * hip, knee and ankle are all visible, `legs[s] = {thigh, shin}`; `lower` is
+ * what the judge reads of the legs (readLower), null without both whole legs.
  */
 export class Measured {
   constructor(lean, hasHips, shoulderPx, centrePx) {
@@ -207,11 +393,17 @@ export class Measured {
     this.centrePx = centrePx;
     this.arms = {};
     this.legs = {};
+    this.lower = null;
   }
 
   /** Can any arm be judged: a wrist, or at least an elbow (similarity). */
   get seesArms() {
     return Object.values(this.arms).some((a) => a.reach != null || a.upper != null);
+  }
+
+  /** Are both legs, feet included, in view: the lower body can be judged. */
+  get seesFeet() {
+    return this.lower != null;
   }
 }
 
@@ -245,6 +437,7 @@ export function measure(kpPose, mirrored = true) {
   const torso = (v) => rot(v, -lean);
 
   const m = new Measured(lean, hasHips, sw, centre);
+  const joints = {};
   for (const [s, sh] of [["l", sl], ["r", sr]]) {
     const el = pt(`${sides[s]}_elbow`), wr = pt(`${sides[s]}_wrist`);
     const reading = { upper: null, fore: null, reach: null };
@@ -259,6 +452,9 @@ export function measure(kpPose, mirrored = true) {
     }
     m.arms[s] = reading;
     const hp = pt(`${sides[s]}_hip`), kn = pt(`${sides[s]}_knee`), an = pt(`${sides[s]}_ankle`);
+    joints[`${s}_hip`] = hp;
+    joints[`${s}_knee`] = kn;
+    joints[`${s}_ankle`] = an;
     if (hp != null && kn != null && an != null) {
       // Legs are measured in the world frame, as forward() draws them.
       m.legs[s] = {
@@ -267,6 +463,7 @@ export function measure(kpPose, mirrored = true) {
       };
     }
   }
+  m.lower = readLower((name) => joints[name] ?? null);
   return m;
 }
 
@@ -274,21 +471,59 @@ export function measure(kpPose, mirrored = true) {
 
 export const PERFECT_WITHIN = 20.0; // degrees: no penalty up to here
 export const ZERO_AT = 90.0; // degrees: no credit from here
-export const ARM_WEIGHT = 1.0, LEG_WEIGHT = 0.35, LEAN_WEIGHT = 0.3;
-export const LEG_REST_MARGIN = 25.0; // a target leg this close to rest isn't judged
+export const ARM_WEIGHT = 1.0, LEAN_WEIGHT = 0.3;
+// A target whose lower body is active (legTarget) weighs its legs as much as
+// both arms together: a leg-led move is half the score (docs/DANCE.md section 3a).
+export const LEGS_WEIGHT = 2.0;
+// Legs the camera can't see on a leg move earn half credit: never an X (tracking
+// loss isn't punished), but never a PERFECT either, so standing too close is
+// never better than dancing in full view.
+export const UNSEEN_LEGS = 0.5;
 export const LEAN_MIN = 8.0; // a target lean smaller than this isn't judged
+// Lower-body tolerances: [free, span]: full credit up to `free`, none from free + span.
+export const STANCE_TOL = Object.freeze([0.20, 0.45]); // SW
+export const WEIGHT_TOL = Object.freeze([0.10, 0.25]); // SW
+export const LIFT_TOL = Object.freeze([0.15, 0.30]); // SW
+export const BEND_TOL = Object.freeze([20.0, 35.0]); // degrees
+export const BEND_SHARE = 0.5; // each knee's bend counts half as much as stance, weight or lift
 
 export function segmentScore(target, seen) {
   const d = angleDiff(target, seen);
   return Math.min(1.0, Math.max(0.0, 1.0 - (d - PERFECT_WITHIN) / (ZERO_AT - PERFECT_WITHIN)));
 }
 
+const tol = (d, t) => Math.min(1.0, Math.max(0.0, 1.0 - (Math.abs(d) - t[0]) / t[1]));
+
+/**
+ * 0..1 match of a player's lower body on the features the target asks for,
+ * or null if the target's legs aren't judged or the player's can't be seen.
+ */
+export function legsScore(target, seen) {
+  if (seen == null || !target.active) return null;
+  const t = target.lower;
+  let num = 0.0, den = 0.0;
+  if (target.step) {
+    num += tol(t.stance - seen.stance, STANCE_TOL) + tol(t.weight - seen.weight, WEIGHT_TOL);
+    den += 2.0;
+  }
+  if (target.lift) {
+    num += tol(t.lift - seen.lift, LIFT_TOL);
+    den += 1.0;
+  }
+  for (const s of target.bend) {
+    num += BEND_SHARE * tol(t.bend[s] - seen.bend[s], BEND_TOL);
+    den += BEND_SHARE;
+  }
+  return num / den;
+}
+
 /**
  * 0..1 match between a target pose and a measured player, plus the per-part
  * scores: [score, parts]. score is null when no arm is visible: "can't see
- * you", not a miss.
+ * you", not a miss. Legs out of view are not judged (never a miss either):
+ * the arms carry it.
  */
-export function similarity(target, m) {
+export function similarity(target, m, unseenLegs = UNSEEN_LEGS) {
   if (m == null) return [null, {}];
   const t = normalizePose(target);
   const parts = {};
@@ -311,13 +546,12 @@ export function similarity(target, m) {
     weights[`${s}a`] = ARM_WEIGHT;
   }
   if (!Object.keys(parts).length) return [null, {}];
-  for (const s of ["l", "r"]) {
-    const leg = m.legs[s];
-    const [tt, ts] = t[`${s}l`];
-    const [rt, rs] = REST[`${s}l`];
-    if (leg == null || (Math.abs(tt - rt) <= LEG_REST_MARGIN && Math.abs(ts - rs) <= LEG_REST_MARGIN)) continue;
-    parts[`${s}l`] = 0.5 * (segmentScore(tt, leg.thigh) + segmentScore(ts, leg.shin));
-    weights[`${s}l`] = LEG_WEIGHT;
+  const lt = legTarget(t);
+  let legs = legsScore(lt, m.lower);
+  if (legs == null && lt.active) legs = unseenLegs;
+  if (legs != null) {
+    parts.legs = legs;
+    weights.legs = LEGS_WEIGHT;
   }
   if (m.hasHips && Math.abs(t.lean) > LEAN_MIN) {
     parts.lean = Math.min(1.0, Math.max(0.0, 1.0 - Math.max(0.0, Math.abs(t.lean - m.lean) - 6.0) / 24.0));
@@ -334,10 +568,14 @@ export function similarity(target, m) {
 
 const PARTS = ["shoulder", "elbow", "wrist", "hip", "knee", "ankle"];
 
+// A player about 2.5-3 m back: the whole body in a 1280 x 720 frame, feet included.
+export const FULL_BODY = Object.freeze({ centrePx: Object.freeze([640.0, 250.0]), shoulderPx: 110.0 });
+
 /**
  * A COCO Pose that performs `pose`: what a perfect player looks like to the
  * model. Keypoints outside the frame (or whose part is not in `visible`) get
- * confidence 0.
+ * confidence 0. The default framing is a close player whose ankles are below
+ * the frame (FULL_BODY shows the feet).
  */
 export function keypointsFor(pose, { centrePx = [640.0, 330.0], shoulderPx = 150.0, mirrored = true,
   visible = null, frameH = 720 } = {}) {

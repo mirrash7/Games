@@ -9,7 +9,8 @@ import pytest
 from kpapp.config import KP
 from kpapp.game.dance.chart import ChartError, idle_groove, load_song, parse_moves
 from kpapp.game.dance.pose import (
-    angle_diff, forward, keypoints_for, measure, mirror_pose, normalize_pose, similarity,
+    FULL_BODY, LEGS_WEIGHT, REST, SQUAT_BEND, angle_diff, forward, keypoints_for, leg_target, measure, mirror_pose,
+    UNSEEN_LEGS, normalize_pose, pelvis, similarity,
 )
 
 ARMS_UP = {"la": [170, 175], "ra": [170, 175]}
@@ -106,6 +107,115 @@ def test_normalize_rejects_bad_keys():
 
 def test_idle_groove_is_a_valid_pose():
     normalize_pose(idle_groove(3.3))
+
+
+# --- the lower body (docs/DANCE.md section 3a) ---
+
+STEP_R = {"lf": [0.7, 0], "rf": [0.7, 0], "shift": 0.32, "squat": 0.12, "ra": [95, 100], "la": [20, -88]}
+KNEE_R = {"lf": [0.37, 0], "rf": [0.2, 0.62], "shift": -0.235, "la": [138, 145], "ra": [40, -45]}
+PLIE = {"lf": [0.72, 0], "rf": [0.72, 0], "squat": 0.6, "la": [90, 90], "ra": [90, 90]}
+CROSS = {"lf": [-0.06, 0], "rf": [-0.06, 0], "shift": 0.04, "squat": 0.25, "la": [168, 175], "ra": [168, 175]}
+LEG_POSES = [STEP_R, mirror_pose(STEP_R), KNEE_R, PLIE, CROSS, {"lf": [0.37, 0], "rf": [1.25, 0.5], "shift": 0.06}]
+
+
+@pytest.mark.parametrize("pose", LEG_POSES)
+@pytest.mark.parametrize("mirrored", [True, False])
+def test_the_camera_reads_the_coachs_lower_body_back(pose, mirrored):
+    """The judge compares features both sides compute with one function
+    (read_lower): from the coach's forward() joints and from a player's
+    keypoints. A perfect player, whole body in view, reads back exactly."""
+    want = leg_target(normalize_pose(pose)).lower
+    m = measure(keypoints_for(pose, mirrored=mirrored, **FULL_BODY), mirrored=mirrored)
+    got = m.lower
+    assert m.sees_feet
+    for k in ("stance", "weight", "lift"):
+        assert getattr(got, k) == pytest.approx(getattr(want, k), abs=0.01), k
+    for s in "lr":
+        assert got.bend[s] == pytest.approx(want.bend[s], abs=0.5)
+    assert similarity(pose, m)[0] > 0.99
+
+
+def test_shift_and_squat_mean_what_the_camera_reads():
+    """`shift` is the hips over the feet: the weight the camera reads is
+    shift minus the feet's midpoint. `squat` bends the supporting knee
+    SQUAT_BEND * squat degrees. Feet stay on the floor."""
+    for shift in (-0.4, 0.0, 0.25):
+        p = normalize_pose({"lf": [0.5, 0], "rf": [0.9, 0], "shift": shift})
+        assert leg_target(p).lower.weight == pytest.approx(shift - (0.9 - 0.5) / 2, abs=1e-9)
+        assert pelvis(p)[0] == pytest.approx(shift)
+    for squat in (0.2, 0.5, 0.8):
+        lt = leg_target(normalize_pose({"squat": squat}))
+        assert lt.lower.bend["l"] == pytest.approx(SQUAT_BEND * squat, abs=0.5)
+        j = forward({"squat": squat})
+        assert j["l_ankle"][1] == pytest.approx(forward({})["l_ankle"][1]), "the feet stay planted"
+    lifted = forward(KNEE_R)
+    assert lifted["r_ankle"][1] < lifted["l_ankle"][1] - 0.6, "a lifted foot is off the floor"
+
+
+def test_legs_weigh_half_of_a_leg_led_move_and_standing_still_misses_them():
+    m_step = measure(keypoints_for(STEP_R, **FULL_BODY))
+    score, parts = similarity(STEP_R, m_step)
+    assert score > 0.99 and parts["legs"] > 0.99
+    assert LEGS_WEIGHT == 2.0, "as much as both arms together"
+    arms_only = dict(STEP_R, lf=REST["lf"], rf=REST["rf"], shift=0.0, squat=0.0)
+    score, parts = similarity(STEP_R, measure(keypoints_for(arms_only, **FULL_BODY)))
+    assert parts["legs"] < 0.15 and score < 0.6, "perfect arms, legs standing still: an OK at best"
+    for pose in LEG_POSES:
+        assert leg_target(normalize_pose(pose)).active
+        still = dict(normalize_pose(pose), lf=REST["lf"], rf=REST["rf"], shift=0.0, squat=0.0)
+        assert similarity(pose, measure(keypoints_for(still, **FULL_BODY)))[1]["legs"] <= 0.5, pose
+
+
+def test_an_arms_move_doesnt_judge_the_legs():
+    """A target whose lower body is just standing (or nearly) leaves the legs
+    free: a player bouncing or stepping to the music isn't marked down."""
+    up = {"la": [170, 175], "ra": [170, 175]}
+    assert not leg_target(normalize_pose(up)).active
+    score, parts = similarity(up, measure(keypoints_for(dict(up, **{k: STEP_R[k] for k in ("lf", "rf", "shift")}),
+                                                        **FULL_BODY)))
+    assert "legs" not in parts and score > 0.99
+
+
+@pytest.mark.parametrize("visible", [{"shoulder", "elbow", "wrist", "hip"}, {"shoulder", "elbow", "wrist", "hip", "knee"}])
+def test_legs_out_of_view_get_half_credit(visible):
+    """Never punish tracking loss, never reward it: without both whole legs in
+    view a leg move's legs earn UNSEEN_LEGS (the game says SHOW YOUR FEET).
+    Perfect arms then make a SUPER on NORMAL, never an X and never a PERFECT;
+    with the legs not judged at all, hiding the feet scored a perfect 10000
+    while being seen standing still scored ~6000."""
+    m = measure(keypoints_for(STEP_R, visible=visible, **FULL_BODY))
+    assert m.lower is None and not m.sees_feet
+    score, parts = similarity(STEP_R, m)
+    assert parts["legs"] == UNSEEN_LEGS and 0.74 <= score < 0.9
+    m = measure(keypoints_for(STEP_R))  # close: the ankles are below the frame
+    assert m.lower is None and 0.74 <= similarity(STEP_R, m)[0] < 0.9
+    assert similarity(STEP_R, m, None)[0] > 0.99, "None leaves them out: what the arms say"
+    still = similarity(STEP_R, measure(keypoints_for({**STEP_R, "lf": REST["lf"], "rf": REST["rf"],
+                                                      "shift": 0.0, "squat": 0.0}, **FULL_BODY)))[0]
+    assert still < similarity(STEP_R, m)[0], "seen standing still scores below hidden legs"
+
+
+def test_one_leg_alone_is_not_judged():
+    """A lifted foot in view with the other below the frame says too little."""
+    kp = keypoints_for(KNEE_R, centre_px=(640, 330), shoulder_px=150)
+    m = measure(kp)
+    assert m.lower is None
+
+
+def test_old_leg_angles_still_load_as_feet():
+    """Charts written before feet (and the importer's drafts) give [thigh, shin]
+    leg angles; they load as the same feet."""
+    p = normalize_pose({"rl": [70, 0]})
+    assert "rl" not in p and p["rf"][1] > 0.5, "a knee lift"
+    assert normalize_pose({"ll": [3, 2], "rl": [3, 2]})["lf"] == pytest.approx([0.373, 0.0], abs=0.005)
+    with pytest.raises(ValueError, match="not both"):
+        normalize_pose({"rl": [70, 0], "rf": [0.4, 0]})
+
+
+@pytest.mark.parametrize("bad", [{"lf": [3.0, 0]}, {"rf": [0.4, -0.1]}, {"shift": 2.0}, {"lf": [0.4]}])
+def test_feet_out_of_range_are_rejected(bad):
+    with pytest.raises(ValueError):
+        normalize_pose(bad)
 
 
 # --- charts ---

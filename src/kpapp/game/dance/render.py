@@ -39,7 +39,7 @@ from ... import theme
 from ...overlay import outlined_text
 from .art import DanceArt
 from .motion import coach_motion, still_motion
-from .pose import HIP_W, REST, SIDE, TORSO, forward, lerp_pose, normalize_pose, smoothstep
+from .pose import HIP_W, REST, SIDE, TORSO, forward, leg_target, lerp_pose, normalize_pose, smoothstep
 
 # --- layout (1280 x 720) ----------------------------------------------------
 COACH_X, COACH_FEET = 520, 660
@@ -548,8 +548,9 @@ class CoachPainter:
         jj = forward(p)
         S, (ox, oy) = self.S, origin or self.origin
         lift = float(m["lift"]) * calm
+        dx = float(m.get("travel", 0.0))  # steps travel; the bow stays where the dance left it
         dy = _REST_ANKLE_Y - max(jj["l_ankle"][1], jj["r_ankle"][1]) - lift
-        j = {k: np.array((ox + v[0] * S, oy + (v[1] + dy) * S)) for k, v in jj.items()}
+        j = {k: np.array((ox + (v[0] + dx) * S, oy + (v[1] + dy) * S)) for k, v in jj.items()}
         if bow > 0.0:
             # A front-view bow: the upper body foreshortens towards the camera.
             hip_y = j["hip"][1]
@@ -966,19 +967,30 @@ def _pose_key(pose) -> tuple:
     return tuple((k, tuple(np.round(v, 1)) if isinstance(v, list) else round(v, 1)) for k, v in sorted(p.items()))
 
 
+STEP_ARROW = (255, 220, 110)  # BGR: theme.CYAN, the step / lift marks on a card
+
+
 def draw_pictogram_figure(img, pose, rect, gold: bool = False, alpha_plane=None) -> None:
     """A bold pictogram dancer for `pose`, fitted into rect (x0, y0, x1, y1).
 
     Body in light lavender, arms in white (gold-white on gold cards) over it with
-    their own keyline, because the arms are what the judge mostly reads.
+    their own keyline, because the arms are what the judge mostly reads. When
+    the judge reads the legs too (pose.leg_target), they are drawn like the arms,
+    on a floor line, with an arrow on the floor towards the foot the weight goes
+    over (a step or a sway) and a chevron over a lifted foot (a knee lift, a kick).
     """
-    j = forward(pose)
+    p = normalize_pose(pose)
+    j = forward(p)
+    lt = leg_target(p)
     x0, y0, x1, y1 = rect
     head_r = 0.36
     pts = np.array(list(j.values()))
     lo = pts.min(0) - (0.25, 0.2)
     hi = pts.max(0) + (0.25, 0.25)
     lo[1] = min(lo[1], j["head"][1] - head_r - 0.12)
+    floor = max(j["l_ankle"][1], j["r_ankle"][1]) + 0.12
+    if lt.active:
+        hi[1] = max(hi[1], floor + 0.3)
     bw, bh = hi - lo
     s = min((x1 - x0) / bw, (y1 - y0) / bh, (y1 - y0) / 4.3)
     cx, cy = (x0 + x1) / 2 - (lo[0] + bw / 2) * s, (y0 + y1) / 2 - (lo[1] + bh / 2) * s
@@ -986,9 +998,13 @@ def draw_pictogram_figure(img, pose, rect, gold: bool = False, alpha_plane=None)
     def P(name):
         return (cx + j[name][0] * s, cy + j[name][1] * s)
 
+    def Q(x, y):
+        return (cx + x * s, cy + y * s)
+
     ink = (46, 24, 34)
     body = (222, 205, 236)
     arm = (170, 238, 255) if gold else (255, 255, 255)
+    legs_col = arm if lt.active else body
     lw, ow = 0.3 * s, 0.3 * s + 0.16 * s
 
     def limb(img_, names, width, colour):
@@ -1000,9 +1016,31 @@ def draw_pictogram_figure(img, pose, rect, gold: bool = False, alpha_plane=None)
         h = _hull(quad, np.full(4, 0.16 * s), grow)
         cv2.fillConvexPoly(img_, h, colour, cv2.LINE_AA, SHIFT)
 
+    def marks(img_, colour, grow):
+        """The floor line, the weight arrow and the lift chevrons (grow > 0: their keyline)."""
+        w = max(1, int(round(0.09 * s + grow)))
+        xs = [j["l_ankle"][0], j["r_ankle"][0]]
+        _line(img_, Q(min(xs) - 0.35, floor), Q(max(xs) + 0.35, floor), colour, 0.07 * s + grow)
+        lb = lt.lower
+        if lt.step and abs(lb.weight) > 0.12:
+            mid = (xs[0] + xs[1]) / 2
+            d = 0.62 if lb.weight > 0 else -0.62
+            a, b = Q(mid - d * 0.5, floor + 0.2), Q(mid + d * 0.5, floor + 0.2)
+            cv2.arrowedLine(img_, _fxp(a), _fxp(b), colour, w, cv2.LINE_AA, SHIFT, 0.42)
+        if lt.lift:
+            side = "r" if lb.lift > 0 else "l"
+            ax, ay = j[f"{side}_ankle"]
+            ox = SIDE[side] * 0.32
+            for k in (0.0, 0.2):
+                pts_ = np.array([Q(ax + ox - 0.13, ay + 0.02 - k), Q(ax + ox, ay - 0.12 - k),
+                                 Q(ax + ox + 0.13, ay + 0.02 - k)])
+                cv2.polylines(img_, [np.round(pts_ * ONE).astype(np.int32)], False, colour, w, cv2.LINE_AA, SHIFT)
+
     targets = [img] + ([alpha_plane] if alpha_plane is not None else [])
     for k, t in enumerate(targets):
         ci = 255 if k else None
+        if lt.active:
+            marks(t, ci or ink, 0.12 * s)
         for s_ in "lr":
             limb(t, [f"{s_}_hip", f"{s_}_knee", f"{s_}_ankle"], ow, ci or ink)
         torso(t, 0.08 * s, ci or ink)
@@ -1011,8 +1049,10 @@ def draw_pictogram_figure(img, pose, rect, gold: bool = False, alpha_plane=None)
             limb(t, [f"{s_}_shoulder", f"{s_}_elbow", f"{s_}_hand"], ow, ci or ink)
         if k:
             continue
+        if lt.active:
+            marks(img, STEP_ARROW, 0.0)
         for s_ in "lr":
-            limb(img, [f"{s_}_hip", f"{s_}_knee", f"{s_}_ankle"], lw, body)
+            limb(img, [f"{s_}_hip", f"{s_}_knee", f"{s_}_ankle"], lw, legs_col)
         torso(img, 0.0, body)
         cv2.circle(img, _fxp(P("head")), int(round(head_r * s * ONE)), body, -1, cv2.LINE_AA, SHIFT)
         for s_ in "lr":  # ears: it's the raccoon

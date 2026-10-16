@@ -1,11 +1,13 @@
 // The "how to play" cards shown before a player's first Raccoon Dance song
 // (port of src/kpapp/game/dance/tutorial.py).
 //
-// Three cards in the house style (core/figure.js): stand back, copy the coach
-// like a mirror, hit the poses on the beat. The second and third draw the real
+// Three cards in the house style (core/figure.js; the shell shows them side by
+// side): stand back (feet in the picture too), copy the coach like a mirror,
+// hit the poses on the beat, legs included. The second and third draw the real
 // coach and pictogram cards from the game's renderer, so the tutorial teaches
-// what the player will actually see; without the art they fall back to the
-// plain figure. Drawing happens only when the shell calls draw().
+// what the player will actually see: the lane's cards include leg moves (white
+// legs on a floor line). Without the art they fall back to the plain figure.
+// Drawing happens only when the shell calls draw().
 
 import { cachedArt, bgr } from "./art.js";
 import { CoachPainter, PictogramCards, drawPictogramFigure } from "./render.js";
@@ -139,9 +141,9 @@ function drawMirror(ctx, rect, t) {
 
 const DEMO_POSES = [
   { la: [90, 90], ra: [90, 90] },
-  { ra: [150, 165], la: [20, 10], lean: 8 },
+  { ra: [150, 165], la: [20, 10], lean: 8, lf: [0.7, 0], rf: [0.7, 0], shift: 0.32 },
   { la: [170, 175], ra: [170, 175] },
-  { la: [60, -20], ra: [60, -20], squat: 0.8 },
+  { la: [90, 170], ra: [90, 170], lf: [0.72, 0], rf: [0.72, 0], squat: 0.6 },
 ];
 const BEAT = 0.6; // seconds per beat in the demo
 
@@ -226,7 +228,7 @@ function drawLane(ctx, rect, t) {
 export const DANCE_TUTORIAL = [
   {
     title: "STAND BACK",
-    text: "About 2 m from the screen, so your head, both arms and your body are in the picture.",
+    text: "About 2.5-3 m from the screen, so all of you is in the picture: head, both arms, and your feet.",
     draw: (ctx, rect, t) => drawStandBack(ctx, rect, t, { armsUp: true }),
   },
   {
@@ -236,7 +238,7 @@ export const DANCE_TUTORIAL = [
   },
   {
     title: "HIT THE POSES ON THE BEAT",
-    text: "Strike each pose as its card reaches the ring. Gold moves count double.",
+    text: "Strike each pose as its card reaches the ring. White legs: step, kick or squat too. Gold counts double.",
     draw: drawLane,
   },
 ];

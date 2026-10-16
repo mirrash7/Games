@@ -7,8 +7,11 @@ fixture) and a 30 s slice of Neon Nights (read from assets/ by both sides).
 Each stream is a list of pose updates (COCO keypoints at 20 Hz, from bots that
 switch behaviour every second: on time, late, a few degrees off, far off,
 mirror-wrong, arms down, elbows hidden, wrists hidden, hips out of frame, out of
-view) and a list of 60 Hz frames (song time + the newest pose), plus a resume
-after a pause and a stall that skips whole windows. The judge runs on exactly the stored
+view, perfect arms with the legs standing still, the feet a step off, standing
+close with the feet below the frame; the whole body is in view otherwise, so
+the lower-body judging is replayed too) and a list of 60 Hz frames (song time
++ the newest pose), plus a resume after a pause and a stall that skips whole
+windows. The judge runs on exactly the stored
 numbers: keypoints are stored in tenths of a pixel and read back through
 float32 on both sides, so the inputs are bit-identical.
 
@@ -30,7 +33,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from kpapp.game.dance import chart  # noqa: E402
 from kpapp.game.dance.judge import Judge  # noqa: E402
-from kpapp.game.dance.pose import REST, keypoints_for, mirror_pose, normalize_pose  # noqa: E402
+from kpapp.game.dance.pose import FULL_BODY, REST, keypoints_for, mirror_pose, normalize_pose  # noqa: E402
 from kpapp.inference import Pose  # noqa: E402
 
 OUT = REPO / "web" / "tests" / "fixtures" / "dance_parity.json"
@@ -71,7 +74,7 @@ def groove_json() -> dict:
 
 
 MODES = ["perfect", "late", "near", "far", "mirror", "rest", "no_elbows", "no_hips", "gone", "perfect", "near",
-         "no_wrists"]
+         "no_wrists", "arms_only", "feet_off", "close", "perfect"]
 
 
 def bot_pose(song, st: float, mode: str, rng: random.Random):
@@ -87,6 +90,13 @@ def bot_pose(song, st: float, mode: str, rng: random.Random):
         lo, hi = (12, 28) if mode == "near" else (30, 70)
         for k in ("la", "ra"):
             coach[k] = [a + rng.choice((-1, 1)) * rng.uniform(lo, hi) for a in coach[k]]
+    if mode == "arms_only":
+        coach["lf"], coach["rf"], coach["shift"], coach["squat"] = list(REST["lf"]), list(REST["rf"]), 0.0, 0.0
+    if mode == "feet_off":
+        for k in ("lf", "rf"):
+            coach[k] = [coach[k][0] + rng.choice((-1, 1)) * rng.uniform(0.1, 0.3), coach[k][1]]
+        coach["shift"] += rng.uniform(-0.15, 0.15)
+        coach["squat"] = min(1.0, max(0.0, coach["squat"] + rng.uniform(-0.2, 0.2)))
     return coach
 
 
@@ -109,7 +119,7 @@ def record(song, t0: float, t1: float, seed: int, resume_at: float, stall: tuple
                 visible = {"no_elbows": {"shoulder", "wrist", "hip"},
                            "no_hips": {"shoulder", "elbow", "wrist"},
                            "no_wrists": {"shoulder", "elbow", "hip"}}.get(mode)
-                kp = keypoints_for(target, visible=visible)
+                kp = keypoints_for(target, visible=visible, **({} if mode == "close" else FULL_BODY))
                 xy = kp.xy.astype(np.float64) + noise.uniform(-4, 4, kp.xy.shape)
                 tenths = np.round(xy * 10).astype(int)
                 tenths[kp.confidence <= 0] = 0

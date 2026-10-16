@@ -15,7 +15,7 @@ import numpy as np
 
 from ... import theme
 from .chart import Move, Song
-from .pose import forward
+from .pose import forward, leg_target, normalize_pose
 
 BG = (34, 26, 30)
 CARD = (52, 42, 48)
@@ -23,6 +23,8 @@ LEFT_ARM = (235, 205, 80)  # BGR: cyan-blue, the screen-left arm
 RIGHT_ARM = (180, 90, 245)  # BGR: pink, the screen-right arm
 BODY = (225, 225, 235)
 LEGS = (170, 170, 185)
+LEGS_JUDGED = (235, 235, 245)  # legs the judge reads (a step, a lift, a bend), on a floor line
+FLOOR = (255, 220, 110)
 
 SLOT_W = 118  # one keyframe figure
 CARD_H = 214
@@ -32,8 +34,10 @@ SHEET_W = 1880
 
 def draw_figure(img: np.ndarray, pose: dict, hip_xy: tuple[float, float], scale: float,
                 judged: bool = True) -> None:
-    """A stick figure for `pose`, the rest hip centre at `hip_xy`, `scale` px per shoulder width."""
+    """A stick figure for `pose`, the rest hip centre at `hip_xy`, `scale` px per shoulder width.
+    Legs the judge reads are drawn bright on a floor line, with an arrow to the weight's side."""
     j = forward(pose)
+    lt = leg_target(normalize_pose(pose))
 
     def p(name):
         x, y = j[name]
@@ -45,9 +49,18 @@ def draw_figure(img: np.ndarray, pose: dict, hip_xy: tuple[float, float], scale:
         return tuple(int(v * dim + BG[i] * (1 - dim)) for i, v in enumerate(c))
 
     t = max(2, int(scale * 0.16))
+    legs = LEGS_JUDGED if lt.active else LEGS
+    if lt.active:
+        fy = max(p("l_ankle")[1], p("r_ankle")[1]) + t
+        xs = (p("l_ankle")[0], p("r_ankle")[0])
+        cv2.line(img, (min(xs) - t * 3, fy), (max(xs) + t * 3, fy), col(FLOOR), max(1, t // 2), cv2.LINE_AA)
+        if lt.step and abs(lt.lower.weight) > 0.12:
+            mx, d = (xs[0] + xs[1]) // 2, int(scale * (0.4 if lt.lower.weight > 0 else -0.4))
+            cv2.arrowedLine(img, (mx - d, fy + 2 * t), (mx + d, fy + 2 * t), col(FLOOR), max(1, t // 2),
+                            cv2.LINE_AA, 0, 0.4)
     for s in "lr":
-        cv2.line(img, p(f"{s}_hip"), p(f"{s}_knee"), col(LEGS), t, cv2.LINE_AA)
-        cv2.line(img, p(f"{s}_knee"), p(f"{s}_ankle"), col(LEGS), t, cv2.LINE_AA)
+        cv2.line(img, p(f"{s}_hip"), p(f"{s}_knee"), col(legs), t, cv2.LINE_AA)
+        cv2.line(img, p(f"{s}_knee"), p(f"{s}_ankle"), col(legs), t, cv2.LINE_AA)
     torso = np.array([p("l_shoulder"), p("r_shoulder"), p("r_hip"), p("l_hip")], np.int32)
     cv2.fillConvexPoly(img, torso, col((90, 70, 95)), cv2.LINE_AA)
     cv2.polylines(img, [torso], True, col(BODY), max(1, t // 2), cv2.LINE_AA)
@@ -76,7 +89,7 @@ def _card(move: Move, beat: float | None, gold: bool, title: str | None = None) 
     for i, k in enumerate(move.keyframes):
         judged = i in move.judge
         cx = x0 + i * SLOT_W + SLOT_W // 2
-        draw_figure(card, k.pose, (cx, 150), 25.0, judged)
+        draw_figure(card, k.pose, (cx, 136), 25.0, judged)
         b = k.beat if beat is None else beat + k.beat
         tag = f"{b:g}" + ("" if judged else " -")
         (tw, _), _ = cv2.getTextSize(tag, theme.BODY_FONT, 0.45, 1)
@@ -126,7 +139,8 @@ def _assemble(blocks: list[tuple[str, list[np.ndarray]]], title: str, subtitle: 
     return np.vstack(parts)
 
 
-LEGEND = "cyan = screen-left arm, pink = screen-right arm; dim figure / '-' = not judged; dot = pictogram"
+LEGEND = ("cyan = screen-left arm, pink = screen-right arm; bright legs on a floor line = legs judged (arrow: "
+          "weight); dim figure / '-' = not judged; dot = pictogram")
 
 
 def chart_sheet(song: Song) -> np.ndarray:

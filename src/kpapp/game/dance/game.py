@@ -81,13 +81,15 @@ UPCOMING_KEEP_BEATS = 0.5  # a card stays this long after its beat, to slide thr
 DANCE_LEAD_BEATS = 1.0  # dancing starts this long before the first move
 OUTRO_HOLD = 3.0  # s after the last move's end: game over even if the audio rings on
 AUDIO_TAIL = 2.0  # s of ring-out after `duration` (docs/DANCE.md section 6)
-NOTICE_AFTER = 0.6  # s of not seeing the player's arms before saying so
+NOTICE_AFTER = 0.6  # s of not seeing the player's arms (or feet, when the moves need them) before saying so
+FEET_AHEAD = 4.0  # beats: ask for the feet this long before a judged leg move (and all through the intro)
 GOLD_FLASH_SECONDS = 0.8
 SCORE_EASE = 7.0  # 1/s: display_score catches up with score
 AUDIO_STALL = 2.0  # s of a frozen audio clock while playing before falling back to a silent one
 
 NOTICE_ARMS = "STEP BACK - SHOW YOUR ARMS"
 NOTICE_NOBODY = "STEP INTO THE FRAME"
+NOTICE_FEET = "STEP BACK - SHOW YOUR FEET"
 
 
 def board_id_for(song_id: str, difficulty: str | None = None) -> str:
@@ -114,7 +116,7 @@ class DanceGame(Game):
     title = "RACCOON DANCE"
     own_countdown = True  # the song counts in 3-2-1 on the beat; the shell skips its own
     blurb = "Bust a move with the raccoon. Copy every pose like a mirror!"
-    tip = "Stand back so your arms and upper body are in frame - copy the coach like a mirror"
+    tip = "Stand back so your whole body, feet too, is in frame - copy the coach like a mirror"
     board_id = "dance"  # per song: "dance-<song id>" (variants()), "_<difficulty>" off normal
     tutorial = _TUTORIAL
     # The shell's difficulty picker reads these (docs/DANCE.md section 7a). NORMAL
@@ -156,6 +158,8 @@ class DanceGame(Game):
         self._pictos = [PictogramItem(p.beat, p.label, p.pose, p.gold) for p in self.song.pictograms()]
         self._picto_beats = [p.beat for p in self._pictos]
         self._last_move_end = self.song.time_of(max((p.end for p in self.song.chart), default=0.0))
+        # Judged poses that work the legs: the feet must be in the picture for them.
+        self._leg_beats = [p.beat for p in self.song.judge_points() if chart.leg_led(p.pose)]
         self.judge = Judge(self.song, self.rules)
         self._closed = False
         self.reset()
@@ -182,6 +186,7 @@ class DanceGame(Game):
         self.results_t = 0.0
         self.ratings: list[Rating] = []  # every resolved point, unseen included
         self._unseen_for = 0.0
+        self._feetless_for = 0.0
         self._clock = 0.0  # sum of clamped dt: juice only
         self._last_pos: float | None = None
         self._pos_still = 0.0
@@ -200,6 +205,7 @@ class DanceGame(Game):
         self.song_time = self._audio_time()
         self.judge.on_resume(self.song_time)
         self._unseen_for = 0.0
+        self._feetless_for = 0.0
         self.notice = None
         self._pos_still = 0.0
 
@@ -314,12 +320,29 @@ class DanceGame(Game):
             self._unseen_for += dt
         else:
             self._unseen_for = 0.0
+        # Feet: never a miss (the legs of a player whose feet are out of view are
+        # not judged, the arms carry the point), but say what to fix.
+        if seen and not self.player.sees_feet and self._legs_coming():
+            self._feetless_for += dt
+        else:
+            self._feetless_for = 0.0
         if self._unseen_for > NOTICE_AFTER:
             self.notice = NOTICE_NOBODY if self.player is None else NOTICE_ARMS
+        elif self._feetless_for > NOTICE_AFTER:
+            self.notice = NOTICE_FEET
         else:
             self.notice = None
 
         self._animate(dt)
+
+    def _legs_coming(self) -> bool:
+        """Is a judged leg move open or due within FEET_AHEAD beats (the intro counts)?"""
+        if not self._leg_beats or self.phase in (Phase.OUTRO, Phase.GAME_OVER):
+            return False
+        if self.phase is Phase.INTRO:
+            return True
+        i = bisect.bisect_left(self._leg_beats, self.beat - 1.0)
+        return i < len(self._leg_beats) and self._leg_beats[i] <= self.beat + FEET_AHEAD
 
     def _advance_phase(self) -> None:
         if self.phase is Phase.INTRO and self.judge.points and \

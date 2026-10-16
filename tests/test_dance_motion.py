@@ -21,12 +21,14 @@ from kpapp.config import KP
 from kpapp.game.dance import chart
 from kpapp.game.dance import motion as M
 from kpapp.game.dance.art import stub_art
-from kpapp.game.dance.pose import (LEAN_MIN, LEG_REST_MARGIN, REST, angle_diff, measure, normalize_pose,
+from kpapp.game.dance.pose import (LEAN_MIN, angle_diff, leg_target, measure, normalize_pose,
                                    side_keypoints)
 from kpapp.game.dance.render import CoachPainter
 from kpapp.inference import Pose
 
-TOLERANCE = 6.0  # degrees: the drawn coach vs the chart's pose on a judged beat
+TOLERANCE = 6.0  # degrees: the drawn coach's arms and lean vs the chart's pose on a judged beat
+BEND_TOLERANCE = 8.0  # degrees of knee bend (the groove's dip bends the knees ~4 on the beat)
+SW_TOLERANCE = 0.08  # shoulder widths of stance, weight and lift (the groove's sway moves the hips 0.035)
 SONG_IDS = json.loads((chart.SONGS / "index.json").read_text())
 
 
@@ -58,38 +60,45 @@ def drawn_keypoints(geo) -> Pose:
 
 
 def drawn_errors(painter, song, beat: float, target: dict) -> dict[str, float]:
-    """Degrees between the drawn coach (as the judge measures it) and `target`,
-    for every part the judge would score."""
+    """How far the drawn coach (as the judge measures it) is from `target`, as a
+    fraction of each part's tolerance, for every part the judge would score:
+    arm angles and lean, and the lower-body features the target asks for
+    (stance, weight, lift, knee bends)."""
     geo = painter.layout(None, beat=beat, motion=M.coach_motion(song, beat))
     m = measure(drawn_keypoints(geo))
     t = normalize_pose(target)
     err = {}
     for s in "lr":
         a = m.arms[s]
-        err[f"{s}a_upper"] = angle_diff(t[f"{s}a"][0], a.upper)
-        err[f"{s}a_fore"] = angle_diff(t[f"{s}a"][1], a.fore)
-        tt, ts = t[f"{s}l"]
-        rt, rs = REST[f"{s}l"]
-        if abs(tt - rt) > LEG_REST_MARGIN or abs(ts - rs) > LEG_REST_MARGIN:  # a judged leg
-            err[f"{s}l_thigh"] = angle_diff(tt, m.legs[s].thigh)
-            err[f"{s}l_shin"] = angle_diff(ts, m.legs[s].shin)
+        err[f"{s}a_upper"] = angle_diff(t[f"{s}a"][0], a.upper) / TOLERANCE
+        err[f"{s}a_fore"] = angle_diff(t[f"{s}a"][1], a.fore) / TOLERANCE
+    lt = leg_target(t)
+    want, seen = lt.lower, m.lower
+    if lt.step:
+        err["stance"] = abs(want.stance - seen.stance) / SW_TOLERANCE
+        err["weight"] = abs(want.weight - seen.weight) / SW_TOLERANCE
+    if lt.lift:
+        err["lift"] = abs(want.lift - seen.lift) / SW_TOLERANCE
+    for s in lt.bend:
+        err[f"{s}_bend"] = abs(want.bend[s] - seen.bend[s]) / BEND_TOLERANCE
     if abs(t["lean"]) > LEAN_MIN:
-        err["lean"] = abs(t["lean"] - m.lean)
+        err["lean"] = abs(t["lean"] - m.lean) / TOLERANCE
     return err
 
 
 @pytest.mark.parametrize("sid,level,song", SONGS, ids=[f"{s}-{lv}" for s, lv, _ in SONGS])
 def test_the_drawn_coach_shows_the_judged_pose_on_its_beat(sid, level, song):
     """Secondary motion only adds life between hits and in parts the judge
-    doesn't read: on every judged beat every judged angle of the *drawn* coach
-    is within TOLERANCE of the chart's."""
+    doesn't read: on every judged beat every judged part of the *drawn* coach
+    (arms, lean, and the legs' stance, weight, lift and knee bends) is within
+    its tolerance of the chart's, however far the coach has stepped."""
     painter = CoachPainter(stub_art())
     worst = (0.0, None)
     for jp in song.judge_points():
         for part, e in drawn_errors(painter, song, jp.beat, jp.pose).items():
             if e > worst[0]:
                 worst = (e, f"{jp.label} at beat {jp.beat:g}: {part}")
-    assert worst[0] <= TOLERANCE, f"{sid} {level}: {worst[0]:.2f} degrees off ({worst[1]})"
+    assert worst[0] <= 1.0, f"{sid} {level}: {worst[0]:.2f} of the tolerance off ({worst[1]})"
 
 
 def test_limbs_hit_every_keyframe_exactly():
@@ -102,7 +111,7 @@ def test_limbs_hit_every_keyframe_exactly():
             want = normalize_pose(pose)
             for at in (b, b + 0.05):
                 got = M.performed_pose(song._frames, at)
-                for k in ("la", "ra", "ll", "rl"):
+                for k in ("la", "ra", "lf", "rf"):
                     assert got[k] == pytest.approx(want[k], abs=1e-9), (b, k)
 
 
@@ -131,14 +140,50 @@ def test_the_groove_keeps_moving_while_a_pose_is_held():
     assert all(m["lift"] == 0.0 for m in ms)
 
 
-def test_a_two_footed_move_hops_and_lands_before_its_beat():
-    frames = [(0.0, normalize_pose({})), (2.0, normalize_pose({"ll": [28, 25], "rl": [28, 25]}))]
+def test_a_jump_hops_and_lands_before_its_beat():
+    frames = [(0.0, normalize_pose({})), (2.0, normalize_pose({"lf": [0.9, 0], "rf": [0.9, 0]}))]
     lifts = [M.coach_motion(None, b, frames=frames)["lift"] for b in np.arange(1.0, 2.01, 0.02)]
     assert max(lifts) > 0.1
     assert abs(lifts[-1]) < 1e-9 and abs(lifts[-3]) < 1e-9, "on the floor at the hit"
-    one = [(0.0, normalize_pose({})), (2.0, normalize_pose({"rl": [70, 0]}))]
+    travel = [M.coach_motion(None, b, frames=frames)["travel"] for b in np.arange(1.0, 2.01, 0.05)]
+    assert max(abs(t) for t in travel) < 1e-9, "a jump spreads the feet about the spot"
+    one = [(0.0, normalize_pose({})), (2.0, normalize_pose({"rf": [0.2, 0.62], "shift": -0.17}))]
     assert all(M.coach_motion(None, b, frames=one)["lift"] == 0.0 for b in np.arange(1.0, 2.0, 0.05)), \
         "a knee lift doesn't hop"
+    step = [(0.0, normalize_pose({})), (2.0, normalize_pose({"lf": [0.9, 0], "rf": [0.9, 0], "shift": 0.3}))]
+    assert all(M.coach_motion(None, b, frames=step)["lift"] == 0.0 for b in np.arange(1.0, 2.0, 0.05)), \
+        "spreading the feet with the weight going to one side is a step, not a jump"
+
+
+def test_a_step_keeps_the_supporting_foot_planted_and_lifts_the_stepping_one():
+    """Feet are relative to the body, so the coach travels: stepping right, the
+    left foot stays where it is on the stage, the right one lifts on its way
+    out, and the body moves over it. On the beat the pose is the chart's."""
+    painter = CoachPainter(stub_art())
+    a = normalize_pose({"lf": [0.22, 0], "rf": [0.22, 0], "shift": -0.1})  # feet together, weight left
+    b = normalize_pose({"lf": [0.7, 0], "rf": [0.7, 0], "shift": 0.32})  # a step right, weight over it
+    frames = [(0.0, a), (2.0, b), (4.0, a)]
+    assert M.support(a, b) == "l" and M.support(b, a) == "r"
+    lefts, rights, ups = [], [], []
+    for beat in np.arange(1.0, 2.001, 0.05):
+        m = M.coach_motion(None, beat, energy=0.0, frames=frames)
+        g = painter.layout(None, motion=m)
+        lefts.append(g.j["l_ankle"][0])
+        rights.append(g.j["r_ankle"][0])
+        ups.append(m["pose"]["rf"][1])
+    # It may slide a hair: each transition drifts the coach back towards its spot (RECENTRE).
+    assert max(lefts) - min(lefts) <= M.RECENTRE_MAX * painter.S + 0.5, "the supporting foot stays put"
+    assert rights[-1] - rights[0] > 0.8 * painter.S, "the stepping foot travels about a step"
+    assert max(ups) > 0.1 and ups[-1] == 0.0, "it lifts on the way and lands on the beat"
+    assert M.coach_motion(None, 2.0, energy=0.0, frames=frames)["travel"] > 0.4, "the body went with it"
+
+
+def test_the_coach_stays_near_its_spot_on_every_song():
+    """Steps travel, but phrases balance and every transition drifts back a
+    little, so the coach never wanders off the stage (the lint's WANDER_MAX)."""
+    for sid, level, song in SONGS:
+        offs, _, _ = M.keyframe_travel(song._frames)
+        assert max(abs(o) for o in offs) <= chart.WANDER_MAX, (sid, level)
 
 
 def test_a_twist_turns_towards_an_arm_reaching_across_and_hides_the_far_arm():
@@ -168,7 +213,7 @@ def test_feet_stay_on_the_floor():
     painter = CoachPainter(stub_art())
     rest = painter.layout({})
     floor = max(rest.j["l_ankle"][1], rest.j["r_ankle"][1])
-    for pose in ({"squat": 0.9, "ll": [30, 5], "rl": [30, 5]}, {"rl": [70, 0]}, {"ll": [28, 25], "rl": [28, 25]}):
+    for pose in ({"squat": 0.9, "lf": [0.7, 0], "rf": [0.7, 0]}, {"rf": [0.2, 0.62]}, {"lf": [0.9, 0], "rf": [0.9, 0]}):
         g = painter.layout(pose)
         assert max(g.j["l_ankle"][1], g.j["r_ankle"][1]) == pytest.approx(floor, abs=0.5), pose
     for b in np.arange(16.0, 40.0, 0.27):

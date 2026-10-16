@@ -36,7 +36,7 @@
 <canvas id="sheet" width="1280" height="720"></canvas>
 <script type="module">
 import { DanceRaccoonGame, loadedSongs } from "../js/games/dance/game.js";
-import { keypointsFor, normalizePose } from "../js/games/dance/pose.js";
+import { FULL_BODY, keypointsFor, normalizePose } from "../js/games/dance/pose.js";
 import { SilentPlayer, unlockAudio } from "../js/core/audio.js";
 import { emptyControls } from "../js/core/controls.js";
 import { PoseExtrapolator } from "../js/core/extrapolate.js";
@@ -65,7 +65,8 @@ function botPose(song, st, sloppy) {
   const p = normalizePose(song.coachPose(b));
   if (sloppy) {
     const r = new Rng(700021 + Math.trunc(b));
-    for (const k of ["la", "ra", "ll", "rl"]) p[k] = p[k].map((a) => a + r.choice([-1, 1]) * r.uniform(25, 30));
+    for (const k of ["la", "ra"]) p[k] = p[k].map((a) => a + r.choice([-1, 1]) * r.uniform(25, 30));
+    for (const k of ["lf", "rf"]) p[k] = [Math.max(-0.9, p[k][0] + r.choice([-1, 1]) * r.uniform(0.12, 0.2)), p[k][1]];
   }
   return { pose: p, visible: null };
 }
@@ -144,7 +145,7 @@ class Input {
     if (now >= this.next) {
       this.next = now + 1 / MODEL_HZ;
       const { pose, visible } = botPose(this.song, st, this.sloppy);
-      const kp = keypointsFor(pose, { visible, centrePx: [640, 300], shoulderPx: 120 });
+      const kp = keypointsFor(pose, { visible, ...FULL_BODY }); // feet in view: the legs are judged too
       for (let i = 0; i < kp.xy.length; i++) kp.xy[i] += this.rng.uniform(-4, 4);
       this.pending.push([now + LAG, [kp], now + 0.05]);
     }

@@ -6,10 +6,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
 import {
-  BAR_BEATS, ChartError, DIFFICULTIES, EASE_BEATS, EASY_MIN_GAP, Placed, deriveEasy, difficultyId, parseLibrary,
-  parseMoves, parseSong, parseSongIds,
+  BAR_BEATS, ChartError, DIFFICULTIES, EASE_BEATS, EASY_MIN_GAP, Placed, deriveEasy, difficultyId, legLed, lint,
+  parseLibrary, parseMoves, parseSong, parseSongIds,
 } from "../js/games/dance/chart.js";
-import { REST, keypointsFor, measure, normalizePose, similarity } from "../js/games/dance/pose.js";
+import { keyframeTravel } from "../js/games/dance/motion.js";
+import { FULL_BODY, REST, keypointsFor, measure, normalizePose, similarity } from "../js/games/dance/pose.js";
 import { DanceRaccoonGame, loadSongs, loadedSongs, songVariants } from "../js/games/dance/game.js";
 
 const ASSETS = new URL("../../assets/dance/", import.meta.url);
@@ -24,7 +25,9 @@ const ELBOWS_HIDDEN = ["shoulder", "wrist", "hip"];
 const FREEZE_MAX = 0.55; // a player frozen in the previous pose must score below this
 
 /** How well a perfect performance of `performed` matches `target`. */
-const sim = (target, performed, opts = {}) => similarity(target, measure(keypointsFor(performed, opts)))[0];
+// Legs the framing hides are left out (null) unless `unseenLegs` is given.
+const sim = (target, performed, opts = {}, unseenLegs = null) =>
+  similarity(target, measure(keypointsFor(performed, opts)), unseenLegs)[0];
 
 // --- every song --------------------------------------------------------------
 
@@ -53,11 +56,14 @@ test("every song's audio is delivered", () => {
 
 test("a frozen player cannot score", () => {
   // Consecutive judged poses differ enough that holding the previous one
-  // earns less than 0.55 on the next, with or without elbows in view.
+  // earns less than 0.55 on the next: seen whole (feet too), with the feet out
+  // of frame, and without elbows.
   for (const song of SONGS) {
     const jp = song.judgePoints();
     for (let i = 1; i < jp.length; i++) {
       const [a, b] = [jp[i - 1], jp[i]];
+      const body = sim(b.pose, a.pose, FULL_BODY);
+      assert.ok(body < FREEZE_MAX, `${song.id}: '${a.label}' at beat ${a.beat} scores ${body.toFixed(2)} on beat ${b.beat}`);
       const full = sim(b.pose, a.pose);
       const reach = sim(b.pose, a.pose, { visible: ELBOWS_HIDDEN });
       assert.ok(full < FREEZE_MAX, `${song.id}: '${a.label}' at beat ${a.beat} scores ${full.toFixed(2)} on beat ${b.beat}`);
@@ -73,8 +79,53 @@ test("a perfect player matches every judged pose", () => {
       assert.ok(sim(p.pose, p.pose, { visible: ELBOWS_HIDDEN }) > 0.97, `${p.label} at ${p.beat}, elbows hidden`);
       const close = sim(p.pose, p.pose, { centrePx: [640, 480], shoulderPx: 200 }); // hips below the frame
       assert.ok(close > 0.97, `${p.label} at ${p.beat}, standing close`);
+      assert.ok(sim(p.pose, p.pose, FULL_BODY) > 0.99, `${p.label} at ${p.beat}, whole body in view`);
     }
   }
+});
+
+// --- the choreography lint (docs/DANCE.md section 5a) -------------------------
+
+test("every song passes the choreography lint on every difficulty", () => {
+  for (const song of SONGS) {
+    for (const level of DIFFICULTIES) {
+      const s = song.forDifficulty(level);
+      const issues = lint(s, keyframeTravel, { phrases: level !== "easy" });
+      assert.deepEqual(issues, [], `${song.id} ${level}: ${issues.map((i) => `beat ${i.beat}: [${i.kind}] ${i.message}`).join("; ")}`);
+    }
+  }
+});
+
+test("the legs set the rhythm", () => {
+  // Most judged poses work the legs, and perfect arms with the legs standing
+  // still fall short of PERFECT on every one of them.
+  for (const song of SONGS) {
+    const pts = song.judgePoints();
+    const led = pts.filter((p) => legLed(p.pose));
+    assert.ok(led.length >= 0.8 * pts.length, `${song.id}: ${led.length} of ${pts.length}`);
+    for (const p of led) {
+      const still = { ...normalizePose(p.pose), lf: [...REST.lf], rf: [...REST.rf], shift: 0.0, squat: 0.0 };
+      assert.ok(sim(p.pose, still, FULL_BODY) < 0.9, `${song.id} ${p.label} at ${p.beat}: arms alone are a PERFECT`);
+    }
+  }
+});
+
+test("the lint flags the old charts' problems and passes a repeated phrase", () => {
+  const clap = { beats: 2, keyframes: [{ beat: 0, pose: { la: [-30, -60], ra: [-30, -60], squat: 0.2 } },
+    { beat: 1, pose: { la: [175, 180], ra: [175, 180] } }] };
+  const song = (moves, custom) => parseSong({ title: "Lint", bpm: 120, duration: 60.0, moves, custom_moves: custom,
+    sections: [{ name: "intro", beat: 0 }, { name: "verse", beat: 16 }] }, "lint", LIB);
+  const kinds = (s) => new Set(lint(s, keyframeTravel).map((i) => i.kind));
+  let k = kinds(song([0, 1, 2, 3].map((i) => ({ move: "clap", beat: 16 + 2 * i })), { clap }));
+  for (const want of ["flow", "whiplash", "legs"]) assert.ok(k.has(want), `${want}: ${[...k]}`);
+  const tiny = { beats: 2, keyframes: [{ beat: 0, pose: { la: [170, 175], ra: [90, 90], rf: [0.45, 0] } }] };
+  const other = { beats: 2, keyframes: [{ beat: 0, pose: { la: [90, 90], ra: [170, 175] } }] };
+  k = kinds(song([{ move: "tiny", beat: 16 }, { move: "other", beat: 18 }, { move: "hip_sway_r", beat: 20 },
+    { move: "tiny", beat: 22 }], { tiny, other }));
+  for (const want of ["unjudgeable", "phrase"]) assert.ok(k.has(want), `${want}: ${[...k]}`);
+  const names = ["step_touch_r", "step_touch_l", "step_touch_r", "step_touch_l", "hip_sway_r", "hip_sway_l",
+    "hip_sway_r", "hip_sway_l"];
+  assert.deepEqual(lint(song(names.map((move, i) => ({ move, beat: 16 + 2 * i })), {}), keyframeTravel), []);
 });
 
 // --- Neon Nights (docs/DANCE.md section 6) ------------------------------------
@@ -109,7 +160,9 @@ test("Neon Nights structure", () => {
     assert.ok(c[c.length - 1].end <= c[0].beat + 32);
   }
   const half = signature.length / 2;
-  assert.deepEqual(signature.slice(0, half), signature.slice(half), "the phrase repeats within a chorus");
+  const twin = (n) => (n.endsWith("_r") ? `${n.slice(0, -2)}_l` : n.endsWith("_l") ? `${n.slice(0, -2)}_r` : n);
+  assert.deepEqual(signature.slice(half), signature.slice(0, half).map(twin),
+    "a chorus dances its 16 counts, then the same 16 mirrored");
   assert.deepEqual(choruses.map((c) => c.filter((p) => p.gold).length), [1, 1, 2]);
   const inChorus = (p) => choruses.some((c) => c[0].beat <= p.beat && p.beat < c[0].beat + 32);
   assert.ok(!NEON.chart.some((p) => p.gold && !inChorus(p)), "gold only in choruses");
@@ -132,12 +185,12 @@ test("verse 1 is the easiest", () => {
 });
 
 test("sides alternate", () => {
-  const names = NEON.chart.map((p) => p.move.name);
-  names.forEach((n, i) => {
-    const twin = `${n.slice(0, -2)}_l`;
-    if (n.endsWith("_r") && names.includes(twin)) {
-      assert.ok(names.slice(i + 1, i + 3).includes(twin) || names.slice(Math.max(0, i - 2), i).includes(twin), n);
-    }
+  // A one-sided move gets its twin in the same section (right away, or in the
+  // phrase's mirrored half), so both sides get the work.
+  SECTIONS.forEach(([name, lo], i) => {
+    const hi = SECTIONS[i + 1]?.[1] ?? 212;
+    const names = sectionMoves(NEON, lo, hi).map((p) => p.move.name);
+    for (const n of names) if (n.endsWith("_r")) assert.ok(names.includes(`${n.slice(0, -2)}_l`), `${name}: ${n}`);
   });
 });
 
@@ -164,7 +217,7 @@ test("easy judges about one pose per bar", () => {
   for (const song of SONGS) {
     const easy = song.forDifficulty("easy"), normal = song.judgePoints();
     const pts = easy.judgePoints();
-    assert.ok(pts.length && pts.length <= 0.4 * normal.length, `${pts.length} vs ${normal.length}`);
+    assert.ok(pts.length && pts.length <= 0.42 * normal.length, `${pts.length} vs ${normal.length}`);
     const beats = pts.map((p) => p.beat);
     for (let i = 1; i < beats.length; i++) assert.ok(beats[i] - beats[i - 1] >= EASY_MIN_GAP);
     const short = pts.filter((p) => easy.chart[p.placed].move.name.endsWith("~held")).map((p) => p.beat).sort((a, b) => a - b);
@@ -199,7 +252,7 @@ test("the easy coach holds the kept pose", () => {
 test("Neon Nights on easy", () => {
   const easy = NEON.forDifficulty("easy");
   const pts = easy.judgePoints();
-  assert.equal(NEON.judgePoints().length, 145);
+  assert.equal(NEON.judgePoints().length, 123);
   assert.equal(pts.length, 49);
   SECTIONS.forEach(([name, lo], i) => {
     const hi = SECTIONS[i + 1]?.[1] ?? 212;
@@ -211,31 +264,35 @@ test("Neon Nights on easy", () => {
     "the bridge's 4-beat moves stay whole");
   assert.deepEqual(sectionMoves(easy, 192, 212).map((p) => [p.beat, p.move.name]), [[192, "finale"], [196, "bow"]]);
   assert.equal(pts[pts.length - 1].beat, 192);
-  assert.equal(pts.filter((p) => p.beat >= 16 && p.beat < 48).length, 8, "verse 1: one pose a bar");
+  assert.equal(pts.filter((p) => p.beat >= 16 && p.beat < 48).length, 9,
+    "verse 1: one pose a bar, plus the pre-chorus Squat & Rise in full");
+  const vines = easy.chart.filter((p) => p.move.name.startsWith("vine"));
+  assert.ok(vines.length && vines.every((p) => p.move.name.endsWith("~held") && p.move.judge.length === 1),
+    "a grapevine (4 poses in a bar) becomes one held pose");
 });
 
 const handMade = (extra) => ({ title: "T", bpm: 120, duration: 40.0,
-  moves: [{ move: "shine", beat: 16 }, { move: "rise", beat: 20 }, { move: "star", beat: 24 }], ...extra });
+  moves: [{ move: "hip_sway_r", beat: 16 }, { move: "squat_rise", beat: 20 }, { move: "star_jump", beat: 24 }], ...extra });
 
 test("a song can hand-make its easy and hard charts", () => {
-  const data = handMade({ charts: { easy: [{ move: "rise", beat: 20, gold: true }],
-    hard: [{ move: "shine", beat: 16 }, { move: "star", beat: 18 }, { move: "rise", beat: 20 }] } });
+  const data = handMade({ charts: { easy: [{ move: "squat_rise", beat: 20, gold: true }],
+    hard: [{ move: "hip_sway_r", beat: 16 }, { move: "star_jump", beat: 18 }, { move: "squat_rise", beat: 20 }] } });
   const easy = parseSong(data, "s", LIB, "easy");
-  assert.deepEqual(easy.chart.map((p) => [p.move.name, p.beat, p.gold]), [["rise", 20, true]]);
-  assert.deepEqual(parseSong(data, "s", LIB, "hard").chart.map((p) => p.move.name), ["shine", "star", "rise"]);
+  assert.deepEqual(easy.chart.map((p) => [p.move.name, p.beat, p.gold]), [["squat_rise", 20, true]]);
+  assert.deepEqual(parseSong(data, "s", LIB, "hard").chart.map((p) => p.move.name), ["hip_sway_r", "star_jump", "squat_rise"]);
   const normal = parseSong(data, "s", LIB);
-  assert.deepEqual(normal.chart.map((p) => p.move.name), ["shine", "rise", "star"]);
+  assert.deepEqual(normal.chart.map((p) => p.move.name), ["hip_sway_r", "squat_rise", "star_jump"]);
   assert.deepEqual(normal.forDifficulty("easy").chart, easy.chart, "the hand-made chart wins over the derived one");
 });
 
 test("hand-made charts are validated like the normal one", () => {
   for (const [charts, message] of [
     [{ easy: [{ move: "nope", beat: 16 }] }, "charts.easy: chart entry 0 at beat 16.0: unknown move 'nope'"],
-    [{ hard: [{ move: "rise", beat: 16 }, { move: "shine", beat: 18 }] }, "charts.hard: move 'shine' at beat 18"],
-    [{ hard: [{ move: "rise", beat: 78 }] }, "runs past the song's end"],
+    [{ hard: [{ move: "squat_rise", beat: 16 }, { move: "hip_sway_r", beat: 18 }] }, "charts.hard: move 'hip_sway_r' at beat 18"],
+    [{ hard: [{ move: "squat_rise", beat: 78 }] }, "runs past the song's end"],
     [{ normal: [] }, "only 'easy' and 'hard' charts can be hand-made"],
     [{ expert: [] }, "only 'easy' and 'hard'"],
-    [{ easy: { move: "rise" } }, "charts.easy: expected a list"],
+    [{ easy: { move: "squat_rise" } }, "charts.easy: expected a list"],
     [[], "'charts' must be an object"],
   ]) {
     assert.throws(() => parseSong(handMade({ charts }), "s", LIB),

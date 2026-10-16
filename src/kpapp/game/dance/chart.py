@@ -19,7 +19,8 @@ import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from .pose import REST, keypoints_for, lerp_pose, measure, mirror_pose, normalize_pose, similarity, smoothstep
+from .pose import (FULL_BODY, REST, forward, keypoints_for, leg_target, lerp_pose, measure, mirror_pose,
+                   normalize_pose, similarity, smoothstep)
 
 ASSET_DIR = Path(__file__).resolve().parents[4] / "assets" / "dance"
 LIBRARY = ASSET_DIR / "moves.json"
@@ -34,7 +35,8 @@ DEFAULT_DIFFICULTY = "normal"
 BAR_BEATS = 4  # EASY judges about one pose per bar
 EASY_MIN_GAP = 2.0  # beats: EASY never judges two poses closer than this
 # The freeze rule: a player frozen in the previous judged pose must score
-# below this on the next one, with or without elbows in view
+# below this on the next one: seen whole (feet too), with the feet out of
+# frame (arms alone, which is how a close player is judged), and without elbows
 # (tests/test_dance_chart.py checks it for every difficulty of every song).
 FREEZE_MAX = 0.55
 _ELBOWS_HIDDEN = frozenset({"shoulder", "wrist", "hip"})
@@ -47,12 +49,15 @@ def difficulty_id(difficulty) -> str:
 
 
 def freeze_score(target: dict, held: dict) -> float:
-    """How well a perfect player frozen in `held` matches `target`: the worse
-    (higher) of elbows seen and elbows hidden. Below FREEZE_MAX means a
-    player can't score on `target` by standing still in `held`."""
-    full = similarity(target, measure(keypoints_for(held)))[0]
-    reach = similarity(target, measure(keypoints_for(held, visible=set(_ELBOWS_HIDDEN))))[0]
-    return max(full or 0.0, reach or 0.0)
+    """How well a perfect player frozen in `held` matches `target`: the worst
+    (highest) of the whole body seen, the feet out of frame (arms only) and the
+    elbows hidden. Below FREEZE_MAX means a player can't score on `target` by
+    standing still in `held`, however much of them the camera sees."""
+    body = similarity(target, measure(keypoints_for(held, **FULL_BODY)))[0]
+    # Arms only: unseen legs are left out (None), not given play's half credit.
+    arms = similarity(target, measure(keypoints_for(held)), None)[0]
+    reach = similarity(target, measure(keypoints_for(held, visible=set(_ELBOWS_HIDDEN))), None)[0]
+    return max(body or 0.0, arms or 0.0, reach or 0.0)
 
 
 class ChartError(ValueError):
@@ -243,13 +248,15 @@ def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
       group with no candidate left adds nothing (the coach holds on).
     - **Gold:** a group that had a gold point keeps a gold point, so every
       section with gold in normal keeps gold.
-    - **Moves a bar or longer** (the bridge's 4-beat moves, the final pose)
-      and **unjudged moves** (the bow) stay as they are: they are slow
-      already (a pose every 2 beats at most). The coach dances them in full
-      and their judged poses stay judged, so every pose the coach holds is
-      one the judge asks for. (Judging one pose per bar of them left the
-      coach visibly hitting poses that no longer counted.) The same gap and
-      freeze checks apply; a pose that fails them is no longer judged.
+    - **Slow moves** (a bar or longer whose judged poses are at least
+      EASY_MIN_GAP beats apart: the bridge's 4-beat moves, the final pose)
+      and **unjudged moves** (the bow) stay as they are. The coach dances
+      them in full and their judged poses stay judged, so every pose the coach
+      holds is one the judge asks for. (Judging one pose per bar of them left
+      the coach visibly hitting poses that no longer counted.) The same gap and
+      freeze checks apply; a pose that fails them is no longer judged. A bar
+      long move that judges every beat (a grapevine) is grouped like the short
+      moves: one held pose for its bar.
     """
     out: list[Placed] = []
     prev: tuple[float, dict] | None = None  # (beat, pose) of the last kept judge point
@@ -267,10 +274,16 @@ def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
     def bar_of(beat):
         return math.floor(beat / bar + 1e-9)
 
+    def slow(m: Move) -> bool:
+        if not m.judge:
+            return True
+        beats = [m.keyframes[k].beat for k in m.judge]
+        return m.beats >= bar - 1e-9 and all(b - a >= EASY_MIN_GAP - 1e-9 for a, b in zip(beats, beats[1:]))
+
     i, n = 0, len(chart)
     while i < n:
         p = chart[i]
-        if not p.move.judge or p.move.beats >= bar - 1e-9:
+        if slow(p.move):
             keep: list[int] = []
             for k in p.move.judge:
                 c = pick([(p.beat + p.move.keyframes[k].beat, p.move.keyframes[k].pose, p.gold, k)])
@@ -282,8 +295,7 @@ def derive_easy(chart: list[Placed], bar: float = BAR_BEATS) -> list[Placed]:
             continue
         group = [p]
         i += 1
-        while (i < n and chart[i].move.judge and chart[i].move.beats < bar - 1e-9
-               and bar_of(chart[i].beat) == bar_of(p.beat)):
+        while (i < n and not slow(chart[i].move) and bar_of(chart[i].beat) == bar_of(p.beat)):
             group.append(chart[i])
             i += 1
         cands = [(g.beat + g.move.keyframes[k].beat, g.move.keyframes[k].pose, g.gold, g)
@@ -471,3 +483,155 @@ def load_song(folder: Path | str, library: dict[str, Move] | None = None,
 def load_songs(songs_dir: Path = SONGS, library: dict[str, Move] | None = None) -> list[Song]:
     library = library if library is not None else load_library()
     return [load_song(Path(songs_dir) / sid, library) for sid in song_ids(songs_dir)]
+
+
+# --- the choreography lint (docs/DANCE.md section 5a) -------------------------------
+
+PHRASE_BEATS = 8  # choreography is built in 8-counts from each section's start
+HAND_TRAVEL = 2.35  # SW per beat a hand may travel (relative to its shoulder) between keyframes
+WHIP_TRAVEL, WHIP_RUN = 1.9, 3  # this many transitions in a row above WHIP_TRAVEL is whiplash
+FOOT_TRAVEL = 1.2  # SW per beat a foot may move (relative to the body)
+SHIFT_TRAVEL = 0.9  # SW per beat the hips may move over the feet
+SQUAT_TRAVEL = 0.7  # squat per beat
+JUMPS_PER_PHRASE = 2  # jumps (both feet leave the floor) per 8-count; the rest go one foot at a time
+LEG_SECTION_MIN = 0.25  # of a section's judge points must work the legs
+WANDER_MAX = 1.5  # SW the coach may travel from its spot
+FOOT_REACH = (1.6, 1.0)  # a foot further out / higher than this (SW) is out of the judge's reliable range
+_LEG_EPS = 0.05
+
+
+@dataclass(frozen=True)
+class LintIssue:
+    kind: str  # "flow" | "whiplash" | "jumps" | "phrase" | "legs" | "unjudgeable" | "freeze" | "rest" | "wander"
+    beat: float
+    message: str
+
+    def __str__(self) -> str:
+        return f"beat {self.beat:g}: [{self.kind}] {self.message}"
+
+
+def _twin(name: str) -> str:
+    return name[:-2] + "_l" if name.endswith("_r") else name[:-2] + "_r" if name.endswith("_l") else name
+
+
+def _hand_rel(j: dict, s: str) -> tuple[float, float]:
+    return j[f"{s}_hand"][0] - j[f"{s}_shoulder"][0], j[f"{s}_hand"][1] - j[f"{s}_shoulder"][1]
+
+
+def leg_led(pose: dict) -> bool:
+    """Does the judge read this pose's lower body (a step, a lift or a bend)?"""
+    return leg_target(normalize_pose(pose)).active
+
+
+def lint(song: Song, phrases: bool = True) -> list[LintIssue]:
+    """Choreography rules (docs/DANCE.md section 5a) as checks on a song's
+    chart: flow (hand and foot travel per beat, no whiplash, one foot at a time),
+    8-count phrases that repeat, leg work in every section, leg moves the
+    camera can judge, the freeze rule and a coach that stays on its spot.
+    `phrases=False` skips the phrase checks (a derived EASY chart keeps one pose
+    a bar, so its phrases needn't repeat move for move). An empty list is a pass."""
+    from .motion import keyframe_travel  # motion imports this module
+
+    out: list[LintIssue] = []
+    frames = song._frames
+    joints = [forward(p) for _, p in frames]
+    run = 0
+    for i in range(1, len(frames)):
+        (b0, p0), (b1, p1) = frames[i - 1], frames[i]
+        gap = max(b1 - b0, 0.5)
+        hand = max(math.dist(_hand_rel(joints[i - 1], s), _hand_rel(joints[i], s)) for s in "lr") / gap
+        if hand > HAND_TRAVEL:
+            out.append(LintIssue("flow", b1, f"a hand travels {hand:.2f} SW a beat into this keyframe "
+                                             f"(at most {HAND_TRAVEL:g}): whiplash"))
+        run = run + 1 if hand > WHIP_TRAVEL else 0
+        if run == WHIP_RUN:
+            out.append(LintIssue("whiplash", b1, f"{WHIP_RUN} big arm swings in a row (over {WHIP_TRAVEL:g} SW a beat)"))
+        foot = max(math.dist(p0[k], p1[k]) for k in ("lf", "rf")) / gap
+        if foot > FOOT_TRAVEL:
+            out.append(LintIssue("flow", b1, f"a foot moves {foot:.2f} SW a beat (at most {FOOT_TRAVEL:g})"))
+        if abs(p1["shift"] - p0["shift"]) / gap > SHIFT_TRAVEL:
+            out.append(LintIssue("flow", b1, f"the hips move {abs(p1['shift'] - p0['shift']) / gap:.2f} SW a beat "
+                                             f"(at most {SHIFT_TRAVEL:g})"))
+        if abs(p1["squat"] - p0["squat"]) / gap > SQUAT_TRAVEL:
+            out.append(LintIssue("flow", b1, f"the squat changes {abs(p1['squat'] - p0['squat']) / gap:.2f} a beat "
+                                             f"(at most {SQUAT_TRAVEL:g})"))
+    offs, sides, _ = keyframe_travel(frames)
+    if offs and max(abs(o) for o in offs) > WANDER_MAX:
+        k = max(range(len(offs)), key=lambda i: abs(offs[i]))
+        out.append(LintIssue("wander", frames[k][0], f"the coach steps {offs[k]:+.2f} SW off its spot "
+                                                     f"(at most {WANDER_MAX:g}): balance the phrase's steps"))
+
+    sections = sorted(song.sections, key=lambda s: s["beat"]) or [{"name": "chart", "beat": 0}]
+    end = song.beat_of(song.duration)
+    bounds = [(s["name"], s["beat"], sections[i + 1]["beat"] if i + 1 < len(sections) else end)
+              for i, s in enumerate(sections)]
+    judges = song.judge_points()
+    for name, lo, hi in bounds:
+        pts = [p for p in judges if lo <= p.beat < hi]
+        if pts:
+            legs = sum(leg_led(p.pose) for p in pts)
+            if legs < LEG_SECTION_MIN * len(pts):
+                out.append(LintIssue("legs", lo, f"{name}: only {legs} of {len(pts)} judged poses work the legs "
+                                                 f"(at least {LEG_SECTION_MIN:.0%})"))
+        # jumps per 8-count
+        for start in _phrase_starts(lo, hi):
+            n = sum(1 for (b, _), s in zip(frames[1:], sides) if s is None and start <= b < start + PHRASE_BEATS)
+            if n > JUMPS_PER_PHRASE:
+                out.append(LintIssue("jumps", start, f"{n} jumps in one 8-count (at most {JUMPS_PER_PHRASE}): "
+                                                     f"step one foot at a time"))
+    if phrases:
+        out += _lint_phrases(song, bounds)
+
+    rest = normalize_pose(REST)
+    for i, p in enumerate(judges):
+        t = normalize_pose(p.pose)
+        moved = (any(abs(t[k][0] - rest[k][0]) > _LEG_EPS or t[k][1] > _LEG_EPS for k in ("lf", "rf"))
+                 or abs(t["shift"]) > _LEG_EPS or t["squat"] > _LEG_EPS)
+        if moved and not leg_led(t):
+            out.append(LintIssue("unjudgeable", p.beat, f"'{p.label}': its legs move too little for the camera "
+                                                        f"to tell from standing still"))
+        if any(t[k][0] > FOOT_REACH[0] or t[k][1] > FOOT_REACH[1] for k in ("lf", "rf")):
+            out.append(LintIssue("unjudgeable", p.beat, f"'{p.label}': a foot beyond {FOOT_REACH[0]:g} SW out or "
+                                                        f"{FOOT_REACH[1]:g} SW up leaves the judge's reliable range"))
+        if freeze_score(t, rest) >= FREEZE_MAX:
+            out.append(LintIssue("rest", p.beat, f"'{p.label}': standing still with arms down scores on it"))
+        if i and freeze_score(t, judges[i - 1].pose) >= FREEZE_MAX:
+            out.append(LintIssue("freeze", p.beat, f"'{p.label}': holding the previous pose "
+                                                   f"('{judges[i - 1].label}') scores on it"))
+    return sorted(out, key=lambda x: (x.beat, x.kind))
+
+
+def _phrase_starts(lo: float, hi: float) -> list[float]:
+    out, b = [], lo
+    while b < hi - 1e-9:
+        out.append(b)
+        b += PHRASE_BEATS
+    return out
+
+
+def _lint_phrases(song: Song, bounds) -> list[LintIssue]:
+    """8-counts: no move straddles one, and every 8-count with more than one
+    judged move repeats: it appears elsewhere in the song (as is or mirrored),
+    or its two 4-counts repeat or mirror each other."""
+    out: list[LintIssue] = []
+    phrases: list[tuple[float, tuple]] = []
+    for name, lo, hi in bounds:
+        for start in _phrase_starts(lo, hi):
+            stop = min(start + PHRASE_BEATS, hi)
+            inside = [p for p in song.chart if start - 1e-9 <= p.beat < stop - 1e-9]
+            for p in inside:
+                if p.end > stop + 1e-9 and stop < hi - 1e-9:
+                    out.append(LintIssue("phrase", p.beat, f"'{p.move.label}' runs over the 8-count at beat {stop:g}"))
+            if sum(1 for p in inside if p.move.judge) > 1:
+                phrases.append((start, tuple((round(p.beat - start, 3), p.move.name) for p in inside)))
+    seqs = [s for _, s in phrases]
+    for i, (start, seq) in enumerate(phrases):
+        mirrored = tuple((b, _twin(n)) for b, n in seq)
+        elsewhere = any(j != i and other in (seq, mirrored) for j, other in enumerate(seqs))
+        first = tuple((b, n) for b, n in seq if b < 4)
+        second = tuple((b - 4, n) for b, n in seq if b >= 4)
+        halves = bool(first) and (second == first or second == tuple((b, _twin(n)) for b, n in first))
+        if not (elsewhere or halves):
+            out.append(LintIssue("phrase", start, "this 8-count never repeats (dance it again, mirror it, "
+                                                  "or repeat its first 4 counts)"))
+    return out

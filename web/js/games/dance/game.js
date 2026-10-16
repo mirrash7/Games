@@ -25,7 +25,7 @@ import { Game } from "../base.js";
 import { loadJSON, makeCanvas } from "../../core/gfx.js";
 import { openPlayer as defaultOpenPlayer, SilentPlayer } from "../../core/audio.js";
 import { ACCENT, CYAN, DANGER, DIM, WARN, centredText, css } from "../../core/theme.js";
-import { ChartError, DEFAULT_DIFFICULTY, difficultyId, parseLibrary, parseSong, parseSongIds } from "./chart.js";
+import { ChartError, DEFAULT_DIFFICULTY, difficultyId, legLed, parseLibrary, parseSong, parseSongIds } from "./chart.js";
 import { COMBO_FROM, Judge, UNSEEN, rulesFor } from "./judge.js";
 import { forward, measure } from "./pose.js";
 import { cachedArt, loadArt } from "./art.js";
@@ -41,7 +41,8 @@ export const UPCOMING_KEEP_BEATS = 0.5; // a card stays this long after its beat
 export const DANCE_LEAD_BEATS = 1.0; // dancing starts this long before the first move
 export const OUTRO_HOLD = 3.0; // s after the last move's end: game over even if the audio rings on
 export const AUDIO_TAIL = 2.0; // s of ring-out after `duration` (docs/DANCE.md section 6)
-export const NOTICE_AFTER = 0.6; // s of not seeing the player's arms before saying so
+export const NOTICE_AFTER = 0.6; // s of not seeing the player's arms (or feet, when the moves need them) before saying so
+export const FEET_AHEAD = 4.0; // beats: ask for the feet this long before a judged leg move (and all through the intro)
 export const GOLD_FLASH_SECONDS = 0.8;
 export const SCORE_EASE = 7.0; // 1/s: displayScore catches up with score
 export const AUDIO_STALL = 2.0; // s of a frozen audio clock while playing before falling back to a silent one
@@ -51,6 +52,7 @@ export const AUDIO_LOAD_TIMEOUT = 15.0;
 
 export const NOTICE_ARMS = "STEP BACK - SHOW YOUR ARMS";
 export const NOTICE_NOBODY = "STEP INTO THE FRAME";
+export const NOTICE_FEET = "STEP BACK - SHOW YOUR FEET";
 
 export const ASSET_URL = new URL("../../../assets/dance/", import.meta.url);
 
@@ -160,7 +162,7 @@ export class DanceRaccoonGame extends Game {
   static id = "dance";
   static title = "RACCOON DANCE";
   static blurb = "Bust a move with the raccoon. Copy every pose like a mirror!";
-  static tip = "Stand back so your arms and upper body are in frame - copy the coach like a mirror";
+  static tip = "Stand back so your whole body, feet too, is in frame - copy the coach like a mirror";
   static tutorial = DANCE_TUTORIAL; // the shell's how-to-play cards
   static menu = true;
   static ownCountdown = true; // the song counts in 3-2-1 on the beat; the shell skips its own
@@ -235,6 +237,8 @@ export class DanceRaccoonGame extends Game {
       gold: p.gold }));
     this._pictoBeats = this._pictos.map((p) => p.beat);
     this._lastMoveEnd = song.timeOf(song.chart.reduce((m, p) => Math.max(m, p.end), 0.0));
+    // Judged poses that work the legs: the feet must be in the picture for them.
+    this._legBeats = song.judgePoints().filter((p) => legLed(p.pose)).map((p) => p.beat);
     this.judge = new Judge(song, this.rules);
     this.reset();
   }
@@ -260,6 +264,7 @@ export class DanceRaccoonGame extends Game {
     this.resultsT = 0.0;
     this.ratings = []; // every resolved point, unseen included
     this._unseenFor = 0.0;
+    this._feetlessFor = 0.0;
     this._clock = 0.0; // sum of clamped dt: juice only
     this._lastPos = null;
     this._posStill = 0.0;
@@ -280,6 +285,7 @@ export class DanceRaccoonGame extends Game {
     this.songTime = this._audioTime();
     this.judge.onResume(this.songTime);
     this._unseenFor = 0.0;
+    this._feetlessFor = 0.0;
     this.notice = null;
     this._posStill = 0.0;
   }
@@ -391,9 +397,22 @@ export class DanceRaccoonGame extends Game {
 
     if (this.phase === Phase.DANCING && !seen) this._unseenFor += dt;
     else this._unseenFor = 0.0;
-    this.notice = this._unseenFor > NOTICE_AFTER ? (this.player == null ? NOTICE_NOBODY : NOTICE_ARMS) : null;
+    // Feet: never a miss (the legs of a player whose feet are out of view are
+    // not judged, the arms carry the point), but say what to fix.
+    if (seen && !this.player.seesFeet && this._legsComing()) this._feetlessFor += dt;
+    else this._feetlessFor = 0.0;
+    if (this._unseenFor > NOTICE_AFTER) this.notice = this.player == null ? NOTICE_NOBODY : NOTICE_ARMS;
+    else this.notice = this._feetlessFor > NOTICE_AFTER ? NOTICE_FEET : null;
 
     this._animate(dt);
+  }
+
+  /** Is a judged leg move open or due within FEET_AHEAD beats (the intro counts)? */
+  _legsComing() {
+    if (!this._legBeats.length || this.phase === Phase.OUTRO || this.phase === Phase.GAME_OVER) return false;
+    if (this.phase === Phase.INTRO) return true;
+    const i = bisectLeft(this._legBeats, this.beat - 1.0);
+    return i < this._legBeats.length && this._legBeats[i] <= this.beat + FEET_AHEAD;
   }
 
   _advancePhase() {

@@ -1,356 +1,257 @@
 {
-  "version": 1,
+  "version": 2,
   "moves": {
-    "step_r": {
-      "label": "Step Swing",
+    "step_touch_r": {
+      "label": "Step Touch",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"shift": 0.35, "ra": [100, 105], "la": [-55, -75], "rl": [14, 6], "ll": [-4, 0], "lean": -4}},
-        {"beat": 1, "pose": {"shift": 0.35, "ra": [40, 30], "la": [-5, -15], "rl": [8, 4], "ll": [6, 4], "squat": 0.15}}
+        {"beat": 0, "pose": {"ra": [95, 100], "la": [20, -88], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.32, "squat": 0.12}},
+        {"beat": 1, "pose": {"ra": [80, -80], "la": [80, -80], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3}}
       ],
       "judge": [0]
     },
-    "step_l": {"mirror_of": "step_r"},
-
-    "sway_r": {
-      "label": "Sway",
+    "step_touch_l": {"mirror_of": "step_touch_r"},
+    "step_press_r": {
+      "label": "Step Press",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [135, 140], "la": [200, 210], "lean": 10, "head": 6}},
-        {"beat": 1, "pose": {"ra": [140, 150], "la": [195, 200], "lean": 5, "head": 3, "squat": 0.12}}
+        {"beat": 0, "pose": {"ra": [168, 175], "la": [45, 172], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.32, "squat": 0.12, "lean": -3}},
+        {"beat": 1, "pose": {"ra": [45, 172], "la": [45, 172], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3}}
       ],
       "judge": [0]
     },
-    "sway_l": {"mirror_of": "sway_r"},
-
-    "shimmy": {
-      "label": "Shimmy",
+    "step_press_l": {"mirror_of": "step_press_r"},
+    "hip_sway_r": {
+      "label": "Hip Sway",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [55, 90], "ra": [55, 90]}},
-        {"beat": 1, "pose": {"la": [62, 100], "ra": [48, 80], "lean": 6, "squat": 0.15}}
-      ],
-      "judge": [0]
-    },
-
-    "roof": {
-      "label": "Raise the Roof",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [110, 178], "ra": [110, 178]}},
-        {"beat": 1, "pose": {"la": [150, 182], "ra": [150, 182], "squat": 0.12}}
-      ],
-      "judge": [0]
-    },
-
-    "clap_up": {
-      "label": "Clap Up",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [20, -90], "ra": [20, -90], "squat": 0.2}},
-        {"beat": 1, "pose": {"la": [165, 212], "ra": [165, 212]}}
+        {"beat": 0, "pose": {"ra": [140, 150], "la": [40, -45], "lf": [0.65, 0.0], "rf": [0.65, 0.0], "shift": 0.3, "squat": 0.2, "lean": -8, "head": 4}}
       ]
     },
-
+    "hip_sway_l": {"mirror_of": "hip_sway_r"},
+    "squat_rise": {
+      "label": "Squat & Rise",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [90, 170], "ra": [90, 170], "lf": [0.72, 0.0], "rf": [0.72, 0.0], "shift": 0.0, "squat": 0.6}},
+        {"beat": 2, "pose": {"la": [145, 228], "ra": [145, 228], "lf": [0.37, 0.0], "rf": [0.37, 0.0], "shift": 0.0}}
+      ]
+    },
+    "vine_r": {
+      "label": "Grapevine",
+      "beats": 4,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [95, 100], "ra": [95, 100], "lf": [0.47, 0.0], "rf": [0.47, 0.0], "shift": 0.3, "squat": 0.1}},
+        {"beat": 1, "pose": {"la": [168, 175], "ra": [168, 175], "lf": [-0.06, 0.0], "rf": [-0.06, 0.0], "shift": 0.04, "squat": 0.25}},
+        {"beat": 2, "pose": {"la": [95, 100], "ra": [95, 100], "lf": [0.47, 0.0], "rf": [0.47, 0.0], "shift": 0.3, "squat": 0.1}},
+        {"beat": 3, "pose": {"la": [165, 200], "ra": [165, 200], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3}}
+      ]
+    },
+    "vine_l": {"mirror_of": "vine_r"},
     "disco_r": {
-      "label": "Disco",
+      "label": "Disco Point",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [150, 155], "la": [-30, -40], "lean": 6, "head": 6}},
-        {"beat": 1, "pose": {"ra": [-35, -45], "la": [85, 75], "lean": -4, "head": -4}}
-      ]
+        {"beat": 0, "pose": {"ra": [150, 155], "la": [40, -45], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.32, "squat": 0.12, "lean": 6, "head": 6}},
+        {"beat": 1, "pose": {"ra": [45, 172], "la": [45, 172], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3, "lean": -2}}
+      ],
+      "judge": [0]
     },
     "disco_l": {"mirror_of": "disco_r"},
-
-    "pump": {
-      "label": "Pump It",
+    "knee_pump_r": {
+      "label": "Knee Pump",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [175, 180], "la": [35, -20], "lean": -4}},
-        {"beat": 1, "pose": {"la": [175, 180], "ra": [35, -20], "lean": 4}}
+        {"beat": 0, "pose": {"la": [168, 175], "ra": [168, 175], "lf": [0.37, 0.0], "rf": [0.37, 0.0], "shift": -0.3}},
+        {"beat": 1, "pose": {"la": [95, 100], "ra": [95, 100], "lf": [0.37, 0.0], "rf": [0.2, 0.62], "shift": -0.235}}
       ]
     },
-
-    "robot": {
-      "label": "Robot",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"ra": [110, 180], "la": [70, 0]}},
-        {"beat": 1, "pose": {"ra": [70, 0], "la": [110, 180]}}
-      ]
-    },
-
-    "plane_r": {
-      "label": "Airplane",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"ra": [135, 135], "la": [45, 45], "lean": -6}},
-        {"beat": 1, "pose": {"ra": [45, 45], "la": [135, 135], "lean": 6}}
-      ]
-    },
-    "plane_l": {"mirror_of": "plane_r"},
-
-    "flex": {
-      "label": "Flex",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [80, -75], "ra": [80, -75]}},
-        {"beat": 1, "pose": {"la": [115, 190], "ra": [115, 190], "squat": 0.25}}
-      ]
-    },
-
-    "point_r": {
-      "label": "Point Up",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"ra": [95, 95], "la": [20, -90], "head": 8}},
-        {"beat": 1, "pose": {"ra": [175, 180], "la": [35, -20], "head": -4}}
-      ]
-    },
-    "point_l": {"mirror_of": "point_r"},
-
-    "bolt_r": {
-      "label": "Lightning",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"ra": [150, 75], "la": [60, -30], "lean": -8, "head": 8}},
-        {"beat": 1, "pose": {"ra": [150, 75], "la": [60, -30], "lean": -4, "head": 4, "squat": 0.15}}
-      ],
-      "judge": [0]
-    },
-    "bolt_l": {"mirror_of": "bolt_r"},
-
-    "shine": {
-      "label": "Shine",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [140, 145], "ra": [140, 145], "ll": [20, 18], "rl": [20, 18]}},
-        {"beat": 1, "pose": {"la": [132, 138], "ra": [132, 138], "ll": [20, 18], "rl": [20, 18], "squat": 0.1}}
-      ],
-      "judge": [0]
-    },
-
-    "knee_r": {
-      "label": "Knee Up",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [135, 140], "ra": [200, 210], "lean": -6}},
-        {"beat": 1, "pose": {"ra": [70, 60], "la": [-70, -60], "rl": [70, 0], "lean": 4, "head": 6}}
-      ]
-    },
-    "knee_l": {"mirror_of": "knee_r"},
-
-    "squat": {
-      "label": "Squat",
-      "beats": 2,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [90, 90], "ra": [90, 90], "squat": 0.7}},
-        {"beat": 1, "pose": {"la": [170, 175], "ra": [170, 175]}}
-      ]
-    },
-
-    "star": {
+    "knee_pump_l": {"mirror_of": "knee_pump_r"},
+    "star_jump": {
       "label": "Star Jump",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [130, 135], "ra": [130, 135], "ll": [28, 25], "rl": [28, 25]}},
-        {"beat": 1, "pose": {"la": [20, -95], "ra": [20, -95], "squat": 0.15}}
+        {"beat": 0, "pose": {"la": [165, 200], "ra": [165, 200], "lf": [0.9, 0.0], "rf": [0.9, 0.0], "shift": 0.0, "squat": 0.1}},
+        {"beat": 1, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.25, 0.0], "rf": [0.25, 0.0], "shift": 0.0, "squat": 0.35}}
+      ],
+      "judge": [0]
+    },
+    "knee_up_r": {
+      "label": "Knee Up",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"la": [138, 145], "ra": [40, -45], "lf": [0.37, 0.0], "rf": [0.2, 0.62], "shift": -0.235, "lean": 3}},
+        {"beat": 1, "pose": {"la": [45, 172], "ra": [45, 172], "lf": [0.45, 0.0], "rf": [0.45, 0.0], "shift": 0.0}}
+      ],
+      "judge": [0]
+    },
+    "knee_up_l": {"mirror_of": "knee_up_r"},
+    "kick_r": {
+      "label": "Side Kick",
+      "beats": 2,
+      "keyframes": [
+        {"beat": 0, "pose": {"ra": [95, 100], "la": [90, 170], "lf": [0.37, 0.0], "rf": [1.25, 0.5], "shift": -0.18, "lean": -6}},
+        {"beat": 1, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.0, "squat": 0.45}}
       ]
     },
-
+    "kick_l": {"mirror_of": "kick_r"},
     "rainbow_r": {
       "label": "Rainbow",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [100, 105], "ra": [-60, -75], "lean": -10, "shift": -0.2}},
-        {"beat": 1, "pose": {"la": [170, 180], "ra": [170, 180]}},
-        {"beat": 2, "pose": {"ra": [100, 105], "la": [-60, -75], "lean": 10, "shift": 0.2}}
-      ],
-      "judge": [0, 2]
+        {"beat": 0, "pose": {"la": [100, 105], "ra": [-50, -70], "lf": [0.88, 0.0], "rf": [0.88, 0.0], "shift": -0.45, "squat": 0.45, "lean": -6}},
+        {"beat": 2, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.37, 0.0], "rf": [0.37, 0.0], "shift": 0.0}}
+      ]
     },
     "rainbow_l": {"mirror_of": "rainbow_r"},
-
-    "heart": {
-      "label": "Big Heart",
+    "wide_squat_r": {
+      "label": "Wide Squat",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [140, 235], "ra": [140, 235]}},
-        {"beat": 2, "pose": {"la": [20, -95], "ra": [20, -95], "head": 8}}
+        {"beat": 0, "pose": {"la": [95, 100], "ra": [95, 100], "lf": [0.72, 0.0], "rf": [0.72, 0.0], "shift": 0.0, "squat": 0.6}},
+        {"beat": 2, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.72, 0.0], "rf": [0.72, 0.0], "shift": 0.3, "lean": -6}}
       ]
     },
-
-    "rise": {
-      "label": "Rise Up",
-      "beats": 4,
-      "keyframes": [
-        {"beat": 0, "pose": {"la": [55, 150], "ra": [55, 150], "squat": 0.6}},
-        {"beat": 2, "pose": {"la": [172, 178], "ra": [172, 178]}}
-      ]
-    },
-
+    "wide_squat_l": {"mirror_of": "wide_squat_r"},
     "finale": {
       "label": "Superstar",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [168, 172], "la": [35, -20], "lean": -8, "head": 8, "ll": [18, 14]}}
+        {"beat": 0, "pose": {"ra": [150, 155], "la": [40, -45], "lf": [0.37, 0.0], "rf": [1.0, 0.0], "shift": 0.035, "squat": 0.15, "lean": -6, "head": 8}}
       ]
     },
-
     "bow": {
       "label": "Bow",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [-30, -80], "la": [55, 40], "head": 14, "squat": 0.3}},
-        {"beat": 2, "pose": {"ra": [-30, -80], "la": [55, 40], "head": 18, "squat": 0.35}}
+        {"beat": 0, "pose": {"ra": [-30, -80], "la": [55, 40], "lf": [0.3, 0.0], "rf": [0.3, 0.0], "shift": 0.0, "squat": 0.3, "head": 14}},
+        {"beat": 2, "pose": {"ra": [-30, -80], "la": [55, 40], "lf": [0.3, 0.0], "rf": [0.3, 0.0], "shift": 0.0, "squat": 0.35, "head": 18}}
       ],
       "judge": []
     },
-
     "woah": {
       "label": "Woah",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [-20, -100], "ra": [40, 95], "lean": 10, "head": 8}},
-        {"beat": 1, "pose": {"ra": [-20, -100], "la": [40, 95], "lean": -10, "head": -8}}
+        {"beat": 0, "pose": {"la": [0, -80], "ra": [60, 85], "lf": [0.55, 0.0], "rf": [0.55, 0.0], "shift": 0.2, "squat": 0.4, "lean": 8, "head": 8}},
+        {"beat": 1, "pose": {"ra": [0, -80], "la": [60, 85], "lf": [0.55, 0.0], "rf": [0.55, 0.0], "shift": -0.2, "squat": 0.4, "lean": -8, "head": -8}}
       ]
     },
-
     "frame": {
       "label": "Frame",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [90, 215], "ra": [90, 215], "head": 6}},
-        {"beat": 1, "pose": {"la": [75, 50], "ra": [75, 50], "squat": 0.1}}
-      ]
+        {"beat": 0, "pose": {"la": [80, 205], "ra": [80, 205], "lf": [0.22, 0.0], "rf": [0.22, 0.0], "shift": 0.0, "squat": 0.55, "head": 6}},
+        {"beat": 1, "pose": {"la": [60, 150], "ra": [60, 150], "lf": [0.22, 0.0], "rf": [0.22, 0.0], "shift": 0.0, "squat": 0.1}}
+      ],
+      "judge": [0]
     },
-
     "point_over_r": {
       "label": "Point Over",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [178, 222], "la": [30, -40], "lean": -6, "head": -6}},
-        {"beat": 1, "pose": {"ra": [-40, -55], "la": [70, 60], "lean": 6, "head": 8}}
+        {"beat": 0, "pose": {"ra": [185, 222], "la": [40, -45], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.32, "squat": 0.12, "lean": -6, "head": -6}},
+        {"beat": 1, "pose": {"ra": [60, 150], "la": [60, 150], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3, "lean": 4, "head": 8}}
       ]
     },
     "point_over_l": {"mirror_of": "point_over_r"},
-
     "heart_hands": {
       "label": "Heart Hands",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [140, 235], "ra": [140, 235]}},
-        {"beat": 1, "pose": {"la": [134, 228], "ra": [134, 228], "head": 8, "squat": 0.15}}
+        {"beat": 0, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.22, 0.0], "rf": [0.22, 0.0], "shift": 0.0, "squat": 0.55}},
+        {"beat": 1, "pose": {"la": [134, 228], "ra": [134, 228], "lf": [0.22, 0.0], "rf": [0.22, 0.0], "shift": 0.0, "head": 8}}
       ],
       "judge": [0]
     },
-
     "brush_r": {
       "label": "Brush Off",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [-80, -105], "ra": [80, 170], "head": 10}},
-        {"beat": 1, "pose": {"la": [100, 110], "ra": [40, 20], "lean": -6, "head": -6}}
-      ]
+        {"beat": 0, "pose": {"la": [-60, -110], "ra": [90, 175], "lf": [0.37, 0.0], "rf": [1.0, 0.0], "shift": 0.035, "squat": 0.15, "head": 10}},
+        {"beat": 1, "pose": {"la": [45, 172], "ra": [45, 172], "lf": [0.25, 0.0], "rf": [0.25, 0.0], "shift": 0.0, "squat": 0.35, "lean": -4, "head": -6}}
+      ],
+      "judge": [0]
     },
     "brush_l": {"mirror_of": "brush_r"},
-
     "cheer": {
       "label": "Cheer",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [150, 158], "ra": [150, 158]}},
-        {"beat": 1, "pose": {"la": [142, 150], "ra": [142, 150], "squat": 0.15}}
+        {"beat": 0, "pose": {"la": [165, 172], "ra": [165, 172], "lf": [0.37, 0.0], "rf": [0.2, 0.62], "shift": -0.235}},
+        {"beat": 1, "pose": {"la": [95, 100], "ra": [95, 100], "lf": [0.25, 0.0], "rf": [0.25, 0.0], "shift": 0.0, "squat": 0.35}}
       ],
       "judge": [0]
     },
-
     "step_clap_r": {
       "label": "Step Clap",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"shift": 0.35, "la": [95, 100], "ra": [95, 100], "rl": [14, 6]}},
-        {"beat": 1, "pose": {"shift": 0.35, "la": [165, 212], "ra": [165, 212], "squat": 0.1}}
+        {"beat": 0, "pose": {"la": [60, 150], "ra": [95, 100], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.32, "squat": 0.12}},
+        {"beat": 1, "pose": {"la": [140, 235], "ra": [140, 235], "lf": [0.22, 0.08], "rf": [0.22, 0.0], "shift": 0.1, "squat": 0.3}}
       ]
     },
     "step_clap_l": {"mirror_of": "step_clap_r"},
-
     "hair_flip_r": {
       "label": "Hair Flip",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [150, 250], "la": [45, -35], "lean": -4, "head": -10}},
-        {"beat": 1, "pose": {"ra": [110, 120], "la": [40, 40], "head": 10}}
+        {"beat": 0, "pose": {"ra": [150, 250], "la": [45, -35], "lf": [0.65, 0.0], "rf": [0.65, 0.0], "shift": 0.3, "squat": 0.2, "lean": -6, "head": -10}},
+        {"beat": 1, "pose": {"ra": [60, 150], "la": [100, 110], "lf": [0.22, 0.0], "rf": [0.22, 0.0], "shift": 0.0, "squat": 0.55, "head": 10}}
       ]
     },
     "hair_flip_l": {"mirror_of": "hair_flip_r"},
-
     "howl_r": {
       "label": "Howl",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [140, 140], "la": [-20, -95], "head": -12}},
-        {"beat": 1, "pose": {"ra": [148, 150], "la": [-20, -95], "head": -16, "squat": 0.1}}
+        {"beat": 0, "pose": {"ra": [140, 140], "la": [-20, -95], "lf": [0.37, 0.0], "rf": [0.2, 0.62], "shift": -0.235, "head": -12}},
+        {"beat": 1, "pose": {"ra": [45, 172], "la": [45, 172], "lf": [0.7, 0.0], "rf": [0.7, 0.0], "shift": 0.0, "squat": 0.2, "head": -16}}
       ],
       "judge": [0]
     },
     "howl_l": {"mirror_of": "howl_r"},
-
     "scarecrow": {
       "label": "Scarecrow",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [100, 40], "ra": [100, 40], "head": 10}},
-        {"beat": 1, "pose": {"la": [95, 20], "ra": [95, 20], "head": -12, "squat": 0.1}}
+        {"beat": 0, "pose": {"la": [100, 40], "ra": [100, 40], "lf": [0.75, 0.0], "rf": [0.75, 0.0], "shift": 0.0, "squat": 0.5, "head": 10}},
+        {"beat": 1, "pose": {"la": [100, 100], "ra": [100, 100], "lf": [0.75, 0.0], "rf": [0.75, 0.0], "shift": 0.0, "squat": 0.2, "head": -12}}
       ],
       "judge": [0]
     },
-
     "hands_up": {
       "label": "Hands Up",
       "beats": 2,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [170, 178], "ra": [170, 178]}},
-        {"beat": 1, "pose": {"la": [160, 195], "ra": [160, 195], "squat": 0.15}}
+        {"beat": 0, "pose": {"la": [170, 178], "ra": [170, 178], "lf": [0.9, 0.0], "rf": [0.9, 0.0], "shift": 0.0, "squat": 0.1}},
+        {"beat": 1, "pose": {"la": [160, 195], "ra": [160, 195], "lf": [0.25, 0.0], "rf": [0.25, 0.0], "shift": 0.0, "squat": 0.35}}
       ],
       "judge": [0]
     },
-
-    "claws": {
+    "claws_r": {
       "label": "Spooky Claws",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [145, 25], "ra": [145, 25], "head": 8, "squat": 0.15}},
-        {"beat": 2, "pose": {"la": [-30, -80], "ra": [-30, -80], "head": -8, "squat": 0.35}}
+        {"beat": 0, "pose": {"la": [165, 150], "ra": [165, 150], "lf": [0.8, 0.0], "rf": [0.8, 0.0], "shift": -0.35, "lean": 6, "head": 8}},
+        {"beat": 2, "pose": {"la": [105, 20], "ra": [105, 20], "lf": [0.8, 0.0], "rf": [0.8, 0.0], "shift": 0.0, "squat": 0.7, "head": -8}}
       ]
     },
-
+    "claws_l": {"mirror_of": "claws_r"},
     "ghost_r": {
       "label": "Ghost Arms",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"ra": [125, 105], "la": [182, 232], "lean": 8, "head": 8}},
-        {"beat": 2, "pose": {"ra": [80, 45], "la": [-40, -85], "lean": 6, "squat": 0.3}}
+        {"beat": 0, "pose": {"ra": [70, 45], "la": [165, 205], "lf": [0.88, 0.0], "rf": [0.88, 0.0], "shift": 0.45, "squat": 0.45, "lean": 8, "head": 8}},
+        {"beat": 2, "pose": {"ra": [140, 120], "la": [-40, -85], "lf": [0.88, 0.0], "rf": [0.88, 0.0], "shift": -0.1, "squat": 0.15, "lean": 6}}
       ]
     },
     "ghost_l": {"mirror_of": "ghost_r"},
-
-    "stir": {
-      "label": "Witch Stir",
-      "beats": 4,
-      "keyframes": [
-        {"beat": 0, "pose": {"ra": [60, 100], "la": [150, 240], "lean": 4}},
-        {"beat": 1, "pose": {"ra": [-10, -40], "la": [150, 240], "squat": 0.1}},
-        {"beat": 2, "pose": {"ra": [-50, -95], "la": [150, 240], "lean": -4}},
-        {"beat": 3, "pose": {"ra": [15, -75], "la": [150, 240], "squat": 0.1}}
-      ],
-      "judge": [0, 2]
-    },
-
     "boo": {
       "label": "Boo!",
       "beats": 4,
       "keyframes": [
-        {"beat": 0, "pose": {"la": [70, 120], "ra": [70, 120], "head": 8, "squat": 0.3}}
+        {"beat": 0, "pose": {"la": [70, 120], "ra": [70, 120], "lf": [0.85, 0.0], "rf": [0.85, 0.0], "shift": 0.0, "squat": 0.55, "head": 8}}
       ]
     }
   }

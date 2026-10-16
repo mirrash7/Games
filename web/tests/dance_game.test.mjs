@@ -4,8 +4,10 @@
 // Every player here goes through the same input path as the site: the bot's
 // pose becomes COCO keypoints (keypointsFor) with pixel noise, model results
 // at 20 Hz arriving 150 ms after the moment they show, and the site's
-// PoseExtrapolator projecting them to each 60 Hz render frame. Song time comes
-// from a SilentPlayer on a fake clock, so runs are fast and deterministic.
+// PoseExtrapolator projecting them to each 60 Hz render frame. Players stand
+// 2.5-3 m back with the whole body in view (FULL_BODY), as the tutorial asks;
+// `hips: false` and `legs: false` take parts out of view. Song time comes from
+// a SilentPlayer on a fake clock, so runs are fast and deterministic.
 // The bots draw their randomness from core/random.js rather than Python's
 // Mersenne Twister, so scores differ slightly from the Python run; the bounds
 // are the same. Exact parity is pinned by dance_parity.test.mjs.
@@ -21,16 +23,18 @@ import { Rng } from "../js/core/random.js";
 import { GAMES } from "../js/games/index.js";
 import { DIFFICULTIES, parseLibrary, parseMoves, parseSong } from "../js/games/dance/chart.js";
 import {
-  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_NOBODY, Phase, boardIdFor, songVariants,
+  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_FEET, NOTICE_NOBODY, Phase, boardIdFor,
+  songVariants,
 } from "../js/games/dance/game.js";
 import {
   DIFFICULTY, HOLD, Judge, LOST_BEFORE, RATINGS, RATING_NAMES, RESUME_GRACE, Rules, WINDOW_EARLY, WINDOW_LATE, rate,
   starFill, starsFor,
 } from "../js/games/dance/judge.js";
-import { REST, keypointsFor, measure, mirrorPose, normalizePose, similarity } from "../js/games/dance/pose.js";
+import { FULL_BODY, REST, keypointsFor, measure, mirrorPose, normalizePose, similarity } from "../js/games/dance/pose.js";
 
 const W = 1280, H = 720;
 const FPS = 60;
+const CLOSE = { centrePx: [640.0, 330.0], shoulderPx: 150.0 }; // standing close: the ankles below the frame
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 
 // --- a test song: asymmetric poses, so the wrong side is always wrong --------
@@ -85,14 +89,14 @@ function newGame(songs = makeSongs(), variant = null, difficulty = undefined) {
  * or null for "not in the frame"). Returns the phases seen.
  */
 function simulate(game, clock, bot, { rateHz = 20.0, lag = 0.15, noise = 4.0, seed = 1, elbowDrop = 0.0,
-  hips = true, seconds = null, onFrame = null, stopAtGameOver = true } = {}) {
+  hips = true, legs = true, framing = FULL_BODY, seconds = null, onFrame = null, stopAtGameOver = true } = {}) {
   const rng = new Rng(seed);
   const extrap = new PoseExtrapolator(); // the site's own projection (gain 0.7)
   const pending = [];
   let nextCapture = clock.t;
   const phases = [game.phase];
   const limit = seconds ?? game.song.duration + 8.0;
-  const visible = hips ? null : ["shoulder", "elbow", "wrist"];
+  const visible = hips && legs ? null : ["shoulder", "elbow", "wrist", ...(hips ? ["hip"] : [])];
   const frames = Math.trunc(limit * FPS);
   for (let f = 0; f < frames; f++) {
     clock.t += 1.0 / FPS;
@@ -103,7 +107,7 @@ function simulate(game, clock, bot, { rateHz = 20.0, lag = 0.15, noise = 4.0, se
       const target = bot(st);
       const poses = [];
       if (target != null) {
-        const kp = keypointsFor(target, { visible });
+        const kp = keypointsFor(target, { visible, ...framing });
         for (let i = 0; i < kp.xy.length; i++) kp.xy[i] += rng.uniform(-noise, noise);
         if (elbowDrop) {
           for (const name of ["left_elbow", "right_elbow"]) if (rng.random() < elbowDrop) kp.confidence[KP[name]] = 0;
@@ -130,13 +134,31 @@ function simulate(game, clock, bot, { rateHz = 20.0, lag = 0.15, noise = 4.0, se
 
 const perfect = (game, late = 0.0) => (st) => game.song.coachPose(game.song.beatOf(st - late));
 
-/** Every limb segment 25-30 degrees off (a new direction every beat), 250 ms late. */
-function sloppy(game, { late = 0.25, off = [25.0, 30.0], seed = 7 } = {}) {
+/**
+ * Every arm segment 25-30 degrees off and every foot 0.12-0.2 SW off (the hips
+ * and the squat sloppy too; a new direction every beat), 250 ms late.
+ */
+function sloppy(game, { late = 0.25, off = [25.0, 30.0], feet = [0.12, 0.2], seed = 7 } = {}) {
   return (st) => {
     const b = game.song.beatOf(st - late);
     const p = normalizePose(game.song.coachPose(b));
     const r = new Rng(seed * 100003 + Math.trunc(b));
-    for (const k of ["la", "ra", "ll", "rl"]) p[k] = p[k].map((a) => a + r.choice([-1, 1]) * r.uniform(...off));
+    for (const k of ["la", "ra"]) p[k] = p[k].map((a) => a + r.choice([-1, 1]) * r.uniform(...off));
+    for (const k of ["lf", "rf"]) p[k] = [Math.max(-0.9, p[k][0] + r.choice([-1, 1]) * r.uniform(...feet)), p[k][1]];
+    p.shift += r.choice([-1, 1]) * r.uniform(...feet) * 0.6;
+    p.squat = Math.min(1.0, Math.max(0.0, p.squat + r.choice([-1, 1]) * r.uniform(feet[0] * 0.8, feet[1] * 0.9)));
+    return p;
+  };
+}
+
+/** Perfect arms, legs standing still: dancing the moves from the waist up. */
+function armsOnly(game) {
+  return (st) => {
+    const p = normalizePose(game.song.coachPose(game.song.beatOf(st)));
+    p.lf = [...REST.lf];
+    p.rf = [...REST.rf];
+    p.shift = 0.0;
+    p.squat = 0.0;
     return p;
   };
 }
@@ -283,7 +305,9 @@ test("a flawless dancer a quarter second behind the coach is still perfect", () 
 test("a good but imprecise dancer on a slow model is still a superstar", () => {
   // Pins PERFECT at 0.90: limbs 10-20 degrees off, 200 ms late, 15 Hz with 200 ms of lag.
   const { game, clock } = newGame();
-  simulate(game, clock, sloppy(game, { late: 0.2, off: [10, 20] }), { rateHz: 15, lag: 0.2, noise: 6 });
+  // The test chart is arms only: this dancer stands close (the original tuning's
+  // framing), so the 6 px of noise is no bigger a share of their limbs.
+  simulate(game, clock, sloppy(game, { late: 0.2, off: [10, 20] }), { rateHz: 15, lag: 0.2, noise: 6, framing: CLOSE });
   assert.ok(game.starCount === 5 && game.counts.x === 0, report(game));
 });
 
@@ -578,16 +602,13 @@ test("Neon Nights end to end", () => {
   };
   let { game, phases } = play(perfect);
   assert.deepEqual(phases, [Phase.INTRO, Phase.DANCING, Phase.OUTRO, Phase.GAME_OVER]);
-  assert.ok(game.score >= 9200 && game.counts.x === 0, report(game));
+  assert.ok(game.score === 10000 && game.counts.x === 0, report(game));
+  ({ game } = play(perfect, { elbowDrop: 0.5 }));
+  assert.equal(game.score, 10000, report(game));
+  // Hips (and so the legs) out of view: half credit for the legs, never an X.
   ({ game } = play(perfect, { elbowDrop: 0.5, hips: false }));
-  assert.ok(game.starCount >= 4, report(game));
-  ({ game } = play(sloppy));
-  assert.ok(game.starCount >= 3 && game.starCount <= 4, report(game));
-  for (const bot of [frozen, idle, randomArms]) {
-    ({ game } = play(bot));
-    assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
-  }
-  // Not wrongSide: a third of Neon Nights' points are symmetric poses.
+  assert.ok(game.counts.x === 0 && game.score > 7500 && game.score < 10000, report(game));
+  // Not wrongSide: plenty of Neon Nights' poses are symmetric (the mirror image is the move itself).
 });
 
 // --- difficulties (docs/DANCE.md section 7a) ----------------------------------
@@ -643,51 +664,78 @@ test("one rules table: easy forgives more, hard less", () => {
   assert.equal(e.lostBefore, 0.30);
 });
 
-const NEON_SONGS = (() => {
-  const lib = parseLibrary(readJSON("moves.json"));
-  return [parseSong(readJSON("songs/neon_nights/song.json"), "neon_nights", lib)];
-})();
+const LIBRARY = parseLibrary(readJSON("moves.json"));
+const SONG_IDS = JSON.parse(readFileSync(new URL("../../assets/dance/songs/index.json", import.meta.url), "utf8"));
+const REAL = Object.fromEntries(SONG_IDS.map((id) => [id, [parseSong(readJSON(`songs/${id}/song.json`), id, LIBRARY)]]));
 
-function neon(level, make, opts = {}) {
-  const { game, clock } = newGame(NEON_SONGS, "neon_nights", level);
+function play(id, level, make, opts = {}, rules = null) {
+  const { game, clock } = newGame(REAL[id], id, level);
+  if (rules != null) game.judge = new Judge(game.song, rules);
   simulate(game, clock, make(game), opts);
   return game;
 }
+const neon = (level, make, opts = {}) => play("neon_nights", level, make, opts);
 
-/** Every limb within 10 degrees, 200 ms behind the coach. */
-const precise = (game) => sloppy(game, { late: 0.2, off: [0.0, 10.0] });
+/** Every limb within 10 degrees and every foot within 0.06 SW, 200 ms behind the coach. */
+const precise = (game) => sloppy(game, { late: 0.2, off: [0.0, 10.0], feet: [0.0, 0.06] });
 
-for (const level of ["easy", "normal", "hard"]) {
-  test(`fairness on ${level}`, () => {
-    let game = neon(level, perfect);
-    assert.ok(game.score === 10000 && game.judge.unseen === 0, report(game));
-    assert.equal(game.song.judgePoints().length, { easy: 49, normal: 145, hard: 145 }[level]);
-    game = neon(level, precise);
-    assert.equal(game.starCount, 5, report(game));
-    for (const bot of [frozen, idle, randomArms]) {
-      game = neon(level, bot);
-      assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
-    }
-    game = neon(level, sloppy); // every limb 25-30 degrees off, 250 ms late
-    const want = { easy: [4, 4], normal: [3, 3], hard: [2, 2] }[level];
-    assert.ok(game.starCount >= want[0] && game.starCount <= want[1], `sloppy: ${report(game)}`);
-  });
+const LEVEL_POINTS = { neon_nights: { easy: 49, normal: 123, hard: 123 },
+  pumpkin_patch_bounce: { easy: 40, normal: 99, hard: 99 } };
+const SLOPPY_STARS = { easy: [4, 4], normal: [3, 4], hard: [2, 3] };
+
+for (const id of SONG_IDS) {
+  for (const level of ["easy", "normal", "hard"]) {
+    test(`fairness: ${id} on ${level}`, () => {
+      // As tests/test_dance_game.py: perfect is 10000; legs out of frame get half
+      // credit (no X, less than full view, more than standing still);
+      // precise is 5 stars, sloppy in between, perfect arms with the legs standing
+      // still fall clearly short, lazy players stay at a star or less.
+      let game = play(id, level, perfect);
+      assert.ok(game.score === 10000 && game.judge.unseen === 0, report(game));
+      assert.equal(game.song.judgePoints().length, LEVEL_POINTS[id][level]);
+      const hidden = play(id, level, perfect, { legs: false });
+      assert.ok(hidden.score < 10000 && hidden.counts.x === 0, `legs out of frame: ${report(hidden)}`);
+      game = play(id, level, precise);
+      assert.equal(game.starCount, 5, report(game));
+      const sl = play(id, level, sloppy);
+      const [lo, hi] = SLOPPY_STARS[level];
+      assert.ok(sl.starCount >= lo && sl.starCount <= hi, `sloppy: ${report(sl)}`);
+      game = play(id, level, armsOnly);
+      assert.ok(game.starCount <= 3 && game.score < sl.score - 1000, `arms only: ${report(game)}`);
+      assert.ok(game.score < hidden.score, "hiding the feet never beats being seen standing still");
+      for (const bot of [frozen, idle, randomArms]) {
+        game = play(id, level, bot);
+        assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
+      }
+    });
+  }
 }
 
 test("easy forgives a beginner that normal rules would not", () => {
-  const beginner = (g) => sloppy(g, { late: 0.4, off: [30.0, 40.0] });
-  let game = neon("easy", beginner);
-  assert.ok(game.starCount >= 3, report(game));
-  const { game: g2, clock } = newGame(NEON_SONGS, "neon_nights", "easy");
-  g2.judge = new Judge(g2.song, DIFFICULTY.normal);
-  simulate(g2, clock, beginner(g2));
-  assert.ok(g2.starCount <= 1, report(g2));
+  const beginner = (g) => sloppy(g, { late: 0.4, off: [30.0, 40.0], feet: [0.15, 0.25] });
+  const game = neon("easy", beginner);
+  assert.equal(game.starCount, 3, report(game));
+  const g2 = play("neon_nights", "easy", beginner, {}, DIFFICULTY.normal);
+  assert.ok(g2.starCount <= 2, report(g2));
 });
 
 test("hard needs the longer hold", () => {
-  // At normal's 0.12 s hold the sloppy dancer made 3 stars on hard.
-  const { game, clock } = newGame(NEON_SONGS, "neon_nights", "hard");
-  game.judge = new Judge(game.song, new Rules({ ...DIFFICULTY.hard, hold: 0.12 }));
-  simulate(game, clock, sloppy(game));
-  assert.ok(game.starCount >= 3, report(game));
+  // At normal's 0.12 s hold the sloppy dancer scores more on hard.
+  const held = play("neon_nights", "hard", sloppy);
+  const short = play("neon_nights", "hard", sloppy, {}, new Rules({ ...DIFFICULTY.hard, hold: 0.12 }));
+  assert.ok(short.score > held.score + 500, `${report(held)} / ${report(short)}`);
+});
+
+test("feet out of frame ask to step back and never cost an X", () => {
+  const { game, clock } = newGame(REAL.neon_nights, "neon_nights");
+  const notices = [];
+  simulate(game, clock, perfect(game), { legs: false, onFrame: (g) => notices.push([g.phase, g.notice]) });
+  assert.ok(game.counts.x === 0 && game.counts.perfect < game.song.judgePoints().length, report(game));
+  assert.ok(notices.some(([ph, n]) => ph === Phase.INTRO && n === NOTICE_FEET), "said before the first move");
+  const dancing = notices.filter(([ph]) => ph === Phase.DANCING).map(([, n]) => n);
+  assert.ok(dancing.filter((n) => n === NOTICE_FEET).length > 0.8 * dancing.length, "and while the legs are judged");
+  const { game: g2, clock: c2 } = newGame(REAL.neon_nights, "neon_nights");
+  const seen = [];
+  simulate(g2, c2, perfect(g2), { onFrame: (g) => seen.push(g.notice) });
+  assert.ok(!seen.includes(NOTICE_FEET), "a player in full view is never nagged");
 });

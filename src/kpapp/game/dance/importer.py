@@ -147,7 +147,7 @@ def chart_from_poses(samples, bpm: float, offset: float, start_beat: float, end_
             prev_pose = prev_entry = None
             continue
         if merge and prev_pose is not None and prev_entry is not None:
-            score, _ = similarity(pose, measure(keypoints_for(prev_pose)))
+            score, _ = similarity(pose, measure(keypoints_for(prev_pose)), None)  # the arms say it
             if score is not None and score > MERGE_ABOVE and math.isclose(
                     prev_entry["beat"] + custom[prev_entry["move"]]["beats"], beat):
                 custom[prev_entry["move"]]["beats"] = _num(custom[prev_entry["move"]]["beats"] + every)

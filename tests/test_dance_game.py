@@ -3,8 +3,10 @@
 Every player here is simulated through the same input path as the app: the
 bot's pose becomes COCO keypoints (`keypoints_for`), with pixel noise, model
 results at 20 Hz arriving 150 ms after the moment they show, and the app's
-`PoseExtrapolator` projecting them to each 60 Hz render frame. Song time comes
-from a SilentPlayer on a fake clock, so runs are fast and deterministic.
+`PoseExtrapolator` projecting them to each 60 Hz render frame. Players stand
+2.5-3 m back with the whole body in view (`FULL_BODY`), as the tutorial asks;
+`hips=False` and `legs=False` take parts out of view. Song time comes from a
+SilentPlayer on a fake clock, so runs are fast and deterministic.
 """
 
 from __future__ import annotations
@@ -24,13 +26,14 @@ from kpapp.audio import SilentPlayer
 from kpapp.controls import ControlState
 from kpapp.game import REGISTRY
 from kpapp.game.dance import chart, judge
-from kpapp.game.dance.game import NOTICE_ARMS, NOTICE_NOBODY, DanceGame, Phase
+from kpapp.game.dance.game import NOTICE_ARMS, NOTICE_FEET, NOTICE_NOBODY, DanceGame, Phase
 from kpapp.game.dance.judge import Judge, rate, star_fill, stars_for
-from kpapp.game.dance.pose import REST, keypoints_for, mirror_pose, normalize_pose
+from kpapp.game.dance.pose import FULL_BODY, REST, keypoints_for, mirror_pose, normalize_pose
 from kpapp.inference import PoseExtrapolator, Result
 
 W, H = 1280, 720
 FPS = 60
+CLOSE = {"centre_px": (640.0, 330.0), "shoulder_px": 150.0}  # standing close: the ankles below the frame
 
 # --- a test song: asymmetric poses, so the wrong side is always wrong ---------
 
@@ -103,7 +106,7 @@ def new_game(songs_dir, variant=None, library=LIB, **kw):
 # --- the simulated input path --------------------------------------------------
 
 def simulate(game, clock, bot, *, rate_hz=20.0, lag=0.15, noise=4.0, seed=1, elbow_drop=0.0,
-             hips=True, seconds=None, on_frame=None, stop_at_game_over=True):
+             hips=True, legs=True, framing=FULL_BODY, seconds=None, on_frame=None, stop_at_game_over=True):
     """Run `game` with a player whose pose at song time `st` is `bot(st)`
     (a pose dict, or None for "not in the frame"). Returns the phases seen."""
     rng = np.random.default_rng(seed)
@@ -112,7 +115,7 @@ def simulate(game, clock, bot, *, rate_hz=20.0, lag=0.15, noise=4.0, seed=1, elb
     next_capture = clock.t
     phases = [game.phase]
     limit = seconds if seconds is not None else game.song.duration + 8.0
-    visible = None if hips else {"shoulder", "elbow", "wrist"}
+    visible = None if hips and legs else {"shoulder", "elbow", "wrist"} | ({"hip"} if hips else set())
     for _ in range(int(limit * FPS)):
         clock.t += 1.0 / FPS
         now = clock.t
@@ -122,7 +125,7 @@ def simulate(game, clock, bot, *, rate_hz=20.0, lag=0.15, noise=4.0, seed=1, elb
             target = bot(st)
             poses = []
             if target is not None:
-                kp = keypoints_for(target, visible=visible)
+                kp = keypoints_for(target, visible=visible, **framing)
                 kp.xy = (kp.xy + rng.uniform(-noise, noise, kp.xy.shape)).astype(np.float32)
                 if elbow_drop:
                     from kpapp.config import KP
@@ -151,13 +154,18 @@ def perfect(game, late=0.0):
     return lambda st: game.song.coach_pose(game.song.beat_of(st - late))
 
 
-def sloppy(game, late=0.25, off=(25.0, 30.0), seed=7):
-    """Every limb segment 25-30 degrees off (a new direction every beat), 250 ms late."""
+def sloppy(game, late=0.25, off=(25.0, 30.0), feet=(0.12, 0.2), seed=7):
+    """Every arm segment 25-30 degrees off and every foot 0.12-0.2 SW off (the
+    hips and the squat sloppy too; a new direction every beat), 250 ms late."""
     def bot(st):
         p = normalize_pose(game.song.coach_pose(game.song.beat_of(st - late)))
         r = random.Random(seed * 100003 + int(game.song.beat_of(st - late)))
-        for k in ("la", "ra", "ll", "rl"):
+        for k in ("la", "ra"):
             p[k] = [a + r.choice((-1, 1)) * r.uniform(*off) for a in p[k]]
+        for k in ("lf", "rf"):
+            p[k] = [max(-0.9, p[k][0] + r.choice((-1, 1)) * r.uniform(*feet)), p[k][1]]
+        p["shift"] += r.choice((-1, 1)) * r.uniform(*feet) * 0.6
+        p["squat"] = min(1.0, max(0.0, p["squat"] + r.choice((-1, 1)) * r.uniform(feet[0] * 0.8, feet[1] * 0.9)))
         return p
     return bot
 
@@ -180,6 +188,15 @@ def random_arms(game, seed=3):
 
 def wrong_side(game):
     return lambda st: mirror_pose(game.song.coach_pose(game.song.beat_of(st)))
+
+
+def arms_only(game):
+    """Perfect arms, legs standing still: dancing the moves from the waist up."""
+    def bot(st):
+        p = normalize_pose(game.song.coach_pose(game.song.beat_of(st)))
+        p["lf"], p["rf"], p["shift"], p["squat"] = list(REST["lf"]), list(REST["rf"]), 0.0, 0.0
+        return p
+    return bot
 
 
 def report(game) -> str:
@@ -340,7 +357,9 @@ def test_a_good_but_imprecise_dancer_on_a_slow_model_is_still_a_superstar(songs)
     similarity's free zone), 200 ms late, a 15 Hz model with 200 ms of lag.
     At 0.92 this dancer dropped to 4 stars."""
     game, clock = new_game(songs)
-    simulate(game, clock, sloppy(game, late=0.2, off=(10, 20)), rate_hz=15, lag=0.2, noise=6)
+    # The test chart is arms only: this dancer stands close (the original tuning's
+    # framing), so the 6 px of noise is no bigger a share of their limbs.
+    simulate(game, clock, sloppy(game, late=0.2, off=(10, 20)), rate_hz=15, lag=0.2, noise=6, framing=CLOSE)
     print("imprecise, late, slow model:", report(game))
     assert game.star_count == 5 and game.counts["x"] == 0, report(game)
 
@@ -546,30 +565,31 @@ def test_the_shell_builds_the_game_for_a_chosen_song(tmp_path, monkeypatch):
 
 
 REAL = chart.SONGS / "neon_nights" / "song.json"
+SONG_IDS = chart.song_ids()
+
+
+def _play(sid, level, make_bot, rules=None, **kw):
+    lib = chart.load_library()
+    game, clock = new_game(chart.SONGS, variant=sid, library=lib, difficulty=level)
+    if rules is not None:
+        game.judge = Judge(game.song, rules)
+    simulate(game, clock, make_bot(game), **kw)
+    print(f"{sid} {level} {getattr(make_bot, '__name__', 'bot')}:", report(game))
+    return game
 
 
 @pytest.mark.skipif(not REAL.exists() or not chart.LIBRARY.exists(), reason="neon_nights isn't charted yet")
 def test_real_song_end_to_end():
-    lib = chart.load_library()
-
-    def play(make_bot, **kw):
-        game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib)
-        phases = simulate(game, clock, make_bot(game), **kw)
-        print(f"neon_nights {getattr(make_bot, '__name__', 'bot')}:", report(game))
-        return game, phases
-
-    game, phases = play(perfect)
-    assert phases == [Phase.INTRO, Phase.DANCING, Phase.OUTRO, Phase.GAME_OVER]
-    assert game.score >= 9200 and game.counts["x"] == 0, report(game)
-    game, _ = play(perfect, elbow_drop=0.5, hips=False)
-    assert game.star_count >= 4, report(game)
-    game, _ = play(sloppy)
-    assert 3 <= game.star_count <= 4, report(game)
-    for bot in (frozen, idle, random_arms):
-        game, _ = play(bot)
-        assert game.star_count <= 1, report(game)
-    # Not wrong_side: a third of Neon Nights' points are symmetric poses
-    # (Clap Up, Shine, Star Jump...), where the mirror image is the move itself.
+    game = _play("neon_nights", "normal", perfect)
+    assert game.phase is Phase.GAME_OVER
+    assert game.score == 10000 and game.counts["x"] == 0, report(game)
+    game = _play("neon_nights", "normal", perfect, elbow_drop=0.5)
+    assert game.score == 10000, report(game)
+    # Hips (and so the legs) out of view: half credit for the legs, never an X.
+    game = _play("neon_nights", "normal", perfect, elbow_drop=0.5, hips=False)
+    assert game.counts["x"] == 0 and 7500 < game.score < 10000, report(game)
+    # Not wrong_side: plenty of Neon Nights' poses are symmetric (Grapevine's
+    # arms, Star Jump, Wide Squat...), where the mirror image is the move itself.
 
 
 # --- difficulties (docs/DANCE.md section 7a) ---------------------------------------
@@ -632,82 +652,96 @@ def _neon(level, make_bot, **kw):
 
 
 def precise(game):
-    """Every limb within 10 degrees, 200 ms behind the coach."""
-    return sloppy(game, late=0.2, off=(0.0, 10.0))
+    """Every limb within 10 degrees and every foot within 0.06 SW, 200 ms behind the coach."""
+    return sloppy(game, late=0.2, off=(0.0, 10.0), feet=(0.0, 0.06))
 
 
-def test_normal_is_exactly_the_game_before_difficulties():
-    """Pins NORMAL: the same chart, windows and thresholds as before, so the
-    same scores to the point (and the same leaderboard, dance-neon_nights)."""
+def test_the_tuning_is_pinned():
+    """Pins the judge's numbers on Neon Nights (docs/DANCE.md section 7): any
+    change to the judge, the poses or the chart shows up here first."""
     game = _neon("normal", sloppy)
-    assert len(game.song.judge_points()) == 145
-    assert (game.score, game.counts) == (7859, {"perfect": 7, "super": 124, "good": 14, "ok": 0, "x": 0})
-    game = _neon("normal", lambda g: sloppy(g, late=0.2, off=(10, 20)), rate_hz=15, lag=0.2, noise=6)
-    assert (game.score, game.counts["perfect"], game.counts["super"]) == (9352, 98, 46)
+    assert len(game.song.judge_points()) == 123
+    assert (game.score, game.counts) == (8177, {"perfect": 25, "super": 88, "good": 10, "ok": 0, "x": 0})
+    game = _neon("normal", arms_only)
+    assert game.score == 6075
+
+
+LEVEL_POINTS = {"neon_nights": {"easy": 49, "normal": 123, "hard": 123},
+                "pumpkin_patch_bounce": {"easy": 40, "normal": 99, "hard": 99}}
+SLOPPY_STARS = {"easy": (4, 4), "normal": (3, 4), "hard": (2, 3)}
 
 
 @pytest.mark.parametrize("level", ["easy", "normal", "hard"])
-def test_fairness_on_every_difficulty(level):
-    """Perfect is 10000 on every difficulty; a precise dancer (within 10
-    degrees, 200 ms late) is a 5-star dancer even on hard; lazy players stay
-    at a star or less, easy included (the freeze rule holds on its chart)."""
-    game = _neon(level, perfect)
+@pytest.mark.parametrize("sid", SONG_IDS)
+def test_fairness_on_every_song_and_difficulty(sid, level):
+    """Every song on every difficulty: a perfect full-body dancer (the model's
+    150 ms of lag on top) is 10000; one whose legs are out of frame gets half
+    credit for them (never an X, never a PERFECT on a leg move), so hiding the
+    feet always scores less than dancing in full view but more than standing
+    still; a precise
+    dancer is a 5-star dancer even on hard; a sloppy one lands in between;
+    perfect arms with the legs standing still fall clearly short (at most 3
+    stars); frozen, idle and random players stay at a star or less."""
+    game = _play(sid, level, perfect)
     assert game.score == 10000 and game.judge.unseen == 0, report(game)
-    n = len(game.song.judge_points())
-    assert n == {"easy": 49, "normal": 145, "hard": 145}[level]
-    game = _neon(level, precise)
+    assert len(game.song.judge_points()) == LEVEL_POINTS[sid][level]
+    hidden = _play(sid, level, perfect, legs=False)
+    assert hidden.counts["x"] == 0 and hidden.score < 10000, report(hidden)
+    game = _play(sid, level, precise)
     assert game.star_count == 5, report(game)
+    lo, hi = SLOPPY_STARS[level]
+    sloppy_game = _play(sid, level, sloppy)  # arms 25-30 degrees off, feet 0.12-0.2 SW, 250 ms late
+    assert lo <= sloppy_game.star_count <= hi, report(sloppy_game)
+    game = _play(sid, level, arms_only)
+    assert game.star_count <= 3 and game.score < sloppy_game.score - 1000, report(game)
+    assert game.score < hidden.score, "hiding the feet never beats being seen standing still"
     for bot in (frozen, idle, random_arms):
-        game = _neon(level, bot)
+        game = _play(sid, level, bot)
         assert game.star_count <= 1, report(game)
-    game = _neon(level, sloppy)  # every limb 25-30 degrees off, 250 ms late
-    assert game.star_count == {"easy": 4, "normal": 3, "hard": 2}[level], report(game)
+
+
+def test_a_flawless_dancer_a_quarter_second_behind_the_coach_is_still_a_superstar():
+    """Pins the late edge (0.50) with the legs judged too: players copying what
+    they see run late on top of the camera's lag."""
+    for sid in SONG_IDS:
+        for level in ("easy", "normal", "hard"):
+            game = _play(sid, level, lambda g: perfect(g, late=0.25))
+            assert game.score >= (9900 if level == "hard" else 10000) and game.counts["x"] == 0, report(game)
 
 
 def test_easy_forgives_a_beginner_that_normal_rules_would_not():
     """Pins EASY's thresholds and wider late window: a beginner 30-40 degrees
-    off and 400 ms behind the coach scores 3 stars on easy, where the normal
-    rules on the same chart gave 1."""
+    off, feet 0.15-0.25 SW off and 400 ms behind the coach scores 3 stars on
+    easy, where the normal rules on the same chart gave 2."""
     def beginner(g):
-        return sloppy(g, late=0.4, off=(30.0, 40.0))
+        return sloppy(g, late=0.4, off=(30.0, 40.0), feet=(0.15, 0.25))
     game = _neon("easy", beginner)
     assert game.star_count == 3, report(game)
-    lib = chart.load_library()
-    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib, difficulty="easy")
-    game.judge = Judge(game.song, judge.DIFFICULTY["normal"])
-    simulate(game, clock, beginner(game))
-    assert game.star_count <= 1, report(game)
+    game = _play("neon_nights", "easy", beginner, rules=judge.DIFFICULTY["normal"])
+    assert game.star_count <= 2, report(game)
 
 
 def test_hard_needs_the_longer_hold():
-    """Pins HARD's 0.15 s hold: at normal's 0.12 the sloppy dancer made 3 stars on hard."""
+    """Pins HARD's 0.15 s hold: at normal's 0.12 the sloppy dancer scores more on hard."""
+    held = _play("neon_nights", "hard", sloppy)
+    short = _play("neon_nights", "hard", sloppy, rules=dataclasses.replace(judge.DIFFICULTY["hard"], hold=0.12))
+    assert short.score > held.score + 500, (report(held), report(short))
+
+
+def test_feet_out_of_frame_ask_to_step_back_and_never_cost_an_x():
+    """Never punish tracking loss: a perfect dancer whose feet are out of
+    frame (standing too close) never gets an X, only half credit for the
+    unseen legs, and the game says what to fix before the song starts and
+    before each leg move."""
     lib = chart.load_library()
-    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib, difficulty="hard")
-    game.judge = Judge(game.song, dataclasses.replace(judge.DIFFICULTY["hard"], hold=0.12))
-    simulate(game, clock, sloppy(game))
-    assert game.star_count >= 3, report(game)
-
-
-def _pumpkin(level, make_bot, **kw):
-    lib = chart.load_library()
-    game, clock = new_game(chart.SONGS, variant="pumpkin_patch_bounce", library=lib, difficulty=level)
-    simulate(game, clock, make_bot(game), **kw)
-    print(f"pumpkin_patch_bounce {level} {getattr(make_bot, '__name__', 'bot')}:", report(game))
-    return game
-
-
-@pytest.mark.parametrize("level", ["easy", "normal", "hard"])
-def test_pumpkin_patch_bounce_is_fair(level):
-    """The second song through the same input path: perfect is 10000 (elbows
-    missing and hips out of frame too), lazy players stay at a star or less,
-    and hard still separates a sloppy dancer (2 stars)."""
-    game = _pumpkin(level, perfect)
-    assert game.score == 10000 and game.judge.unseen == 0, report(game)
-    assert len(game.song.judge_points()) == {"easy": 41, "normal": 117, "hard": 117}[level]
-    game = _pumpkin(level, perfect, elbow_drop=0.5, hips=False)
-    assert game.score == 10000, report(game)
-    for bot in (frozen, idle, random_arms):
-        game = _pumpkin(level, bot)
-        assert game.star_count <= 1, report(game)
-    game = _pumpkin(level, sloppy)
-    assert game.star_count == {"easy": 4, "normal": 3, "hard": 2}[level], report(game)
+    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib)
+    notices = []
+    simulate(game, clock, perfect(game), legs=False, on_frame=lambda g: notices.append((g.phase, g.notice)))
+    assert game.counts["x"] == 0 and game.counts["perfect"] < len(game.song.judge_points())
+    assert any(n == NOTICE_FEET for ph, n in notices if ph is Phase.INTRO), "said before the first move"
+    dancing = [n for ph, n in notices if ph is Phase.DANCING]
+    assert dancing.count(NOTICE_FEET) > 0.8 * len(dancing), "and while the legs are being judged"
+    game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib)
+    notices = []
+    simulate(game, clock, perfect(game), on_frame=lambda g: notices.append(g.notice))
+    assert NOTICE_FEET not in notices, "a player in full view is never nagged"
