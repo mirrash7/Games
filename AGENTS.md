@@ -85,6 +85,7 @@ src/kpapp/
     fruitninja/    Snack Attack: a raccoon on the palm eats snacks, avoids trash (Fruit Ninja rules; Blade swept-segment cuts)
     flappy/        Flappy Raccoon: FlapDetector (gesture.py), physics, picture-in-picture camera
     dance/         Raccoon Dance: Just Dance-style; songs = data (assets/dance), see docs/DANCE.md
+    golf/          Raccoon Golf: Wii-style island golf; SwingDetector (swing.py), physics.py, course = assets/golf/course.json
     holeinwall/    full-body pose matching (off the menu, still runnable)
     demo.py        "catch": the first control-path demo
   audio.py       music with a clock games sync to (sounddevice; SilentPlayer fallback)
@@ -337,6 +338,17 @@ re-run the model on offline. Analyse these before tuning anything.
   *style* and generic moves, never a creator's routine. Bots prove fairness: a perfect dancer
   150 ms late scores 10000; idle, frozen and random players stay at 1 star or
   below. Not yet tested with a live player.
+- **Raccoon Golf** (`golf`): three original island holes (par 4, 3, 5) with Wii Sports
+  Resort Golf's mechanics: behind-the-ball pinhole view, auto club and aim (adjustable by
+  hovering AIM / CLUB or the arrow keys, which the shell now passes to a game's
+  `handle_key`), power gauge with an overswing zone, practice swings until the player
+  addresses the ball, putting with a slope grid, water hazards, OB, pick-up at par + 5.
+  `SwingDetector` (swing.py) reads `step_pose`: wrists together low and still = address,
+  backswing height = power, the grip's swept path crossing the midline fast = impact.
+  Bots with 150 ms lag play it near par (tests/test_golf.py). Review the look with
+  `uv run python tools/golf_contact_sheet.py`. Desktop only so far: the browser port and
+  its `leaderboard/src/rules.js` entry are still to do (tests/test_leaderboard.py lists it
+  as pending). Not yet tested with a live player.
 - **Off the menu:** Hole in the Wall (`--game holeinwall`), Catch (`--game catch`),
   Template (`--game template`).
 - Ideas the platform already supports: dodge games (`steer` / torso lean),

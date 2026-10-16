@@ -419,6 +419,30 @@ uv run kp dance-preview --song <id> --out sheet.png   # --difficulty easy shows 
 Then add the id to `songs/index.json`. The format, the judging rules and the
 layout are in [docs/DANCE.md](docs/DANCE.md).
 
+### Raccoon Golf (Wii Sports Resort Golf rules)
+
+Three original island holes (par 4, par 3, par 5) played by Lenny the raccoon in a
+visor, with your arms as the club. Stand back so your hands show at waist height.
+
+- **Address:** hands together, low and still for 0.4 s: READY. Swinging before
+  that is a practice swing (the gauge and Lenny move, nothing is hit).
+- **Power:** how high your hands go on the backswing, to either side. Head height is
+  100%; higher is the red overswing zone (up to 115%), which hooks or slices at random.
+- **Hit:** swing down fast through the bottom, across your body. Lowering your hands
+  slowly is not a shot ("SWING THROUGH!"). Coming through with the hands high is a
+  thin strike: lower and about 70% as far.
+- **Putting:** rock your hands sideways like a pendulum; the backstroke sets the power.
+  The green's slope grid shows which way it breaks.
+- **Aim and club** are automatic (at the pin, or down the fairway on a dogleg). Adjust
+  them by pointing one hand at AIM / CLUB, or with the arrow keys.
+- Water: +1 and a drop near where it went in. Out of bounds (the sea): +1 and replay.
+  Pick up at par + 5.
+
+The HUD scores golf (E, +1, -2); the leaderboard ranks points per hole: hole in one
+1000, albatross 800, eagle 500, birdie 300, par 200, bogey 100, double 50, worse 10.
+Art from `tools/generate_golf_assets.py`; the course is data in `assets/golf/course.json`;
+`tools/golf_contact_sheet.py` renders the key moments for review.
+
 ### Hole in the Wall (off the menu)
 
 Still in the code: `uv run kp game --game holeinwall`.

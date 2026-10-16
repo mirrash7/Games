@@ -421,7 +421,7 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
                 continue
 
             cv2.imshow(cfg.window_name, canvas)
-            key = cv2.waitKey(max(1, int(delay * 1000))) & 0xFF
+            key = normalise_key(cv2.waitKeyEx(max(1, int(delay * 1000))))
             if key == 255:
                 pass
             elif shell is not None and shell.screen is Screen.ENTRY:
@@ -458,6 +458,26 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
         f"frames skipped by model {worker.skipped}"
     )
     return 0
+
+
+# cv2.waitKeyEx's arrow-key codes per platform (macOS Cocoa, GTK/X11, Windows).
+_ARROWS = {
+    63234: "left", 63232: "up", 63235: "right", 63233: "down",
+    65361: "left", 65362: "up", 65363: "right", 65364: "down",
+    2424832: "left", 2490368: "up", 2555904: "right", 2621440: "down",
+}
+
+
+def normalise_key(raw: int) -> int:
+    """A waitKeyEx code -> 255 for none, the shell's KEY_* for arrows, else the low byte."""
+    from .shell import KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP
+
+    if raw < 0:
+        return 255
+    arrow = _ARROWS.get(raw)
+    if arrow is not None:
+        return {"left": KEY_LEFT, "up": KEY_UP, "right": KEY_RIGHT, "down": KEY_DOWN}[arrow]
+    return raw & 0xFF
 
 
 def cmd_cameras(args: argparse.Namespace) -> int:

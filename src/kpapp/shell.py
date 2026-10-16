@@ -45,9 +45,18 @@ LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 KEY_ESC, KEY_ENTER, KEY_SPACE, KEY_TAB = 27, 13, 32, 9
 KEY_BACKSPACE = (8, 127)
+# Arrow keys, normalised by the app from cv2.waitKeyEx's platform codes
+# (app.normalise_key). Outside the 0-255 range so no letter can collide.
+KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN = 0x10025, 0x10026, 0x10027, 0x10028
 _HOT_FILL = (46, 38, 34)
 _IDLE_BORDER = (110, 110, 120)
 _HINT = (150, 150, 165)
+
+
+def _fit(text: str, width: int, scale: float, font, thick: int) -> float:
+    """`scale`, or smaller if the text would be wider than `width` px."""
+    tw = cv2.getTextSize(text, font, scale, thick)[0][0]
+    return scale if tw <= width else scale * width / tw
 
 
 class Screen(str, Enum):
@@ -515,6 +524,8 @@ class Shell:
                     self.restart()
                 elif key == KEY_ESC:
                     self.to_menu()
+            elif getattr(self.game, "handle_key", None) is not None and self.game.handle_key(key):
+                pass  # the game used it (Raccoon Golf: arrows aim and pick the club)
             elif key in (KEY_SPACE, ord("p")):
                 self.pause()
             elif key == ord("r"):
@@ -605,7 +616,9 @@ class Shell:
         w, h = self.width, self.height
         if self.screen is Screen.MENU:
             n = max(1, len(self.menu_games))
-            tw, th, gap = int(w * 0.30), int(h * 0.34), int(w * 0.04)
+            # Three tiles at 30% of the width; more shrink to fit (four: ~22% each).
+            gap = int(w * (0.04 if n <= 3 else 0.02))
+            tw, th = min(int(w * 0.30), int((w * 0.95 - (n - 1) * gap) / n)), int(h * 0.34)
             total = n * tw + (n - 1) * gap
             x = (w - total) // 2
             y0 = int(h * 0.36)
@@ -745,7 +758,8 @@ class Shell:
             cx = (x0 + x1) // 2
             if tiles and b.action.startswith(("start:", "song:")):
                 compact = (y1 - y0) < 200  # a grid of song cards
-                _text(canvas, b.label, cx, y0 + (44 if compact else 62), 0.9 if compact else 1.05,
+                scale = _fit(b.label, x1 - x0 - 28, 0.9 if compact else 1.05, cv2.FONT_HERSHEY_DUPLEX, 2)
+                _text(canvas, b.label, cx, y0 + (44 if compact else 62), scale,
                       _ACCENT if hot else _WHITE, 2)
                 for i, line in enumerate(_wrap(b.sub, x1 - x0 - 40, 0.58)[: 1 if compact else 3]):
                     _text(canvas, line, cx, y0 + (74 if compact else 108) + i * 28, 0.58, _DIM, 1,
@@ -754,7 +768,8 @@ class Shell:
                       (150, 150, 165), 1, cv2.FONT_HERSHEY_SIMPLEX, shadow=False)
                 line, colour = self._tile_scoreline(b.action)
                 if line:
-                    _text(canvas, line, cx, y0 + 104 if compact else y1 - 62, 0.56, colour, 1, shadow=False)
+                    _text(canvas, line, cx, y0 + 104 if compact else y1 - 62,
+                          _fit(line, x1 - x0 - 20, 0.56, cv2.FONT_HERSHEY_DUPLEX, 1), colour, 1, shadow=False)
             else:
                 _text(canvas, b.label, cx, y0 + 44, 0.85, _ACCENT if hot else _WHITE, 2)
                 if b.key_hint:
@@ -943,6 +958,7 @@ class Shell:
         tip = getattr(self.registry[self.selected], "tip", None) or {
             "fruitninja": "Stand back so your upper body is in frame",
             "flappy": "Stand back so both arms are in frame - flap to fly",
+            "golf": "Stand back so your hands show at waist height",
         }.get(self.selected, "Stand back so your hips are in frame")
         _text(canvas, tip, w // 2, int(h * 0.72), 0.75, _DIM, 1, cv2.FONT_HERSHEY_SIMPLEX)
 
