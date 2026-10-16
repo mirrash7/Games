@@ -247,7 +247,8 @@ def test_the_coach_is_the_size_the_layout_promises():
     painter = R.CoachPainter(art)
     frame = np.zeros((720, 1280, 3), np.uint8)
     painter.paint(frame, painter.layout({}), clip=R.COACH_ROI)
-    ys, xs = np.nonzero(frame.any(axis=2))
+    # The figure itself: the soft contact shadow under the feet (SHADOW_INK, very dark) is the floor's.
+    ys, xs = np.nonzero(frame.max(axis=2) > max(R.SHADOW_INK) + 4)
     assert 640 <= ys.max() <= 668, "feet at y ~660"
     assert 470 <= ys.max() - ys.min() <= 560, "about 520 px head to toe"
     assert abs((xs.min() + xs.max()) / 2 - R.COACH_X) < 60, "centred near x 520"

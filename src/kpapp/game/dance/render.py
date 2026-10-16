@@ -38,8 +38,8 @@ import numpy as np
 from ... import theme
 from ...overlay import outlined_text
 from .art import DanceArt
-from .chart import idle_groove
-from .pose import REST, forward, lerp_pose, normalize_pose, smoothstep
+from .motion import coach_motion, still_motion
+from .pose import HIP_W, REST, SIDE, TORSO, forward, lerp_pose, normalize_pose, smoothstep
 
 # --- layout (1280 x 720) ----------------------------------------------------
 COACH_X, COACH_FEET = 520, 660
@@ -337,6 +337,25 @@ _REST_ANKLE_Y = forward(REST)["l_ankle"][1]
 _ARC_K = 10
 _ARC_T = np.linspace(0.0, 1.0, _ARC_K, dtype=np.float64)
 
+# The 3D look (docs/DANCE.md section 4a). A key light from the upper left: each
+# part is filled in its shadow colour, then again in its own colour shrunk by
+# SHADE_K of its radius and moved that far towards the light (so it stays
+# inside), leaving a core-shadow crescent on the lower right; limbs get a
+# highlight streak on the lit side. Three fills a part, no per-pixel work.
+LIGHT = np.array((-0.55, -0.83)) / math.hypot(0.55, 0.83)
+SHADE_K = 0.24
+STREAK_OFF, STREAK_R, STREAK_TRIM = 0.5, 0.2, 0.18  # highlight: offset and radius (of r), ends trimmed
+SHADE_DARK, SHADE_BOUNCE, HIGHLIGHT = 0.6, 0.14, 0.34  # shadow = base * 0.6 + glow * 0.14; highlight 34% to white
+SHADOW_INK = (20, 6, 14)  # the contact shadow's colour (BGR)
+DEPTH_THICK = 0.12  # a limb near the viewer (depth +1) is this much thicker, a far one thinner
+FORESHORTEN = 0.08  # a forearm pointing at the viewer looks this much shorter...
+GLOVE_NEAR = 0.16  # ...and its glove this much bigger
+BEHIND = -0.25  # an arm farther than this (and not crossing in front) goes behind the jacket
+CHEST_TURN = 0.16  # SW the chest's front details slide per unit sin(twist)
+HEAD_TURN = 0.06  # SW the head slides per unit sin(head yaw)
+HEAD_CACHE = 96  # rotated head sprites kept (yaw variants x 2-degree buckets)
+HULL_SHADE = 0.065  # SW: the jacket's and pants' core shadow (their circles are big, so a fixed width)
+
 
 def _capsules(segs: np.ndarray, grow: float) -> list[np.ndarray]:
     """Tapered capsules as convex polygons (fixed point, SHIFT bits).
@@ -359,6 +378,25 @@ def _capsules(segs: np.ndarray, grow: float) -> list[np.ndarray]:
     return list(pts)
 
 
+def _lit(segs: np.ndarray, k: float = SHADE_K) -> np.ndarray:
+    """The lit part of each capsule: radii shrunk by k, moved k of a radius towards the light."""
+    out = segs.copy()
+    out[:, 0:2] += LIGHT[None, :] * (k * segs[:, 4:5])
+    out[:, 2:4] += LIGHT[None, :] * (k * segs[:, 5:6])
+    out[:, 4:6] *= 1.0 - k
+    return out
+
+
+def _streak(segs: np.ndarray) -> np.ndarray:
+    """A highlight along each capsule's lit side, short of its ends."""
+    out = segs.copy()
+    d = segs[:, 2:4] - segs[:, 0:2]
+    out[:, 0:2] = segs[:, 0:2] + d * STREAK_TRIM + LIGHT[None, :] * (STREAK_OFF * segs[:, 4:5])
+    out[:, 2:4] = segs[:, 2:4] - d * STREAK_TRIM + LIGHT[None, :] * (STREAK_OFF * segs[:, 5:6])
+    out[:, 4:6] = segs[:, 4:6] * STREAK_R
+    return out
+
+
 def _hull(points: np.ndarray, radii: np.ndarray, grow: float) -> np.ndarray:
     """Convex hull of several circles (fixed point)."""
     t = np.linspace(0, 2 * np.pi, 18, endpoint=False)
@@ -367,6 +405,11 @@ def _hull(points: np.ndarray, radii: np.ndarray, grow: float) -> np.ndarray:
     py = points[:, 1:2] + np.sin(t)[None, :] * r
     pts = np.round(np.stack([px.ravel(), py.ravel()], 1) * ONE).astype(np.int32)
     return cv2.convexHull(pts)
+
+
+def _lit_hull(points: np.ndarray, radii: np.ndarray, k: float) -> np.ndarray:
+    """The lit part of a hull of circles: each shrunk by k px and moved k px towards the light."""
+    return _hull(points + LIGHT[None, :] * k, radii - k, 0.0)
 
 
 def _fill(img, polys, colour) -> None:
@@ -387,6 +430,16 @@ def _ellipse(img, c, axes, angle: float, colour, thick: int = -1, a0: float = 0,
                 angle, a0, a1, colour, thick, cv2.LINE_AA, SHIFT)
 
 
+def _shades(base, glow) -> tuple:
+    """(base, shadow, highlight) for one material: the shadow picks up a little of
+    the outfit's glow (light bounced off the neon), the highlight goes to white."""
+    b = np.asarray(base, np.float64)
+    g = np.asarray(glow, np.float64)
+    shadow = np.clip(b * SHADE_DARK + g * SHADE_BOUNCE, 0, 255)
+    hi = b + (255.0 - b) * HIGHLIGHT
+    return tuple(int(round(v)) for v in b), tuple(int(round(v)) for v in shadow), tuple(int(round(v)) for v in hi)
+
+
 @dataclass
 class CoachGeometry:
     """Everything needed to draw the coach this frame, in frame pixels."""
@@ -397,41 +450,69 @@ class CoachGeometry:
     head_angle: float = 0.0  # degrees, positive tips the head screen-right
     head_top: float = 0.0  # y of the ear tips
     bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
+    up: np.ndarray = field(default_factory=lambda: np.array((0.0, -1.0)))  # the torso's axis
+    head_yaw: float = 0.0  # degrees, + = turned to screen-right
+    twist: float = 0.0  # degrees of torso yaw
+    tail: float = 0.0  # degrees of tail swing
+    hands: tuple[float, float] = (0.0, 0.0)  # degrees each glove trails its forearm
+    arm_scale: dict = field(default_factory=lambda: {"l": (1.0, 1.0, 1.0), "r": (1.0, 1.0, 1.0)})  # upper, fore, glove
+    behind: tuple[str, ...] = ()  # arms drawn behind the jacket
+    front_first: tuple[str, str] = ("l", "r")  # the nearer arm last
+    lift: float = 0.0  # px off the floor
+    ground: tuple[float, float] = (0.0, 0.0)  # where the contact shadow sits (x, y)
+    feet_span: float = 0.0  # px between the shoes
 
 
 class CoachPainter:
-    """The coach: the arcade's purple raccoon as a bold flat-colour dancer.
+    """The coach: the arcade's purple raccoon as a bold, lit cartoon dancer.
 
-    `layout(pose)` turns a pose (docs/DANCE.md section 3) into pixel geometry;
-    `paint(img, geo)` draws it. The renderer uses the geometry first for the
-    coach's soft halo in the light buffer, then paints the body on top.
-    Parts are drawn back to front, each with a dark keyline, over one neon rim
-    around the whole silhouette: tail, legs and pants (one shape, no seam),
-    jacket, neck, head, then arms in front.
+    `layout(pose, motion=...)` turns a pose (docs/DANCE.md section 3) and the
+    motion layered on it (motion.py) into pixel geometry; `paint(img, geo)`
+    draws it. The renderer uses the geometry first for the coach's soft halo in
+    the light buffer, then paints the body on top. Parts are drawn back to
+    front, each with a dark keyline, over one neon rim around the whole
+    silhouette: a contact shadow, tail, far arm (when the body twists away from
+    it), legs and pants (one shape, no seam), jacket, neck, head, then arms in
+    front. With `shade` (the default) every part is lit from the upper left;
+    the tutorial's small coaches draw flat.
     """
 
     def __init__(self, art: DanceArt, outfit: str | None = None, scale: float = COACH_SCALE,
-                 origin: tuple[float, float] | None = None) -> None:
+                 origin: tuple[float, float] | None = None, shade: bool = True) -> None:
         self.S = float(scale)
         o = art.outfit(outfit)
         self.c = o
+        self.shade = bool(shade)
         self.ink_w = max(1.2, 0.026 * self.S)
         self.rim_w = max(1.2, 0.032 * self.S)
         if origin is None:
             origin = self.origin_for(COACH_X, COACH_FEET)
         self.origin = origin
-        # The head: rim (tinted) under the raccoon, scaled so the face is ~1.05 SW wide.
+        glow = o.get("glow", (255, 80, 200))
+        self.mat = {k: _shades(o.get(k, (200, 100, 200)), glow) for k in ("fur", "fur_dark", "top", "pants", "glove", "shoe")}
+        # The head: rim (tinted) under the raccoon, scaled so the face is ~1.05 SW wide;
+        # one sprite per head turn when the art has them (and the coach is shaded).
         hm = art.manifest.get("head", {})
         self._face = tuple(hm.get("centre", (0.5, 0.565)))
         self._ear_top = 0.105
         fw = float(hm.get("face_width", 0.67))
         side = max(8, int(round(HEAD_FACE_SW * self.S / fw)))
-        head = _resize_bgra(art.head, side, side).astype(np.float32)
-        rim = _resize_bgra(art.head_rim, side, side).astype(np.float32)
+        self._head_side = side
+        turns = list(getattr(art, "head_turns", None) or []) if self.shade else []
+        if not turns:
+            turns = [(0.0, art.head, art.head_rim)]
+        self._yaws = [float(t[0]) for t in turns]
+        rim_col = np.asarray(o.get("rim", (255, 255, 255)), np.float32)
+        self._head_pads = [self._pad_head(h, r, rim_col, side) for _, h, r in turns]
+        self._head_cache: dict[tuple[int, int], Sprite] = {}
+        self._shadows: dict[tuple[int, int], Sprite] = {}
+
+    def _pad_head(self, head_img, rim_img, rim_col, side: int) -> np.ndarray:
+        head = _resize_bgra(head_img, side, side).astype(np.float32)
+        rim = _resize_bgra(rim_img, side, side).astype(np.float32)
         ra = rim[..., 3:4] / 255.0
         ha = head[..., 3:4] / 255.0
         comb = np.empty_like(head)
-        rim_col = np.asarray(o.get("rim", (255, 255, 255)), np.float32)
         comb[..., :3] = head[..., :3] * ha + rim_col * ra * (1 - ha)
         comb[..., 3:4] = ha + ra * (1 - ha)
         comb[..., :3] /= np.maximum(comb[..., 3:4], 1e-3)
@@ -444,9 +525,7 @@ class CoachPainter:
         pad = np.zeros((d, d, 4), np.uint8)
         ox, oy = int(round(reach - fx)), int(round(reach - fy))
         pad[oy:oy + side, ox:ox + side] = comb
-        self._head_pad = pad
-        self._head_side = side
-        self._head_cache: dict[int, Sprite] = {}
+        return pad
 
     def origin_for(self, x: float, feet_y: float) -> tuple[float, float]:
         """The rest hip centre that puts the coach's shoe soles at feet_y."""
@@ -455,14 +534,22 @@ class CoachPainter:
     # --- geometry ---
 
     def layout(self, pose: dict | None, bow: float = 0.0, beat: float = 0.0,
-               origin: tuple[float, float] | None = None) -> CoachGeometry:
-        """Pixel geometry for `pose`. `origin` (the rest hip centre, px) defaults to the stage spot."""
-        p = normalize_pose(pose or REST)
+               origin: tuple[float, float] | None = None, motion: dict | None = None) -> CoachGeometry:
+        """Pixel geometry for `pose`, or for `motion` (motion.coach_motion: the
+        pose plus the groove and follow-through). `origin` (the rest hip centre,
+        px) defaults to the stage spot. The feet stay on the floor (the lower
+        one is planted) unless the motion hops."""
+        m = motion if motion is not None else still_motion(pose or REST)
+        p = normalize_pose(m["pose"])
+        calm = 1.0
         if bow > 0.0:
             p = lerp_pose(p, BOW_POSE, min(1.0, bow))
+            calm = 1.0 - min(1.0, bow)
         jj = forward(p)
         S, (ox, oy) = self.S, origin or self.origin
-        j = {k: np.array((ox + v[0] * S, oy + v[1] * S)) for k, v in jj.items()}
+        lift = float(m["lift"]) * calm
+        dy = _REST_ANKLE_Y - max(jj["l_ankle"][1], jj["r_ankle"][1]) - lift
+        j = {k: np.array((ox + v[0] * S, oy + (v[1] + dy) * S)) for k, v in jj.items()}
         if bow > 0.0:
             # A front-view bow: the upper body foreshortens towards the camera.
             hip_y = j["hip"][1]
@@ -470,53 +557,109 @@ class CoachPainter:
             for name in ("neck", "head", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow",
                          "l_wrist", "r_wrist", "l_hand", "r_hand"):
                 j[name] = np.array((j[name][0], hip_y + (j[name][1] - hip_y) * k))
-        g = CoachGeometry(j=j)
         up = j["neck"] - j["hip"]
         up /= max(1e-6, float(np.hypot(*up)))
-        g.head_angle = p["lean"] + p["head"]
+        right = np.array((-up[1], up[0]))
+        arm = {s: (f"{s}_shoulder", f"{s}_elbow", f"{s}_wrist", f"{s}_hand") for s in "lr"}
+        upper = ("neck", "head") + arm["l"] + arm["r"]
+
+        # Weight shift: the upper body over the feet (the knees go half way).
+        sway = float(m["sway"]) * calm * S
+        for k in upper + ("hip", "l_hip", "r_hip"):
+            j[k] = j[k] + (sway, 0.0)
+        for s in "lr":
+            j[f"{s}_knee"] = j[f"{s}_knee"] + (0.5 * sway, 0.0)
+        # Squash and stretch: the torso shortens (and widens) along its axis.
+        q = 1.0 + (float(m["squash"]) - 1.0) * calm
+        for k in upper:
+            j[k] = j[k] + up * ((q - 1.0) * TORSO * S)
+        # Shoulders: wider when squashed, narrower when the torso twists, rolled up and down.
+        yaw = math.radians(float(m["twist"]) * calm)
+        span = (1.0 + (1.0 - q) * 0.8) * math.cos(yaw)
+        for i, s in enumerate("lr"):
+            d = right * (SIDE[s] * 0.5 * S * (span - 1.0)) + up * (float(m["shoulders"][i]) * calm * S)
+            for k in arm[s]:
+                j[k] = j[k] + d
+            # Hips turn less than the chest.
+            hd = np.array((SIDE[s] * HIP_W / 2 * S * (math.cos(0.4 * yaw) - 1.0), 0.0))
+            for k in (f"{s}_hip", f"{s}_knee", f"{s}_ankle"):
+                j[k] = j[k] + hd
+        # Depth: thicker near the viewer, a forearm pointing at it foreshortened.
+        scales = {}
+        behind = []
+        for s in "lr":
+            uz, hz = (float(v) * calm for v in m["depth"][s])
+            if hz > 0.0:
+                el, wr = j[f"{s}_elbow"], j[f"{s}_wrist"]
+                new = el + (wr - el) * (1.0 - FORESHORTEN * hz)
+                j[f"{s}_hand"] = j[f"{s}_hand"] + (new - wr)
+                j[f"{s}_wrist"] = new
+            scales[s] = (1.0 + DEPTH_THICK * uz, 1.0 + DEPTH_THICK * hz, 1.0 + GLOVE_NEAR * max(-0.5, hz))
+            if self.shade and uz < BEHIND and hz < 0.15:
+                behind.append(s)
+        g = CoachGeometry(j=j, up=up)
+        g.arm_scale = scales
+        g.behind = tuple(behind)
+        near = "l" if yaw > 0 else "r"
+        g.front_first = ("r", "l") if near == "l" else ("l", "r")
+        g.twist = math.degrees(yaw)
+        g.head_yaw = float(m["head_yaw"]) * calm
+        g.tail = float(m["tail"]) * calm if motion is not None else math.sin(beat * math.pi) * 14.0
+        g.hands = (float(m["hands"][0]) * calm, float(m["hands"][1]) * calm)
+        g.lift = lift * S
+        g.head_angle = p["lean"] + p["head"] + float(m["head_tilt"]) * calm
         ha = math.radians(g.head_angle)
         hdir = np.array((math.sin(ha), -math.cos(ha)))
-        g.head_c = tuple(j["neck"] + hdir * (0.50 - 0.22 * min(1.0, bow)) * S)
+        hc = (j["neck"] + hdir * (0.50 - 0.22 * min(1.0, bow)) * S - up * (float(m["head_bob"]) * calm * S)
+              + right * (math.sin(math.radians(g.head_yaw)) * HEAD_TURN * S))
+        g.head_c = tuple(hc)
         g.head_top = g.head_c[1] - (self._face[1] - self._ear_top) * self._head_side
-        self._beat = beat
-        self._up = up
+        sl, sr = self._shoe(j, "l")[0], self._shoe(j, "r")[0]
+        g.ground = ((sl[0] + sr[0]) / 2, oy + (_REST_ANKLE_Y + 0.075 + 0.08) * S)
+        g.feet_span = abs(sr[0] - sl[0])
         g.silhouette = self._silhouette(g, self.ink_w + self.rim_w)
         xs = [v[0] for v in j.values()] + [g.head_c[0]]
         ys = [v[1] for v in j.values()] + [g.head_top]
-        m = 0.5 * S
-        g.bbox = (int(min(xs) - m), int(min(ys) - 0.1 * S), int(max(xs) + m), int(max(ys) + 0.4 * S))
+        mg = 0.5 * S
+        g.bbox = (int(min(xs) - mg), int(min(ys) - 0.1 * S), int(max(xs) + mg), int(max(ys) + 0.4 * S))
         return g
 
-    def _segs(self, j):
-        S = self.S
-        arms = np.array([[*j[f"{s}_shoulder"], *j[f"{s}_elbow"], R_UPPER[0] * S, R_UPPER[1] * S] for s in "lr"]
-                        + [[*j[f"{s}_elbow"], *j[f"{s}_wrist"], R_FORE[0] * S, R_FORE[1] * S] for s in "lr"])
+    def _segs(self, g: CoachGeometry, j=None):
+        S, j = self.S, j if j is not None else g.j
+        sc = g.arm_scale
+        arms = np.array([[*j[f"{s}_shoulder"], *j[f"{s}_elbow"], R_UPPER[0] * S * sc[s][0], R_UPPER[1] * S * sc[s][0]]
+                         for s in "lr"]
+                        + [[*j[f"{s}_elbow"], *j[f"{s}_wrist"], R_FORE[0] * S * sc[s][0], R_FORE[1] * S * sc[s][1]]
+                           for s in "lr"])
         legs = np.array([[*j[f"{s}_hip"], *j[f"{s}_knee"], R_THIGH[0] * S, R_THIGH[1] * S] for s in "lr"]
                         + [[*j[f"{s}_knee"], *j[f"{s}_ankle"], R_SHIN[0] * S, R_SHIN[1] * S] for s in "lr"])
         return arms, legs
 
-    def _torso(self, j, grow: float):
+    def _torso_parts(self, j, up):
+        """The jacket's and the pants' circles: (points, radii) each."""
         S = self.S
-        up = self._up
         right = np.array((-up[1], up[0]))
         neck, hip = j["neck"], j["hip"]
         waist = neck + (hip - neck) * 0.66
-        top = _hull(np.array([j["l_shoulder"], j["r_shoulder"], waist - right * 0.30 * S, waist + right * 0.30 * S]),
-                    np.array([0.2, 0.2, 0.13, 0.13]) * S, grow)
-        pants = _hull(np.array([waist - right * 0.29 * S, waist + right * 0.29 * S, j["l_hip"], j["r_hip"]]),
-                      np.array([0.12, 0.12, 0.19, 0.19]) * S, grow)
+        top = (np.array([j["l_shoulder"], j["r_shoulder"], waist - right * 0.30 * S, waist + right * 0.30 * S]),
+               np.array([0.2, 0.2, 0.13, 0.13]) * S)
+        pants = (np.array([waist - right * 0.29 * S, waist + right * 0.29 * S, j["l_hip"], j["r_hip"]]),
+                 np.array([0.12, 0.12, 0.19, 0.19]) * S)
         return top, pants, waist, right
 
-    def _tail(self, j):
-        """A ringed raccoon tail from behind the hips, swaying on the beat."""
+    def _torso(self, j, grow: float, up=None):
+        top, pants, waist, right = self._torso_parts(j, up if up is not None else np.array((0.0, -1.0)))
+        return _hull(*top, grow), _hull(*pants, grow), waist, right
+
+    def _tail(self, j, swing: float):
+        """A ringed raccoon tail from behind the hips, swinging with the groove."""
         S = self.S
-        sway = math.sin(self._beat * math.pi) * 14.0
         start = j["hip"] + np.array((-0.22 * S, 0.12 * S))
         pts, radii = [start], [0.12 * S]
-        ang = 150.0 + sway * 0.5  # screen degrees, y down: left and a little down
+        ang = 150.0 + swing * 0.5  # screen degrees, y down: left and a little down
         p = start
-        for k, r in enumerate((0.16, 0.19, 0.19, 0.16, 0.11)):
-            ang += 14.0 + sway * 0.25
+        for r in (0.16, 0.19, 0.19, 0.16, 0.11):
+            ang += 14.0 + swing * 0.25
             a = math.radians(ang)
             p = p + np.array((math.cos(a), math.sin(a))) * 0.2 * S
             pts.append(p)
@@ -529,44 +672,74 @@ class CoachPainter:
         c = j[f"{s}_ankle"] + np.array((side * 0.07 * S, 0.075 * S))
         return c, (0.205 * S, 0.112 * S)
 
-    def _glove(self, j, s):
+    def _glove(self, g: CoachGeometry, s, j=None):
+        j = j if j is not None else g.j
         d = j[f"{s}_hand"] - j[f"{s}_wrist"]
         n = max(1e-6, float(np.hypot(*d)))
         d /= n
-        c = j[f"{s}_wrist"] + d * 0.1 * self.S
-        return c, (0.15 * self.S, 0.125 * self.S), math.degrees(math.atan2(d[1], d[0]))
+        flick = math.radians(g.hands[0 if s == "l" else 1])
+        if flick:
+            c, sn = math.cos(flick), math.sin(flick)
+            d = np.array((d[0] * c - d[1] * sn, d[0] * sn + d[1] * c))
+        k = g.arm_scale[s][2]
+        c = j[f"{s}_wrist"] + d * 0.1 * self.S * k
+        return c, (0.15 * self.S * k, 0.125 * self.S * k), math.degrees(math.atan2(d[1], d[0])), d
 
     def _silhouette(self, g: CoachGeometry, grow: float) -> list[np.ndarray]:
         j = g.j
-        arms, legs = self._segs(j)
+        arms, legs = self._segs(g)
         polys = _capsules(arms, grow) + _capsules(legs, grow)
-        top, pants, _, _ = self._torso(j, grow)
+        top, pants, _, _ = self._torso(j, grow, g.up)
         polys += [top.reshape(-1, 2), pants.reshape(-1, 2)]
-        tail_pts, tail_r = self._tail(j)
+        tail_pts, tail_r = self._tail(j, g.tail)
         segs = np.array([[*a, *b, ra, rb] for a, b, ra, rb in zip(tail_pts, tail_pts[1:], tail_r, tail_r[1:])])
         polys += _capsules(segs, grow)
-        neck = np.array([[*j["neck"], *(j["neck"] + self._up * 0.25 * self.S), 0.14 * self.S, 0.14 * self.S]])
+        neck = np.array([[*j["neck"], *(j["neck"] + g.up * 0.25 * self.S), 0.14 * self.S, 0.14 * self.S]])
         polys += _capsules(neck, grow)
         for s in "lr":
             c, ax = self._shoe(j, s)
             polys.append(_ellipse_poly(c, (ax[0] + grow, ax[1] + grow), 0.0))
-            c, ax, ang = self._glove(j, s)
+            c, ax, ang, _ = self._glove(g, s)
             polys.append(_ellipse_poly(c, (ax[0] + grow, ax[1] + grow), ang))
         return polys
 
     # --- drawing ---
 
-    def head_sprite(self, angle: float) -> Sprite:
+    def head_sprite(self, angle: float, yaw: float = 0.0) -> Sprite:
+        """The head rotated by `angle` (2-degree buckets), turned to the nearest of the art's yaws."""
+        v = min(range(len(self._yaws)), key=lambda i: abs(self._yaws[i] - yaw))
         b = int(round(angle / 2.0))
-        spr = self._head_cache.get(b)
+        key = (v, b)
+        spr = self._head_cache.get(key)
         if spr is None:
-            d = self._head_pad.shape[0]
+            pad = self._head_pads[v]
+            d = pad.shape[0]
             if b:
                 m = cv2.getRotationMatrix2D((d / 2, d / 2), -b * 2.0, 1.0)
-                img = _rotate_bgra(self._head_pad, m)
+                img = _rotate_bgra(pad, m)
             else:
-                img = self._head_pad
-            spr = self._head_cache[b] = Sprite(img)
+                img = pad
+            if len(self._head_cache) >= HEAD_CACHE:
+                self._head_cache.pop(next(iter(self._head_cache)))
+            spr = self._head_cache[key] = Sprite(img)
+        return spr
+
+    def _shadow(self, w: float, h: float) -> Sprite:
+        """A soft dark ellipse for under the feet, cached in 6 x 3 px steps."""
+        key = (max(2, int(round(w / 6))), max(2, int(round(h / 3))))
+        spr = self._shadows.get(key)
+        if spr is None:
+            ew, eh = key[0] * 6, key[1] * 3
+            pw, ph = int(ew * 1.5) + 8, int(eh * 2.6) + 8
+            m = np.zeros((ph, pw), np.float32)
+            cv2.ellipse(m, (pw // 2, ph // 2), (ew // 2, eh // 2), 0, 0, 360, 1.0, -1, cv2.LINE_AA)
+            m = cv2.GaussianBlur(m, (0, 0), max(1.0, eh * 0.22))
+            img = np.zeros((ph, pw, 4), np.uint8)
+            img[..., :3] = SHADOW_INK
+            img[..., 3] = np.clip(np.minimum(1.0, m * 1.25) * 0.78 * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            if len(self._shadows) >= 64:
+                self._shadows.pop(next(iter(self._shadows)))
+            spr = self._shadows[key] = Sprite(img)
         return spr
 
     def paint(self, img, g: CoachGeometry, clip=None) -> None:
@@ -579,24 +752,56 @@ class CoachPainter:
         else:
             self._paint(img, g, np.zeros(2))
 
+    def _caps(self, img, segs, mat: str, streak: bool = True) -> None:
+        """Capsules in a material: flat, or shadow + lit + highlight."""
+        base, shadow, hi = self.mat[mat]
+        if not self.shade:
+            _fill(img, _capsules(segs, 0.0), base)
+            return
+        _fill(img, _capsules(segs, 0.0), shadow)
+        _fill(img, _capsules(_lit(segs), 0.0), base)
+        if streak:
+            _fill(img, _capsules(_streak(segs), 0.0), hi)
+
+    def _ell(self, img, c, ax, ang, mat: str) -> None:
+        base, shadow, _ = self.mat[mat]
+        if not self.shade:
+            _ellipse(img, c, ax, ang, base)
+            return
+        _ellipse(img, c, ax, ang, shadow)
+        k = SHADE_K * min(ax)
+        _ellipse(img, (c[0] + LIGHT[0] * k, c[1] + LIGHT[1] * k), (ax[0] - k, ax[1] - k), ang, base)
+
     def _paint(self, img, g: CoachGeometry, off: np.ndarray) -> None:
         c, S = self.c, self.S
         ink, iw = c["ink"], self.ink_w
         j = {k: v - off for k, v in g.j.items()}
         o16 = np.round(off * ONE).astype(np.int32)
+        up = g.up
 
-        def shifted(polys):
-            return [p.reshape(-1, 2) - o16 for p in polys]
+        def shifted(polys, dx=0.0, dy=0.0):
+            d = o16 - np.array((int(round(dx * ONE)), int(round(dy * ONE))), np.int32)
+            return [p.reshape(-1, 2) - d for p in polys]
 
-        # 1. the neon rim around the whole silhouette
-        _fill(img, shifted(g.silhouette), c["rim"])
+        # 0. a soft contact shadow under the feet, smaller and lighter in the air
+        if self.shade:
+            hop = min(1.0, g.lift / max(1.0, 0.25 * S))
+            w = (max(1.4 * S, g.feet_span + 0.85 * S)) * (1.0 - 0.25 * hop)
+            self._shadow(w, 0.17 * S * (1.0 - 0.2 * hop)).draw_c(img, g.ground[0] - off[0], g.ground[1] - off[1],
+                                                                 fade=1.0 - 0.5 * hop)
+
+        # 1. the neon rim around the whole silhouette (a stage light from behind,
+        #    on the side away from the key light: it shows more on the lower right)
+        rs = 0.45 * self.rim_w if self.shade else 0.0
+        _fill(img, shifted(g.silhouette, rs, 0.5 * rs), c["rim"])
 
         # 2. tail
-        tail_pts, tail_r = self._tail(g.j)
+        tail_pts, tail_r = self._tail(g.j, g.tail)
         tail_pts = [p - off for p in tail_pts]
         segs = np.array([[*a, *b, ra, rb] for a, b, ra, rb in zip(tail_pts, tail_pts[1:], tail_r, tail_r[1:])])
         _fill(img, _capsules(segs, iw), ink)
-        _fill(img, _capsules(segs, 0.0), c["fur"])
+        self._caps(img, segs, "fur", streak=False)
+        dark = self.mat["fur_dark"][1 if self.shade else 0]
         for k in (2, 4):  # dark rings across the tail
             a, b = tail_pts[k - 1], tail_pts[k + 1] if k + 1 < len(tail_pts) else tail_pts[k]
             d = b - a
@@ -604,17 +809,36 @@ class CoachPainter:
             r = tail_r[k] - iw * 0.3
             _line(img, tail_pts[k] - n * r * 0.92, tail_pts[k] + n * r * 0.92, c["fur_dark"], 0.11 * S)
         tip = tail_pts[-1]
-        cv2.circle(img, _fxp(tip), int(round(tail_r[-1] * ONE)), c["fur_dark"], -1, cv2.LINE_AA, SHIFT)
+        cv2.circle(img, _fxp(tip), int(round(tail_r[-1] * ONE)), dark, -1, cv2.LINE_AA, SHIFT)
+        if self.shade:
+            k = SHADE_K * tail_r[-1]
+            cv2.circle(img, _fxp(tip + LIGHT * k), int(round((tail_r[-1] - k) * ONE)), c["fur_dark"], -1,
+                       cv2.LINE_AA, SHIFT)
 
-        # 3. legs and pants: one shape (ink for all, then fill for all: no seam)
-        arms, legs = self._segs(j)
-        top, pants, waist, right = self._torso(j, 0.0)
-        top_i, pants_i, _, _ = self._torso(j, iw)
+        arms, legs = self._segs(g, j)
+        # 3. an arm the body has turned away from goes behind the jacket
+        for s in g.behind:
+            self._paint_arm(img, g, j, arms, s)
+
+        # 4. legs and pants: one shape (ink for all, then fill for all: no seam)
+        (tp, tr), (pp, pr), waist, right = self._torso_parts(j, up)
         _fill(img, _capsules(legs, iw), ink)
-        _fill(img, [pants_i.reshape(-1, 2)], ink)
-        _fill(img, _capsules(legs, 0.0), c["pants"])
-        _fill(img, [pants.reshape(-1, 2)], c["pants"])
-        for s in "lr":  # a cyan stripe down the outside of each leg
+        _fill(img, [_hull(pp, pr, iw).reshape(-1, 2)], ink)
+        base, shadow, hi = self.mat["pants"]
+        if self.shade:
+            _fill(img, _capsules(legs, 0.0), shadow)
+            _fill(img, [_hull(pp, pr, 0.0).reshape(-1, 2)], shadow)
+            _fill(img, _capsules(_lit(legs), 0.0), base)
+            _fill(img, [_lit_hull(pp, pr, HULL_SHADE * S).reshape(-1, 2)], base)
+            _fill(img, _capsules(_streak(legs), 0.0), hi)
+        else:
+            _fill(img, _capsules(legs, 0.0), base)
+            _fill(img, [_hull(pp, pr, 0.0).reshape(-1, 2)], base)
+        if self.shade:  # the jacket's hem shades the top of the pants
+            hem = np.array([[*(waist - right * 0.27 * S - up * 0.1 * S), *(waist + right * 0.27 * S - up * 0.1 * S),
+                             0.1 * S, 0.1 * S]])
+            _fill(img, _capsules(hem, 0.0), shadow)
+        for s in "lr":  # a stripe down the outside of each leg
             side = -1.0 if s == "l" else 1.0
             pts = [j[f"{s}_hip"], j[f"{s}_knee"], j[f"{s}_ankle"]]
             off_pts = []
@@ -631,53 +855,88 @@ class CoachPainter:
         for s in "lr":  # sneakers
             sc, ax = self._shoe(j, s)
             _ellipse(img, sc, (ax[0] + iw, ax[1] + iw), 0, ink)
-            _ellipse(img, sc, ax, 0, c["shoe"])
+            self._ell(img, sc, ax, 0, "shoe")
             _ellipse(img, sc, (ax[0] - 0.02 * S, ax[1] - 0.025 * S), 0, c["accent"],
                      max(1, int(round(0.05 * S))), 25, 155)
 
-        # 4. jacket: magenta, a lavender V of chest fur, a cyan belt
-        _fill(img, [top_i.reshape(-1, 2)], ink)
-        _fill(img, [top.reshape(-1, 2)], c["top"])
-        up = self._up
+        # 5. jacket: a V of chest fur and a belt that wrap round as the chest twists
+        _fill(img, [_hull(tp, tr, iw).reshape(-1, 2)], ink)
+        base, shadow, hi = self.mat["top"]
+        if self.shade:
+            _fill(img, [_hull(tp, tr, 0.0).reshape(-1, 2)], shadow)
+            _fill(img, [_lit_hull(tp, tr, HULL_SHADE * S).reshape(-1, 2)], base)
+            # a soft sheen down the lit side of the chest
+            a = tp[0] + (waist - right * 0.30 * S - tp[0]) * 0.18 + right * 0.12 * S
+            b = tp[0] + (waist - right * 0.30 * S - tp[0]) * 0.62 + right * 0.12 * S
+            _fill(img, _capsules(np.array([[*a, *b, 0.05 * S, 0.035 * S]]), 0.0), hi)
+        else:
+            _fill(img, [_hull(tp, tr, 0.0).reshape(-1, 2)], base)
         neck = j["neck"]
-        v = np.array([neck - right * 0.2 * S - up * 0.02 * S, neck + right * 0.2 * S - up * 0.02 * S,
-                      neck - up * -0.52 * S])
-        cv2.fillConvexPoly(img, np.round(v * ONE).astype(np.int32), c["fur"], cv2.LINE_AA, SHIFT)
+        turn = math.sin(math.radians(g.twist))
+        chest = right * (turn * CHEST_TURN * S)
+        v = np.array([neck - right * 0.2 * S - up * 0.02 * S + chest * 0.6, neck + right * 0.2 * S - up * 0.02 * S + chest * 0.6,
+                      neck - up * -0.52 * S + chest])
+        cv2.fillConvexPoly(img, np.round(v * ONE).astype(np.int32), self.mat["fur"][0], cv2.LINE_AA, SHIFT)
         cv2.polylines(img, [np.round(v[[0, 2, 1]] * ONE).astype(np.int32)], False, c["accent"],
                       max(1, int(round(0.04 * S))), cv2.LINE_AA, SHIFT)
-        wl, wr = waist - right * 0.36 * S, waist + right * 0.36 * S
-        _line(img, wl, wr, ink, 0.11 * S + 2 * iw * 0.7)
-        _line(img, wl, wr, c["accent"], 0.11 * S)
+        if self.shade:  # the belt sags at the front of a round waist, and slides as it twists
+            us = np.linspace(-1.0, 1.0, 9)
+            sag = 0.035 * S * (1.0 - ((us - 0.5 * turn) / (1.0 + 0.5 * abs(turn))) ** 2)
+            belt = [waist + right * (u * 0.36 * S) - up * sg for u, sg in zip(us, sag)]
+            pts = [np.round(np.array(belt) * ONE).astype(np.int32)]
+            cv2.polylines(img, pts, False, ink, max(1, int(round(0.11 * S + 2 * iw * 0.7))), cv2.LINE_AA, SHIFT)
+            cv2.polylines(img, pts, False, c["accent"], max(1, int(round(0.11 * S))), cv2.LINE_AA, SHIFT)
+        else:
+            wl, wr = waist - right * 0.36 * S, waist + right * 0.36 * S
+            _line(img, wl, wr, ink, 0.11 * S + 2 * iw * 0.7)
+            _line(img, wl, wr, c["accent"], 0.11 * S)
 
-        # 5. neck, 6. head
+        if self.shade:  # the head shades the top of the chest
+            _ellipse(img, neck - up * 0.06 * S + chest * 0.5, (0.3 * S, 0.1 * S), math.degrees(math.atan2(right[1], right[0])),
+                     self.mat["top"][1])
+            _ellipse(img, neck - up * 0.08 * S + chest * 0.6, (0.17 * S, 0.075 * S),
+                     math.degrees(math.atan2(right[1], right[0])), self.mat["fur"][1])
+        # 6. neck (in the head's shadow), 7. head
         neck_seg = np.array([[*neck, *(neck + up * 0.25 * S), 0.14 * S, 0.14 * S]])
         _fill(img, _capsules(neck_seg, iw), ink)
-        _fill(img, _capsules(neck_seg, 0.0), c["fur"])
-        spr = self.head_sprite(g.head_angle)
+        _fill(img, _capsules(neck_seg, 0.0), self.mat["fur"][1 if self.shade else 0])
+        spr = self.head_sprite(g.head_angle, g.head_yaw)
         spr.draw_c(img, g.head_c[0] - off[0], g.head_c[1] - off[1])
 
-        # 7. arms in front: fur forearm, magenta sleeve with a cyan cuff, cyan wristband, white glove
-        for idx, s in enumerate("lr"):
-            upper, fore = arms[idx:idx + 1], arms[idx + 2:idx + 3]
-            gc, gax, gang = self._glove(j, s)
-            _fill(img, _capsules(np.vstack([upper, fore]), iw), ink)
-            _ellipse(img, gc, (gax[0] + iw, gax[1] + iw), gang, ink)
-            _fill(img, _capsules(fore, 0.0), c["fur"])
-            _fill(img, _capsules(upper, 0.0), c["top"])
-            sh, el, wr = j[f"{s}_shoulder"], j[f"{s}_elbow"], j[f"{s}_wrist"]
-            band = np.array([[*(el + (wr - el) * 0.78), *wr, R_FORE[1] * S * 1.08, R_FORE[1] * S * 1.08]])
-            _fill(img, _capsules(band, 0.0), c["accent"])
-            _ellipse(img, gc, gax, gang, c["glove"])
-            # A thumb on the inner side, so the hand reads as a hand, not a ball.
-            d = j[f"{s}_hand"] - wr
-            d /= max(1e-6, float(np.hypot(*d)))
-            n = np.array((-d[1], d[0]))
-            side = -1.0 if s == "l" else 1.0
-            if n[0] * side > 0:
-                n = -n
-            tc = gc + n * 0.12 * S - d * 0.02 * S
-            cv2.circle(img, _fxp(tc), int(round((0.055 * S + iw) * ONE)), ink, -1, cv2.LINE_AA, SHIFT)
-            cv2.circle(img, _fxp(tc), int(round(0.055 * S * ONE)), c["glove"], -1, cv2.LINE_AA, SHIFT)
+        # 8. arms in front, the nearer one last
+        for s in g.front_first:
+            if s not in g.behind:
+                self._paint_arm(img, g, j, arms, s)
+
+    def _paint_arm(self, img, g: CoachGeometry, j, arms, s: str) -> None:
+        """Fur forearm, sleeve with a cuff, wristband, white glove with a thumb."""
+        c, S, ink, iw = self.c, self.S, self.c["ink"], self.ink_w
+        idx = 0 if s == "l" else 1
+        upper, fore = arms[idx:idx + 1], arms[idx + 2:idx + 3]
+        gc, gax, gang, d = self._glove(g, s, j)
+        _fill(img, _capsules(np.vstack([upper, fore]), iw), ink)
+        _ellipse(img, gc, (gax[0] + iw, gax[1] + iw), gang, ink)
+        self._caps(img, fore, "fur")
+        self._caps(img, upper, "top")
+        el, wr = j[f"{s}_elbow"], j[f"{s}_wrist"]
+        rb = R_FORE[1] * S * 1.08 * g.arm_scale[s][1]
+        band = np.array([[*(el + (wr - el) * 0.78), *wr, rb, rb]])
+        _fill(img, _capsules(band, 0.0), c["accent"])
+        self._ell(img, gc, gax, gang, "glove")
+        # A thumb on the inner side, so the hand reads as a hand, not a ball.
+        n = np.array((-d[1], d[0]))
+        side = -1.0 if s == "l" else 1.0
+        if n[0] * side > 0:
+            n = -n
+        k = g.arm_scale[s][2]
+        tc = gc + n * 0.12 * S * k - d * 0.02 * S
+        cv2.circle(img, _fxp(tc), int(round((0.055 * S * k + iw) * ONE)), ink, -1, cv2.LINE_AA, SHIFT)
+        cv2.circle(img, _fxp(tc), int(round(0.055 * S * k * ONE)), c["glove"], -1, cv2.LINE_AA, SHIFT)
+        if self.shade:
+            kk = SHADE_K * min(gax)
+            _ellipse(img, (gc[0] + LIGHT[0] * kk, gc[1] + LIGHT[1] * kk), (gax[0] * 0.92 - kk, gax[1] * 0.86 - kk),
+                     gang, c["glove"])
+        else:
             _ellipse(img, gc, (gax[0] * 0.92, gax[1] * 0.86), gang, c["glove"])
 
 
@@ -1007,11 +1266,16 @@ class DanceRenderer:
 
         painter = self._painter_for(song)
         bow = self._bow(phase, song, beat, song_time)
-        pose = getattr(game, "coach_pose", None)
         if over:  # the coach grooves in its spotlight while the results count up
             beat = float(getattr(game, "results_t", 0.0) or 0.0) * 2.0
-            pose = idle_groove(beat)
-        geo = painter.layout(pose, bow=bow, beat=beat)
+            motion = coach_motion(None, beat, energy=0.5)
+        elif song is not None and hasattr(song, "_frames"):
+            # The performance on top of the chart's timeline (motion.py): the
+            # same keyframes as game.coach_pose, hit on the same beats.
+            motion = coach_motion(song, beat)
+        else:
+            motion = still_motion(getattr(game, "coach_pose", None) or REST)
+        geo = painter.layout(None, bow=bow, beat=beat, motion=motion)
         energy = self._energy(song, beat, phase)
         self._draw_lights(frame, game, geo, beat, energy, phase)
         lap("lights")

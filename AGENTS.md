@@ -322,7 +322,10 @@ re-run the model on offline. Analyse these before tuning anything.
 - **Raccoon Dance** (`dance`, docs/DANCE.md): the coach (the raccoon) dances
   to a song and the player copies it like a mirror. Poses are torso-frame limb
   angles (`dance/pose.py`), judged per beat with a late-skewed window and a
-  0.12 s hold (`dance/judge.py`). Songs are folders in `assets/dance/songs/`
+  0.12 s hold (`dance/judge.py`). The drawn coach performs the chart
+  (`dance/motion.py`: anticipation, overshoot that settles on the beat, groove,
+  follow-through) and is painted lit with depth; judged angles stay exact on
+  judged beats (`tests/test_dance_motion.py`, docs/DANCE.md 4a). Songs are folders in `assets/dance/songs/`
   (audio + `song.json` chart). The shell shows a song list for games with
   `variants()`, with one leaderboard per song (`dance-<id>`). Add songs with
   `kp dance-import` (from a recording) and check them with `kp dance-preview`.

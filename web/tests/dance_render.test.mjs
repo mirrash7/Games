@@ -27,6 +27,7 @@ function fakeContext(log) {
     canvas: { width: 1280, height: 720 },
     filter: "none",
     createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
     measureText: (s) => ({ width: String(s).length * 12 }),
     drawImage: (img, ...args) => {
       if (!img || !(img.width > 0)) throw new Error("drawImage of nothing");
@@ -247,6 +248,7 @@ function boundsContext() {
       if (box) clip = [Math.max(clip[0], box[0]), Math.max(clip[1], box[1]), Math.min(clip[2], box[2]), Math.min(clip[3], box[3])];
     },
     createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
     measureText: (str) => ({ width: String(str).length * fontSize() * 0.62 }),
     drawImage: (img, ...a) => {
       if (!t.recording) return;

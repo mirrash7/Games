@@ -25,7 +25,8 @@ const rings = new Map();
 
 function painter(art, scale) {
   const key = Math.round(scale);
-  if (!painters.has(key)) painters.set(key, new CoachPainter(art, "neon", { scale: key }));
+  // Flat, as before the stage coach got its lighting: the cards are small instructions.
+  if (!painters.has(key)) painters.set(key, new CoachPainter(art, "neon", { scale: key, shade: false }));
   return painters.get(key);
 }
 

@@ -49,7 +49,9 @@ def _painter(art, scale: float) -> CoachPainter:
     key = int(round(scale))
     p = _painters.get(key)
     if p is None or p.c is None:
-        p = _painters[key] = CoachPainter(art, "neon", scale=key)
+        # Flat, as before the stage coach got its lighting: the cards are small
+        # instructions (and their 1.5 ms budget covers three of them).
+        p = _painters[key] = CoachPainter(art, "neon", scale=key, shade=False)
     return p
 
 

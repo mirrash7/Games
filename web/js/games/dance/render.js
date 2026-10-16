@@ -27,8 +27,8 @@
 import { makeCanvas as defaultMakeCanvas } from "../../core/gfx.js";
 import { ACCENT, CYAN, DIM, GOOD, WARN, css, centredText, font, fontPx, panel, text, textWidth } from "../../core/theme.js";
 import { bgr } from "./art.js";
-import { idleGroove } from "./chart.js";
-import { FOREARM, HIP_W, REST, SHIN, THIGH, TORSO, UPPER_ARM, forward, lerpPose, limbDir, normalizePose, smoothstep }
+import { coachMotion, stillMotion } from "./motion.js";
+import { FOREARM, HIP_W, REST, SHIN, SIDE, THIGH, TORSO, UPPER_ARM, forward, lerpPose, limbDir, normalizePose, smoothstep }
   from "./pose.js";
 
 // --- layout (1280 x 720) ----------------------------------------------------
@@ -397,32 +397,107 @@ const HEAD_FACE_SW = 1.2; // the face is drawn this many shoulder widths wide: a
 const FOOT_BELOW_ANKLE = 0.245; // shoe sole (with keyline and rim) below the ankle, in SW
 const REST_ANKLE_Y = forward(REST).l_ankle[1];
 
+// The 3D look (render.py, docs/DANCE.md section 4a): a key light from the upper
+// left. Each part is filled in its shadow colour, then in its own colour shrunk
+// by SHADE_K of its radius and moved that far towards the light, leaving a
+// core-shadow crescent on the lower right; limbs get a highlight streak.
+const LIGHT = (() => {
+  const n = Math.hypot(0.55, 0.83);
+  return [-0.55 / n, -0.83 / n];
+})();
+const SHADE_K = 0.24;
+const STREAK_OFF = 0.5, STREAK_R = 0.2, STREAK_TRIM = 0.18;
+const SHADE_DARK = 0.6, SHADE_BOUNCE = 0.14, HIGHLIGHT = 0.34;
+export const SHADOW_INK = bgr([20, 6, 14]);
+const DEPTH_THICK = 0.12, FORESHORTEN = 0.08, GLOVE_NEAR = 0.16, BEHIND = -0.25;
+const CHEST_TURN = 0.16, HEAD_TURN = 0.06, HULL_SHADE = 0.065;
+
+/** The lit part of each capsule: radii shrunk by k, moved k of a radius towards the light. */
+function litSegs(segs, k = SHADE_K) {
+  return segs.map(([x0, y0, x1, y1, r0, r1]) => [x0 + LIGHT[0] * k * r0, y0 + LIGHT[1] * k * r0,
+    x1 + LIGHT[0] * k * r1, y1 + LIGHT[1] * k * r1, r0 * (1 - k), r1 * (1 - k)]);
+}
+
+/** A highlight along each capsule's lit side, short of its ends. */
+function streakSegs(segs) {
+  return segs.map(([x0, y0, x1, y1, r0, r1]) => {
+    const dx = x1 - x0, dy = y1 - y0;
+    return [x0 + dx * STREAK_TRIM + LIGHT[0] * STREAK_OFF * r0, y0 + dy * STREAK_TRIM + LIGHT[1] * STREAK_OFF * r0,
+      x1 - dx * STREAK_TRIM + LIGHT[0] * STREAK_OFF * r1, y1 - dy * STREAK_TRIM + LIGHT[1] * STREAK_OFF * r1,
+      r0 * STREAK_R, r1 * STREAK_R];
+  });
+}
+
+/** The lit part of a hull of circles: each shrunk by k px and moved k px towards the light. */
+const litHull = (points, radii, k) => hull(points.map((p) => add(p, LIGHT, k)), radii.map((r) => r - k), 0.0);
+
+/** [base, shadow, highlight] for one material (render.py _shades). */
+function shades(base, glow) {
+  const shadow = base.map((v, i) => Math.min(255, Math.max(0, Math.round(v * SHADE_DARK + glow[i] * SHADE_BOUNCE))));
+  const hi = base.map((v) => Math.round(v + (255 - v) * HIGHLIGHT));
+  return [base, shadow, hi];
+}
+
 /**
- * The coach: the arcade's purple raccoon as a bold flat-colour dancer.
- * layout(pose) turns a pose into pixel geometry (pure math); paint(ctx, geo)
- * draws it: a neon rim around the whole silhouette, then tail, legs and pants,
- * jacket, neck, head, and arms in front, each with a dark keyline.
+ * The coach: the arcade's purple raccoon as a bold, lit cartoon dancer.
+ * layout(pose, {motion}) turns a pose and the motion layered on it (motion.js)
+ * into pixel geometry (pure math); paint(ctx, geo) draws it back to front: a
+ * contact shadow, a neon rim around the whole silhouette, tail, the far arm
+ * when the body twists away from it, legs and pants, jacket, neck, head, and
+ * arms in front, each with a dark keyline. With `shade` (the default) every
+ * part is lit from the upper left; the tutorial's small coaches draw flat.
  */
 export class CoachPainter {
-  constructor(art, outfit = null, { scale = COACH_SCALE, origin = null, makeCanvas = defaultMakeCanvas } = {}) {
+  constructor(art, outfit = null, { scale = COACH_SCALE, origin = null, makeCanvas = defaultMakeCanvas, shade = true } = {}) {
     this.S = scale;
     this.c = art.outfit(outfit);
+    this.shade = shade;
     this.inkW = Math.max(1.2, 0.026 * this.S);
     this.rimW = Math.max(1.2, 0.032 * this.S);
     this.origin = origin ?? this.originFor(COACH_X, COACH_FEET);
+    const glow = this.c.glow ?? bgr([255, 80, 200]);
+    this.mat = {};
+    for (const k of ["fur", "fur_dark", "top", "pants", "glove", "shoe"]) this.mat[k] = shades(this.c[k] ?? [200, 100, 200], glow);
     const hm = art.manifest.head ?? {};
     this._face = hm.centre ?? [0.5, 0.565];
     this._earTop = 0.105;
     const fw = Number(hm.face_width ?? 0.67);
     const side = Math.max(8, Math.round(HEAD_FACE_SW * this.S / fw));
     this._headSide = side;
-    // The head over its rim (tinted to the outfit's rim colour), built once.
-    const head = makeCanvas(side, side);
-    const g = head.getContext("2d");
-    g.imageSmoothingQuality = "high";
-    g.drawImage(tintedCanvas(makeCanvas, art.headRim, this.c.rim ?? WHITE, side, side), 0, 0);
-    g.drawImage(art.head, 0, 0, side, side);
-    this._head = head;
+    // The head over its rim (tinted to the outfit's rim colour), one per head turn.
+    let turns = shade ? (art.headTurns ?? []) : [];
+    if (!turns.length) turns = [{ yaw: 0, head: art.head, rim: art.headRim }];
+    this._yaws = turns.map((t) => t.yaw);
+    this._heads = turns.map((t) => {
+      const head = makeCanvas(side, side);
+      const g = head.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(tintedCanvas(makeCanvas, t.rim, this.c.rim ?? WHITE, side, side), 0, 0);
+      g.drawImage(t.head, 0, 0, side, side);
+      return head;
+    });
+    this._head = this._heads[this._yaws.indexOf(0) >= 0 ? this._yaws.indexOf(0) : 0];
+    // The contact shadow: one soft ellipse, drawn scaled.
+    this._shadow = null;
+    if (shade) {
+      const sw = 128, sh = 48;
+      const c = makeCanvas(sw, sh);
+      const g = c.getContext("2d");
+      g.save();
+      g.translate(sw / 2, sh / 2);
+      g.scale(1, sh / sw);
+      const grad = g.createRadialGradient(0, 0, 0, 0, 0, sw / 2);
+      grad.addColorStop(0, css(SHADOW_INK, 0.78));
+      grad.addColorStop(0.45, css(SHADOW_INK, 0.72));
+      grad.addColorStop(0.75, css(SHADOW_INK, 0.3));
+      grad.addColorStop(1, css(SHADOW_INK, 0));
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(0, 0, sw / 2, 0, 2 * Math.PI);
+      g.fill();
+      g.restore();
+      this._shadow = c;
+    }
   }
 
   /** The rest hip centre that puts the coach's shoe soles at feetY. */
@@ -432,14 +507,24 @@ export class CoachPainter {
 
   // --- geometry ---
 
-  /** Pixel geometry for `pose`: {j, silhouette, headC, headAngle, headTop, bbox}. */
-  layout(pose, { bow = 0.0, beat = 0.0, origin = null } = {}) {
-    let p = normalizePose(pose ?? REST);
-    if (bow > 0.0) p = lerpPose(p, BOW_POSE, Math.min(1.0, bow));
+  /**
+   * Pixel geometry for `pose`, or for `motion` (motion.js coachMotion). The feet
+   * stay on the floor (the lower one is planted) unless the motion hops.
+   */
+  layout(pose, { bow = 0.0, beat = 0.0, origin = null, motion = null } = {}) {
+    const m = motion ?? stillMotion(pose ?? REST);
+    let p = normalizePose(m.pose);
+    let calm = 1.0;
+    if (bow > 0.0) {
+      p = lerpPose(p, BOW_POSE, Math.min(1.0, bow));
+      calm = 1.0 - Math.min(1.0, bow);
+    }
     const jj = forward(p);
     const S = this.S, [ox, oy] = origin ?? this.origin;
+    const lift = m.lift * calm;
+    const dy = REST_ANKLE_Y - Math.max(jj.l_ankle[1], jj.r_ankle[1]) - lift;
     const j = {};
-    for (const [k, v] of Object.entries(jj)) j[k] = [ox + v[0] * S, oy + v[1] * S];
+    for (const [k, v] of Object.entries(jj)) j[k] = [ox + v[0] * S, oy + (v[1] + dy) * S];
     if (bow > 0.0) {
       // A front-view bow: the upper body foreshortens towards the camera.
       const hipY = j.hip[1];
@@ -450,50 +535,98 @@ export class CoachPainter {
       }
     }
     const up = unit(sub(j.neck, j.hip));
-    const headAngle = p.lean + p.head;
+    const right = [-up[1], up[0]];
+    const arm = { l: ["l_shoulder", "l_elbow", "l_wrist", "l_hand"], r: ["r_shoulder", "r_elbow", "r_wrist", "r_hand"] };
+    const upper = ["neck", "head", ...arm.l, ...arm.r];
+    const move = (names, d) => { for (const k of names) j[k] = add(j[k], d); };
+
+    // Weight shift: the upper body over the feet (the knees go half way).
+    const sway = m.sway * calm * S;
+    move([...upper, "hip", "l_hip", "r_hip"], [sway, 0]);
+    move(["l_knee", "r_knee"], [0.5 * sway, 0]);
+    // Squash and stretch along the torso's axis.
+    const q = 1.0 + (m.squash - 1.0) * calm;
+    move(upper, [up[0] * (q - 1.0) * TORSO * S, up[1] * (q - 1.0) * TORSO * S]);
+    // Shoulders: wider when squashed, narrower as the torso twists, rolled up and down.
+    const yaw = m.twist * calm * RAD;
+    const span = (1.0 + (1.0 - q) * 0.8) * Math.cos(yaw);
+    ["l", "r"].forEach((s, i) => {
+      const sd = SIDE[s];
+      move(arm[s], add([right[0] * sd * 0.5 * S * (span - 1.0), right[1] * sd * 0.5 * S * (span - 1.0)],
+        up, m.shoulders[i] * calm * S));
+      move([`${s}_hip`, `${s}_knee`, `${s}_ankle`], [sd * HIP_W / 2 * S * (Math.cos(0.4 * yaw) - 1.0), 0]);
+    });
+    // Depth: thicker near the viewer, a forearm pointing at it foreshortened.
+    const armScale = {}, behind = [];
+    for (const s of ["l", "r"]) {
+      const uz = m.depth[s][0] * calm, hz = m.depth[s][1] * calm;
+      if (hz > 0.0) {
+        const el = j[`${s}_elbow`], wr = j[`${s}_wrist`];
+        const nw = add(el, sub(wr, el), 1.0 - FORESHORTEN * hz);
+        j[`${s}_hand`] = add(j[`${s}_hand`], sub(nw, wr));
+        j[`${s}_wrist`] = nw;
+      }
+      armScale[s] = [1.0 + DEPTH_THICK * uz, 1.0 + DEPTH_THICK * hz, 1.0 + GLOVE_NEAR * Math.max(-0.5, hz)];
+      if (this.shade && uz < BEHIND && hz < 0.15) behind.push(s);
+    }
+    const headYaw = m.headYaw * calm;
+    const headAngle = p.lean + p.head + m.headTilt * calm;
     const ha = headAngle * RAD;
-    const headC = add(j.neck, [Math.sin(ha), -Math.cos(ha)], (0.50 - 0.22 * Math.min(1.0, bow)) * S);
+    let headC = add(j.neck, [Math.sin(ha), -Math.cos(ha)], (0.50 - 0.22 * Math.min(1.0, bow)) * S);
+    headC = add(add(headC, up, -m.headBob * calm * S), right, Math.sin(headYaw * RAD) * HEAD_TURN * S);
     const headTop = headC[1] - (this._face[1] - this._earTop) * this._headSide;
-    const g = { j, up, beat, headC, headAngle, headTop, silhouette: [], bbox: [0, 0, 0, 0] };
+    const g = {
+      j, up, beat, headC, headAngle, headTop, headYaw, silhouette: [], bbox: [0, 0, 0, 0],
+      twist: yaw / RAD, tail: motion ? m.tail * calm : Math.sin(beat * Math.PI) * 14.0,
+      hands: [m.hands[0] * calm, m.hands[1] * calm], armScale, behind,
+      frontFirst: yaw > 0 ? ["r", "l"] : ["l", "r"], lift: lift * S,
+    };
+    const sl = this._shoe(j, "l")[0], sr = this._shoe(j, "r")[0];
+    g.ground = [(sl[0] + sr[0]) / 2, oy + (REST_ANKLE_Y + 0.075 + 0.08) * S];
+    g.feetSpan = Math.abs(sr[0] - sl[0]);
     g.silhouette = this._silhouette(g, this.inkW + this.rimW);
     const xs = [...Object.values(j).map((v) => v[0]), headC[0]];
     const ys = [...Object.values(j).map((v) => v[1]), headTop];
-    const m = 0.5 * S;
-    g.bbox = [Math.trunc(Math.min(...xs) - m), Math.trunc(Math.min(...ys) - 0.1 * S),
-      Math.trunc(Math.max(...xs) + m), Math.trunc(Math.max(...ys) + 0.4 * S)];
+    const mg = 0.5 * S;
+    g.bbox = [Math.trunc(Math.min(...xs) - mg), Math.trunc(Math.min(...ys) - 0.1 * S),
+      Math.trunc(Math.max(...xs) + mg), Math.trunc(Math.max(...ys) + 0.4 * S)];
     return g;
   }
 
-  _segs(j) {
-    const S = this.S;
-    const arms = ["l", "r"].map((s) => [...j[`${s}_shoulder`], ...j[`${s}_elbow`], R_UPPER[0] * S, R_UPPER[1] * S])
-      .concat(["l", "r"].map((s) => [...j[`${s}_elbow`], ...j[`${s}_wrist`], R_FORE[0] * S, R_FORE[1] * S]));
+  _segs(g) {
+    const S = this.S, j = g.j, sc = g.armScale;
+    const arms = ["l", "r"].map((s) => [...j[`${s}_shoulder`], ...j[`${s}_elbow`], R_UPPER[0] * S * sc[s][0],
+      R_UPPER[1] * S * sc[s][0]])
+      .concat(["l", "r"].map((s) => [...j[`${s}_elbow`], ...j[`${s}_wrist`], R_FORE[0] * S * sc[s][0],
+        R_FORE[1] * S * sc[s][1]]));
     const legs = ["l", "r"].map((s) => [...j[`${s}_hip`], ...j[`${s}_knee`], R_THIGH[0] * S, R_THIGH[1] * S])
       .concat(["l", "r"].map((s) => [...j[`${s}_knee`], ...j[`${s}_ankle`], R_SHIN[0] * S, R_SHIN[1] * S]));
     return [arms, legs];
   }
 
-  _torso(j, up, grow) {
+  /** The jacket's and the pants' circles. */
+  _torsoParts(j, up) {
     const S = this.S;
     const right = [-up[1], up[0]];
     const waist = add(j.neck, sub(j.hip, j.neck), 0.66);
-    const top = hull([j.l_shoulder, j.r_shoulder, add(waist, right, -0.30 * S), add(waist, right, 0.30 * S)],
-      [0.2 * S, 0.2 * S, 0.13 * S, 0.13 * S], grow);
-    const pants = hull([add(waist, right, -0.29 * S), add(waist, right, 0.29 * S), j.l_hip, j.r_hip],
-      [0.12 * S, 0.12 * S, 0.19 * S, 0.19 * S], grow);
-    return { top, pants, waist, right };
+    return {
+      top: [[j.l_shoulder, j.r_shoulder, add(waist, right, -0.30 * S), add(waist, right, 0.30 * S)],
+        [0.2 * S, 0.2 * S, 0.13 * S, 0.13 * S]],
+      pants: [[add(waist, right, -0.29 * S), add(waist, right, 0.29 * S), j.l_hip, j.r_hip],
+        [0.12 * S, 0.12 * S, 0.19 * S, 0.19 * S]],
+      waist, right,
+    };
   }
 
-  /** A ringed raccoon tail from behind the hips, swaying on the beat. */
-  _tail(j, beat) {
+  /** A ringed raccoon tail from behind the hips, swinging with the groove. */
+  _tail(j, swing) {
     const S = this.S;
-    const sway = Math.sin(beat * Math.PI) * 14.0;
     const start = add(j.hip, [-0.22 * S, 0.12 * S]);
     const pts = [start], radii = [0.12 * S];
-    let ang = 150.0 + sway * 0.5; // screen degrees, y down: left and a little down
+    let ang = 150.0 + swing * 0.5; // screen degrees, y down: left and a little down
     let p = start;
     for (const r of [0.16, 0.19, 0.19, 0.16, 0.11]) {
-      ang += 14.0 + sway * 0.25;
+      ang += 14.0 + swing * 0.25;
       p = add(p, [Math.cos(ang * RAD), Math.sin(ang * RAD)], 0.2 * S);
       pts.push(p);
       radii.push(r * S);
@@ -506,24 +639,31 @@ export class CoachPainter {
     return [add(j[`${s}_ankle`], [side * 0.07 * S, 0.075 * S]), [0.205 * S, 0.112 * S]];
   }
 
-  _glove(j, s) {
-    const d = unit(sub(j[`${s}_hand`], j[`${s}_wrist`]));
-    return [add(j[`${s}_wrist`], d, 0.1 * this.S), [0.15 * this.S, 0.125 * this.S], Math.atan2(d[1], d[0]) / RAD];
+  _glove(g, s) {
+    let d = unit(sub(g.j[`${s}_hand`], g.j[`${s}_wrist`]));
+    const flick = g.hands[s === "l" ? 0 : 1] * RAD;
+    if (flick) {
+      const c = Math.cos(flick), sn = Math.sin(flick);
+      d = [d[0] * c - d[1] * sn, d[0] * sn + d[1] * c];
+    }
+    const k = g.armScale[s][2];
+    return [add(g.j[`${s}_wrist`], d, 0.1 * this.S * k), [0.15 * this.S * k, 0.125 * this.S * k],
+      Math.atan2(d[1], d[0]) / RAD, d];
   }
 
   _silhouette(g, grow) {
     const { j, up } = g;
-    const [arms, legs] = this._segs(j);
+    const [arms, legs] = this._segs(g);
     const polys = [...capsules(arms, grow), ...capsules(legs, grow)];
-    const { top, pants } = this._torso(j, up, grow);
-    polys.push(top, pants);
-    const [tp, tr] = this._tail(j, g.beat);
+    const { top, pants } = this._torsoParts(j, up);
+    polys.push(hull(top[0], top[1], grow), hull(pants[0], pants[1], grow));
+    const [tp, tr] = this._tail(j, g.tail);
     polys.push(...capsules(tp.slice(1).map((b, i) => [...tp[i], ...b, tr[i], tr[i + 1]]), grow));
     polys.push(...capsules([[...j.neck, ...add(j.neck, up, 0.25 * this.S), 0.14 * this.S, 0.14 * this.S]], grow));
     for (const s of ["l", "r"]) {
       const [c, ax] = this._shoe(j, s);
       polys.push(ellipsePoly(c, [ax[0] + grow, ax[1] + grow], 0.0));
-      const [gc, gax, gang] = this._glove(j, s);
+      const [gc, gax, gang] = this._glove(g, s);
       polys.push(ellipsePoly(gc, [gax[0] + grow, gax[1] + grow], gang));
     }
     return polys;
@@ -545,18 +685,53 @@ export class CoachPainter {
     ctx.restore();
   }
 
+  /** Capsules in a material: flat, or shadow + lit + highlight. */
+  _caps(ctx, segs, mat, streak = true) {
+    const [base, shadow, hi] = this.mat[mat];
+    if (!this.shade) {
+      fillPolys(ctx, capsules(segs, 0.0), base);
+      return;
+    }
+    fillPolys(ctx, capsules(segs, 0.0), shadow);
+    fillPolys(ctx, capsules(litSegs(segs), 0.0), base);
+    if (streak) fillPolys(ctx, capsules(streakSegs(segs), 0.0), hi);
+  }
+
+  _ell(ctx, c, ax, ang, mat) {
+    const [base, shadow] = this.mat[mat];
+    if (!this.shade) {
+      ellipse(ctx, c, ax, ang, base);
+      return;
+    }
+    ellipse(ctx, c, ax, ang, shadow);
+    const k = SHADE_K * Math.min(ax[0], ax[1]);
+    ellipse(ctx, add(c, LIGHT, k), [ax[0] - k, ax[1] - k], ang, base);
+  }
+
   _paint(ctx, g) {
     const c = this.c, S = this.S, iw = this.inkW, ink = c.ink;
     const { j, up } = g;
 
-    // 1. the neon rim around the whole silhouette
+    // 0. a soft contact shadow under the feet, smaller and lighter in the air
+    if (this.shade && this._shadow) {
+      const hop = Math.min(1.0, g.lift / Math.max(1.0, 0.25 * S));
+      const w = Math.max(1.4 * S, g.feetSpan + 0.85 * S) * (1.0 - 0.25 * hop) * 1.15;
+      const h = 0.17 * S * (1.0 - 0.2 * hop) * 1.9;
+      drawC(ctx, this._shadow, g.ground[0], g.ground[1], w, h, 1.0 - 0.5 * hop);
+    }
+
+    // 1. the neon rim around the whole silhouette (more of it on the lower right)
+    const rs = this.shade ? 0.45 * this.rimW : 0.0;
+    ctx.save();
+    ctx.translate(rs, 0.5 * rs);
     fillPolys(ctx, g.silhouette, c.rim);
+    ctx.restore();
 
     // 2. tail
-    const [tp, tr] = this._tail(j, g.beat);
+    const [tp, tr] = this._tail(j, g.tail);
     const segs = tp.slice(1).map((b, i) => [...tp[i], ...b, tr[i], tr[i + 1]]);
     fillPolys(ctx, capsules(segs, iw), ink);
-    fillPolys(ctx, capsules(segs, 0.0), c.fur);
+    this._caps(ctx, segs, "fur", false);
     for (const k of [2, 4]) { // dark rings across the tail
       const a = tp[k - 1], b = k + 1 < tp.length ? tp[k + 1] : tp[k];
       const d = sub(b, a);
@@ -564,14 +739,29 @@ export class CoachPainter {
       const r = tr[k] - iw * 0.3;
       strokeLine(ctx, [add(tp[k], n, -r * 0.92), add(tp[k], n, r * 0.92)], c.fur_dark, 0.11 * S);
     }
-    disc(ctx, tp[tp.length - 1], tr[tr.length - 1], c.fur_dark);
+    const tip = tp[tp.length - 1], tipR = tr[tr.length - 1];
+    disc(ctx, tip, tipR, this.mat.fur_dark[this.shade ? 1 : 0]);
+    if (this.shade) disc(ctx, add(tip, LIGHT, SHADE_K * tipR), tipR * (1 - SHADE_K), c.fur_dark);
 
-    // 3. legs and pants: one shape (ink for all, then fill for all: no seam)
-    const [arms, legs] = this._segs(j);
-    const { top, pants, waist, right } = this._torso(j, up, 0.0);
-    const ti = this._torso(j, up, iw);
-    fillPolys(ctx, [...capsules(legs, iw), ti.pants], ink);
-    fillPolys(ctx, [...capsules(legs, 0.0), pants], c.pants);
+    const [arms, legs] = this._segs(g);
+    // 3. an arm the body has turned away from goes behind the jacket
+    for (const s of g.behind) this._paintArm(ctx, g, arms, s);
+
+    // 4. legs and pants: one shape (ink for all, then fill for all: no seam)
+    const { top, pants, waist, right } = this._torsoParts(j, up);
+    fillPolys(ctx, [...capsules(legs, iw), hull(pants[0], pants[1], iw)], ink);
+    const [pBase, pShadow, pHi] = this.mat.pants;
+    if (this.shade) {
+      fillPolys(ctx, [...capsules(legs, 0.0), hull(pants[0], pants[1], 0.0)], pShadow);
+      fillPolys(ctx, [...capsules(litSegs(legs), 0.0), litHull(pants[0], pants[1], HULL_SHADE * S)], pBase);
+      fillPolys(ctx, capsules(streakSegs(legs), 0.0), pHi);
+      // the jacket's hem shades the top of the pants
+      const hem = [[...add(add(waist, right, -0.27 * S), up, -0.1 * S), ...add(add(waist, right, 0.27 * S), up, -0.1 * S),
+        0.1 * S, 0.1 * S]];
+      fillPolys(ctx, capsules(hem, 0.0), pShadow);
+    } else {
+      fillPolys(ctx, [...capsules(legs, 0.0), hull(pants[0], pants[1], 0.0)], pBase);
+    }
     for (const s of ["l", "r"]) { // a stripe down the outside of each leg
       const side = s === "l" ? -1.0 : 1.0;
       const pts = [j[`${s}_hip`], j[`${s}_knee`], j[`${s}_ankle`]];
@@ -587,54 +777,93 @@ export class CoachPainter {
     for (const s of ["l", "r"]) { // sneakers
       const [sc, ax] = this._shoe(j, s);
       ellipse(ctx, sc, [ax[0] + iw, ax[1] + iw], 0, ink);
-      ellipse(ctx, sc, ax, 0, c.shoe);
+      this._ell(ctx, sc, ax, 0, "shoe");
       ellipse(ctx, sc, [ax[0] - 0.02 * S, ax[1] - 0.025 * S], 0, c.accent, Math.max(1, Math.round(0.05 * S)), 25, 155);
     }
 
-    // 4. jacket: a V of chest fur, a belt
-    fillPolys(ctx, [ti.top], ink);
-    fillPolys(ctx, [top], c.top);
+    // 5. jacket: a V of chest fur and a belt that wrap round as the chest twists
+    fillPolys(ctx, [hull(top[0], top[1], iw)], ink);
+    const [tBase, tShadow, tHi] = this.mat.top;
+    if (this.shade) {
+      fillPolys(ctx, [hull(top[0], top[1], 0.0)], tShadow);
+      fillPolys(ctx, [litHull(top[0], top[1], HULL_SHADE * S)], tBase);
+      // a soft sheen down the lit side of the chest
+      const ls = top[0][0], wl = add(waist, right, -0.30 * S);
+      const a = add(add(ls, sub(wl, ls), 0.18), right, 0.12 * S), b = add(add(ls, sub(wl, ls), 0.62), right, 0.12 * S);
+      fillPolys(ctx, capsules([[...a, ...b, 0.05 * S, 0.035 * S]], 0.0), tHi);
+    } else {
+      fillPolys(ctx, [hull(top[0], top[1], 0.0)], tBase);
+    }
     const neck = j.neck;
-    const v = [add(add(neck, right, -0.2 * S), up, -0.02 * S), add(add(neck, right, 0.2 * S), up, -0.02 * S),
-      add(neck, up, 0.52 * S)];
-    fillPolys(ctx, [v], c.fur);
+    const turn = Math.sin(g.twist * RAD);
+    const chest = [right[0] * turn * CHEST_TURN * S, right[1] * turn * CHEST_TURN * S];
+    const v = [add(add(add(neck, right, -0.2 * S), up, -0.02 * S), chest, 0.6),
+      add(add(add(neck, right, 0.2 * S), up, -0.02 * S), chest, 0.6), add(add(neck, up, -0.52 * S), chest)];
+    fillPolys(ctx, [v], this.mat.fur[0]);
     strokeLine(ctx, [v[0], v[2], v[1]], c.accent, Math.round(0.04 * S));
-    const wl = add(waist, right, -0.36 * S), wr = add(waist, right, 0.36 * S);
-    strokeLine(ctx, [wl, wr], ink, 0.11 * S + 2 * iw * 0.7);
-    strokeLine(ctx, [wl, wr], c.accent, 0.11 * S);
+    if (this.shade) { // the belt sags at the front of a round waist, and slides as it twists
+      const belt = [];
+      for (let i = 0; i < 9; i++) {
+        const u = -1 + i / 4;
+        const sag = 0.035 * S * (1.0 - ((u - 0.5 * turn) / (1.0 + 0.5 * Math.abs(turn))) ** 2);
+        belt.push(add(add(waist, right, u * 0.36 * S), up, -sag));
+      }
+      strokeLine(ctx, belt, ink, 0.11 * S + 2 * iw * 0.7);
+      strokeLine(ctx, belt, c.accent, 0.11 * S);
+      // the head shades the top of the chest
+      const ang = Math.atan2(right[1], right[0]) / RAD;
+      ellipse(ctx, add(add(neck, up, -0.06 * S), chest, 0.5), [0.3 * S, 0.1 * S], ang, tShadow);
+      ellipse(ctx, add(add(neck, up, -0.08 * S), chest, 0.6), [0.17 * S, 0.075 * S], ang, this.mat.fur[1]);
+    } else {
+      const wl = add(waist, right, -0.36 * S), wr = add(waist, right, 0.36 * S);
+      strokeLine(ctx, [wl, wr], ink, 0.11 * S + 2 * iw * 0.7);
+      strokeLine(ctx, [wl, wr], c.accent, 0.11 * S);
+    }
 
-    // 5. neck, 6. head
+    // 6. neck (in the head's shadow), 7. head
     const neckSeg = [[...neck, ...add(neck, up, 0.25 * S), 0.14 * S, 0.14 * S]];
     fillPolys(ctx, capsules(neckSeg, iw), ink);
-    fillPolys(ctx, capsules(neckSeg, 0.0), c.fur);
+    fillPolys(ctx, capsules(neckSeg, 0.0), this.mat.fur[this.shade ? 1 : 0]);
+    let vi = 0;
+    this._yaws.forEach((y, i) => { if (Math.abs(y - g.headYaw) < Math.abs(this._yaws[vi] - g.headYaw)) vi = i; });
     const side = this._headSide;
     ctx.save();
     ctx.translate(g.headC[0], g.headC[1]);
     if (g.headAngle) ctx.rotate(g.headAngle * RAD); // positive tips the head screen-right
-    ctx.drawImage(this._head, -this._face[0] * side, -this._face[1] * side);
+    ctx.drawImage(this._heads[vi], -this._face[0] * side, -this._face[1] * side);
     ctx.restore();
 
-    // 7. arms in front: fur forearm, sleeve, wristband, white glove with a thumb
-    ["l", "r"].forEach((s, idx) => {
-      const upper = arms[idx], fore = arms[idx + 2];
-      const [gc, gax, gang] = this._glove(j, s);
-      fillPolys(ctx, capsules([upper, fore], iw), ink);
-      ellipse(ctx, gc, [gax[0] + iw, gax[1] + iw], gang, ink);
-      fillPolys(ctx, capsules([fore], 0.0), c.fur);
-      fillPolys(ctx, capsules([upper], 0.0), c.top);
-      const el = j[`${s}_elbow`], wr2 = j[`${s}_wrist`];
-      const r = R_FORE[1] * S * 1.08;
-      fillPolys(ctx, capsules([[...add(el, sub(wr2, el), 0.78), ...wr2, r, r]], 0.0), c.accent);
-      ellipse(ctx, gc, gax, gang, c.glove);
-      const d = unit(sub(j[`${s}_hand`], wr2));
-      let n = [-d[1], d[0]];
-      const sd = s === "l" ? -1.0 : 1.0;
-      if (n[0] * sd > 0) n = [-n[0], -n[1]];
-      const tc = add(add(gc, n, 0.12 * S), d, -0.02 * S);
-      disc(ctx, tc, 0.055 * S + iw, ink);
-      disc(ctx, tc, 0.055 * S, c.glove);
+    // 8. arms in front, the nearer one last
+    for (const s of g.frontFirst) if (!g.behind.includes(s)) this._paintArm(ctx, g, arms, s);
+  }
+
+  /** Fur forearm, sleeve with a cuff, wristband, white glove with a thumb. */
+  _paintArm(ctx, g, arms, s) {
+    const c = this.c, S = this.S, iw = this.inkW, ink = c.ink, j = g.j;
+    const idx = s === "l" ? 0 : 1;
+    const upper = arms[idx], fore = arms[idx + 2];
+    const [gc, gax, gang, d] = this._glove(g, s);
+    fillPolys(ctx, capsules([upper, fore], iw), ink);
+    ellipse(ctx, gc, [gax[0] + iw, gax[1] + iw], gang, ink);
+    this._caps(ctx, [fore], "fur");
+    this._caps(ctx, [upper], "top");
+    const el = j[`${s}_elbow`], wr = j[`${s}_wrist`];
+    const r = R_FORE[1] * S * 1.08 * g.armScale[s][1];
+    fillPolys(ctx, capsules([[...add(el, sub(wr, el), 0.78), ...wr, r, r]], 0.0), c.accent);
+    this._ell(ctx, gc, gax, gang, "glove");
+    let n = [-d[1], d[0]];
+    const sd = s === "l" ? -1.0 : 1.0;
+    if (n[0] * sd > 0) n = [-n[0], -n[1]];
+    const k = g.armScale[s][2];
+    const tc = add(add(gc, n, 0.12 * S * k), d, -0.02 * S);
+    disc(ctx, tc, 0.055 * S * k + iw, ink);
+    disc(ctx, tc, 0.055 * S * k, c.glove);
+    if (this.shade) {
+      const kk = SHADE_K * Math.min(gax[0], gax[1]);
+      ellipse(ctx, add(gc, LIGHT, kk), [gax[0] * 0.92 - kk, gax[1] * 0.86 - kk], gang, c.glove);
+    } else {
       ellipse(ctx, gc, [gax[0] * 0.92, gax[1] * 0.86], gang, c.glove);
-    });
+    }
   }
 }
 
@@ -889,12 +1118,18 @@ export class DanceRenderer {
 
     const painter = this._painterFor(song);
     const bow = this._bow(phase, song, songTime);
-    let pose = game.coachPose;
+    let motion;
     if (over) { // the coach grooves in its spotlight while the results count up
       beat = (Number(game.resultsT) || 0) * 2.0;
-      pose = idleGroove(beat);
+      motion = coachMotion(null, beat, { energy: 0.5 });
+    } else if (song?._frames) {
+      // The performance on top of the chart's timeline (motion.js): the same
+      // keyframes as game.coachPose, hit on the same beats.
+      motion = coachMotion(song, beat);
+    } else {
+      motion = stillMotion(game.coachPose ?? REST);
     }
-    const geo = painter.layout(pose, { bow, beat });
+    const geo = painter.layout(null, { bow, beat, motion });
     const energy = this._energy(song, beat, phase);
     this._drawLights(ctx, game, geo, beat, energy, phase);
     lap("lights");

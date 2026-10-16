@@ -46,6 +46,8 @@ class DanceArt:
     head_rim: np.ndarray  # BGRA white: a rim around the head's silhouette
     words: dict[str, np.ndarray]  # rating and banner words (RATINGS + WORDS), BGRA
     manifest: dict = field(default_factory=dict)
+    # The head turned and shaded: [(yaw degrees, head BGRA, rim BGRA white)], or empty (stub art).
+    head_turns: list = field(default_factory=list)
 
     def outfit(self, name: str | None) -> dict[str, tuple[int, int, int]]:
         outfits = self.manifest.get("outfits", {})
@@ -97,8 +99,22 @@ def load_art(*, reload: bool = False) -> DanceArt:
         head_rim=_read("coach_head_rim.png"),
         words={k: _read(f"word_{k}.png") for k in RATINGS + WORDS},
         manifest=spec,
+        head_turns=_head_turns(spec),
     )
     return _cache
+
+
+def _head_turns(spec: dict) -> list:
+    """Split coach_head_turns.png (one square frame per yaw in the manifest)."""
+    yaws = spec.get("head", {}).get("turns") or []
+    if not yaws:
+        return []
+    strip, rims = _read("coach_head_turns.png"), _read("coach_head_turns_rim.png")
+    n = strip.shape[0]
+    if strip.shape[1] != n * len(yaws) or rims.shape != strip.shape:
+        raise AssetsMissingError("coach_head_turns.png doesn't match the manifest. Run:\n"
+                                 "  uv run python tools/generate_dance_assets.py")
+    return [(float(y), strip[:, i * n:(i + 1) * n], rims[:, i * n:(i + 1) * n]) for i, y in enumerate(yaws)]
 
 
 def stub_art() -> DanceArt:

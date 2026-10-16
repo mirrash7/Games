@@ -9,7 +9,7 @@
 // Nothing here touches the DOM until loadArt() is called, so game.js can
 // import it under Node.
 
-import { loadImage, loadJSON } from "../../core/gfx.js";
+import { loadImage, loadJSON, makeCanvas } from "../../core/gfx.js";
 
 export const ASSET_URL = new URL("../../../assets/dance/generated/", import.meta.url);
 export const RATINGS = ["perfect", "super", "good", "ok", "x"];
@@ -27,14 +27,17 @@ const IMAGES = {
 };
 
 /**
- * DanceArt: the images above, `words` (rating and banner words), and the
- * manifest with RGB colours. `outfit(name)` and `ratingColour(key)` as in art.py.
+ * DanceArt: the images above, `words` (rating and banner words), the manifest
+ * with RGB colours, and `headTurns` ([{yaw, head, rim}]: the head turned and
+ * shaded, from coach_head_turns.png; empty without it). `outfit(name)` and
+ * `ratingColour(key)` as in art.py.
  */
 export class DanceArt {
-  constructor(images, words, manifest) {
+  constructor(images, words, manifest, headTurns = []) {
     Object.assign(this, images);
     this.words = words;
     this.manifest = toRgb(manifest);
+    this.headTurns = headTurns;
   }
 
   outfit(name) {
@@ -83,8 +86,14 @@ export async function loadArt({ reload = false } = {}) {
       Promise.all(names.map((k) => img(IMAGES[k]))),
       Promise.all(wordNames.map((k) => img(`word_${k}.png`))),
     ]);
+    const yaws = spec.head?.turns ?? [];
+    let headTurns = [];
+    if (yaws.length) {
+      const [strip, rims] = await Promise.all([img("coach_head_turns.png"), img("coach_head_turns_rim.png")]);
+      headTurns = yaws.map((yaw, i) => ({ yaw, head: frameOf(strip, i), rim: frameOf(rims, i) }));
+    }
     cache = new DanceArt(Object.fromEntries(names.map((k, i) => [k, imgs[i]])),
-      Object.fromEntries(wordNames.map((k, i) => [k, words[i]])), spec);
+      Object.fromEntries(wordNames.map((k, i) => [k, words[i]])), spec, headTurns);
     return cache;
   })();
   try {
@@ -92,6 +101,14 @@ export async function loadArt({ reload = false } = {}) {
   } finally {
     pending = null;
   }
+}
+
+/** Frame `i` of a strip of square frames, on its own canvas. */
+function frameOf(strip, i) {
+  const n = strip.height;
+  const c = makeCanvas(n, n);
+  c.getContext("2d").drawImage(strip, i * n, 0, n, n, 0, 0, n, n);
+  return c;
 }
 
 /** Placeholder art with the right shapes and manifest keys, for Node tests (no pixels). */

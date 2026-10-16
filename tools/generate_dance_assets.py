@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 from pathlib import Path
 
 import cv2
@@ -660,12 +661,87 @@ def make_head(scene) -> tuple[np.ndarray, np.ndarray]:
     out[..., :3] = head[..., :3] * (1 - a) + phones[..., :3] * a
     out[..., 3:4] = np.maximum(head[..., 3:4], phones[..., 3:4])
     # Drop the sticker's soft dark halo: the renderer draws a neon rim there.
+    out, rim = _head_rim(out)
+    return _to_u8(out, dither=0.0), _to_u8(_white(rim), dither=0.0)
+
+
+def _head_rim(out: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Drop the sticker's soft halo (alpha below the solid head) and return the
+    white rim (0..1) the renderer tints around the silhouette."""
     solid = (out[..., 3] / 255.0)
     solid_mask = (solid > 0.6).astype(np.float32)
     rim = np.clip(_ring(solid_mask, 4.5) - solid_mask, 0, 1)
     rim = np.maximum(rim, _blur(_ring(solid_mask, 7.0), 2.0) * 0.5 * (1 - solid_mask))
+    out = out.copy()
     out[..., 3] = np.where(solid > 0.6, out[..., 3], np.where(out[..., 3] > 120, out[..., 3], 0))
-    return _to_u8(out, dither=0.0), _to_u8(_white(rim), dither=0.0)
+    return out, rim
+
+
+# Head turns (degrees of yaw, + = the face turns to screen-right). The
+# renderer picks the nearest one as the coach twists (docs/DANCE.md 4a).
+HEAD_YAWS = (-20, -10, 0, 10, 20)
+HEAD_TURN_SHIFT = 0.6  # interior shift, as a fraction of sin(yaw) times the face's half width
+HEAD_LIGHT = (-0.55, -0.83)  # key light from the upper left (unit vector, y down)
+
+
+def _turn_head(head: np.ndarray, yaw: float) -> np.ndarray:
+    """Turn the head about its vertical axis: the features slide towards the
+    turn and bunch up on that side, the far side opens up, and the silhouette
+    (ears, cups, outline) stays nearly put. A cylinder-ish remap that keeps the
+    face's edge columns fixed (x_src = x - s R (1 - u^2), monotonic for s < 0.5)."""
+    if yaw == 0:
+        return head.copy()
+    n = head.shape[0]
+    cx, half = 0.5 * n, 0.335 * n
+    s = HEAD_TURN_SHIFT * math.sin(math.radians(yaw))
+    xs = np.arange(n, dtype=np.float32) + 0.5
+    u = (xs - cx) / half
+    src = np.where(np.abs(u) < 1.0, xs - s * half * (1.0 - u * u), xs) - 0.5
+    mapx = np.repeat(src[None, :], n, axis=0).astype(np.float32)
+    mapy = np.repeat((np.arange(n, dtype=np.float32))[:, None], n, axis=1)
+    pm = head.astype(np.float32).copy()
+    pm[..., :3] *= pm[..., 3:4] / 255.0
+    pm = cv2.remap(pm, mapx, mapy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+    a = np.maximum(pm[..., 3:4], 1e-3)
+    pm[..., :3] = np.where(pm[..., 3:4] > 0.01, pm[..., :3] * 255.0 / a, 0)
+    return pm
+
+
+def _shade_head(head: np.ndarray) -> np.ndarray:
+    """Bake the coach's key light into the head: a soft core shadow hugging the
+    lower-right of the silhouette and a highlight on the upper left, so the
+    head reads as a volume like the shaded body (render.py)."""
+    n = head.shape[0]
+    solid = (head[..., 3] > 150).astype(np.float32)
+    inside = _inside_dist(solid)
+    cx, cy, r = 0.5 * n, 0.565 * n, 0.36 * n
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32) + 0.5
+    t = -((xs - cx) * HEAD_LIGHT[0] + (ys - cy) * HEAD_LIGHT[1]) / r  # +1 away from the light
+    edge = np.clip(1.0 - inside / (0.32 * r), 0.0, 1.0)
+    core = _smooth((t - 0.05) / 0.8) * (0.45 + 0.55 * edge) * solid
+    core = _blur(core, 2.0)
+    hi = _smooth((-t - 0.45) / 0.45) * np.clip(1.0 - np.abs(inside - 0.09 * r) / (0.07 * r), 0, 1) * solid
+    hi = _blur(hi, 1.5)
+    out = head.copy()
+    ambient = np.asarray(rgb(70, 30, 120), np.float32)
+    rgbf = out[..., :3]
+    rgbf = rgbf * (1.0 - 0.34 * core[..., None]) + ambient * (0.10 * core[..., None])
+    rgbf = rgbf + (255.0 - rgbf) * (0.22 * hi[..., None])
+    out[..., :3] = rgbf
+    return out
+
+
+def make_head_turns(head_u8: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The head (make_head's) at each of HEAD_YAWS, shaded, side by side in one
+    strip (BGRA), and the matching strip of white rims."""
+    head = head_u8.astype(np.float32)
+    frames, rims = [], []
+    for yaw in HEAD_YAWS:
+        turned = _shade_head(_turn_head(head, yaw))
+        out, rim = _head_rim(turned)
+        frames.append(_to_u8(out, dither=0.0))
+        rims.append(_to_u8(_white(rim), dither=0.0))
+    return np.concatenate(frames, axis=1), np.concatenate(rims, axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +752,7 @@ def build() -> dict[str, np.ndarray]:
     scene = _load_scene()
     stage, trims = make_stage()
     head, rim = make_head(scene)
+    turns, turns_rim = make_head_turns(head)
     out = {
         "stage.png": stage,
         "glow_trims.png": trims,
@@ -692,6 +769,8 @@ def build() -> dict[str, np.ndarray]:
         "card_gold.png": make_card(True),
         "coach_head.png": head,
         "coach_head_rim.png": rim,
+        "coach_head_turns.png": turns,
+        "coach_head_turns_rim.png": turns_rim,
     }
     for i, (name, spec) in enumerate(RATINGS.items()):
         out[f"word_{name}.png"] = make_word(spec["text"], spec["colour"], RATING_CAP, stream=40 + i)
@@ -717,6 +796,9 @@ def manifest() -> dict:
             "centre": [0.5, 0.565],
             "chin": [0.5, 0.80],
             "face_width": 0.67,  # the head ellipse, as a fraction of the sprite width
+            # coach_head_turns.png: one HEAD_SIZE frame per yaw (degrees, + = turned to screen-right),
+            # shaded by the key light from the upper left.
+            "turns": list(HEAD_YAWS),
         },
         "outfits": {k: {n: as_list(c) for n, c in v.items()} for k, v in OUTFITS.items()},
         "ratings": {k: {"text": v["text"], "colour": as_list(v["colour"]), "sprite": f"word_{k}.png"}

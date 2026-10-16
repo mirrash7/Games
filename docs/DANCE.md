@@ -33,6 +33,7 @@ src/kpapp/game/dance/
   pose.py        pose angles, forward kinematics, measuring a player, similarity  (core)
   chart.py       load/validate songs and moves, beat <-> time, judge timeline      (core)
   judge.py       timing windows, ratings, score, stars
+  motion.py      the drawn coach's performance: eased hits, groove, follow-through, depth (section 4a)
   game.py        DanceGame: phases, audio sync, judging, juice state
   render.py      DanceRenderer: stage, coach, pictograms, feedback, HUD, results
   art.py         asset loader (lazy, cached, "run the generator" message)
@@ -163,6 +164,56 @@ renderer and pictograms draw from this.
   other side (`chart.mirror_pose`: swap `la`/`ra` and `ll`/`rl`, negate
   `lean`, `head` and `shift`). Prefer authoring one side and declaring
   `"mirror_of": "x_r"`.
+
+## 4a. The coach's performance (`motion.py`) and its 3D look
+
+`Song.coach_pose(beat)` above is the *target* timeline: bots, tests and the
+parity fixture copy it, and it never changes for looks. The drawn coach
+dances `motion.coach_motion(song, beat)` on top of it, a pure function of the
+song's keyframes and the beat (no clock, no state):
+
+- **Hits:** each transition keeps the chart's timing (it starts `EASE_BEATS`
+  before the keyframe) but winds up a little the other way, arrives early with
+  a small overshoot (10% of the move, at most 8 degrees) and settles onto the
+  keyframe exactly on its beat. The upper arm leads, the forearm and legs
+  follow, so limbs swing in soft arcs.
+- **Groove**, scaled by section (chorus 1.0 ... outro 0.5): a dip on every beat
+  (knees bend, the torso squashes; it stretches on the off-beat), weight
+  shifting from foot to foot, alternate shoulder rolls, a 2-degree lean sway
+  that is zero on every beat, a torso twist, a head bob that lags the body.
+- **Follow-through** from lagged samples of the same timeline: the head tilt
+  trails the torso, the tail swings against the body, the gloves trail their
+  forearms (up to 30 degrees), and a move that changes both legs (a star jump)
+  hops and lands before its beat.
+- **Depth:** the chest turns towards an arm reaching across it (up to ~24
+  degrees); the head picks the nearest pre-rendered turn
+  (`coach_head_turns.png`, -20..20 degrees); the far arm of a big twist goes
+  behind the jacket, an arm crossing the body comes in front, nearer limbs are
+  drawn thicker and a forearm pointing at the viewer shorter with a bigger glove.
+
+**The guarantee:** on every judged beat a camera looking at the drawn coach
+reads the chart's pose. Arm angles in the torso frame are exact (everything
+else moves whole parts: shoulders, head, squash, twist); the dip's knee bend,
+the weight shift and the lean sway touch judged legs and lean by under 2
+degrees. `tests/test_dance_motion.py` measures the painter's own joints with
+the judge's `measure` on every judge point of every song and difficulty
+(limit 6 degrees; worst today 1.7, a leg on Neon Nights' knee lift).
+
+**Painting:** the stage coach is lit from the upper left. Each part is filled
+in its shadow colour (the base darkened, plus a little of the outfit's glow),
+then in its own colour shrunk and moved towards the light, leaving a
+core-shadow crescent on the lower right; limbs get a highlight streak, the
+jacket a sheen, and the jacket's hem and the head shade what is under them.
+The neon rim sits a little to the lower right (a back light), the belt sags
+round the waist, and a soft contact shadow under the feet shrinks during a
+hop. The lower foot is always planted. The head turns and their shading are
+baked by the generator. The pictogram cards and the tutorial's small coaches
+stay flat (`CoachPainter(shade=False)`): they are instructions.
+
+`web/js/games/dance/motion.js` is a port; `web/tests/fixtures/dance_motion.json`
+(`tools/make_dance_motion_fixture.py`) pins the motion and the painter's
+layout to the Python's, and `tests/test_dance_motion.py` checks the fixture is
+current.
 
 ## 5. Song chart (`songs/<id>/song.json`)
 
