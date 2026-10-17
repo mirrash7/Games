@@ -573,3 +573,26 @@ def test_one_letter_moves_get_a_letter_badge_on_their_card():
     assert np.array_equal(lettered.pre[top], plain.pre[top]), "and leaves the figure alone"
     pink = lettered.pre[int(round(h - 0.2 * w)), int(round(0.7 * w))][:3]  # in the disc, beside the letter
     assert np.abs(np.asarray(pink, float) - R.GLYPH_DISC).max() < 12, "hot pink (gold on gold cards)"
+
+
+def test_the_pip_skeleton_follows_the_keypoints():
+    """The picture-in-picture draws the player's keypoints where the model found
+    them. Rebuilding them from the measured angles with the coach's proportions
+    (thigh 0.85, shin 0.82 shoulder widths; a person's are ~1.1) drew the knees
+    and ankles far above the real ones (seen on a recorded session)."""
+    from kpapp.game.dance.pose import FULL_BODY, keypoints_for
+    from kpapp.game.dance.render import _draw_keypoints
+
+    pose = keypoints_for({}, **FULL_BODY)
+    # A real player's long legs: ankles 40% lower than the coach's proportions put them.
+    xy = pose.xy.copy()
+    for knee, ankle, hip in ((13, 15, 11), (14, 16, 12)):
+        xy[knee] = xy[hip] + (xy[knee] - xy[hip]) * 1.3
+        xy[ankle] = xy[hip] + (xy[ankle] - xy[hip]) * 1.3
+    pose.xy[:] = xy
+    k = 384 / 1280
+    img = np.zeros((216, 384, 3), np.uint8)
+    _draw_keypoints(img, pose, k, (0, 255, 0))
+    for i in (13, 14, 15, 16):
+        x, y = (xy[i] * k).round().astype(int)
+        assert img[max(0, y - 2):y + 3, max(0, x - 2):x + 3, 1].max() == 255, f"keypoint {i} is drawn where it is"

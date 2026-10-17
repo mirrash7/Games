@@ -1744,8 +1744,10 @@ class DanceRenderer:
         col = self.art.rating_colour(key) if key else (235, 235, 235)
         if key and col == (255, 255, 255):
             col = RATING_FALLBACK[key]
-        m = getattr(game, "player", None)
-        if m is not None:
+        pose, m = getattr(game, "player_pose", None), getattr(game, "player", None)
+        if pose is not None:
+            _draw_keypoints(pip, pose, (x1 - x0) / self.width, col)
+        elif m is not None:
             _draw_measured(pip, m, (x1 - x0) / self.width, col)
         roi = frame[y0:y1, x0:x1]
         np.copyto(roi, pip, where=self._pip_mask)
@@ -1843,8 +1845,37 @@ def _now() -> float:
     return time.perf_counter()
 
 
+# COCO bones drawn in the picture-in-picture: shoulders, arms, torso sides, hips, legs.
+PIP_BONES = ((5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12),
+             (11, 13), (13, 15), (12, 14), (14, 16))
+
+
+def _draw_keypoints(img, pose, k: float, colour, min_conf: float = 0.5) -> None:
+    """The player's keypoints where the model found them, scaled by k into the PiP.
+    Drawing the measured angles with the coach's proportions (_draw_measured)
+    put a real player's knees and ankles far too high: a person's thigh and shin
+    are each ~1.1 shoulder widths, the coach's 0.85 and 0.82."""
+    xy, ok = np.asarray(pose.xy, np.float64), np.asarray(pose.confidence) >= min_conf
+
+    def P(i):
+        return (int(round(xy[i][0] * k * ONE)), int(round(xy[i][1] * k * ONE)))
+
+    bones = [(a, b) for a, b in PIP_BONES if ok[a] and ok[b]]
+    for width, col in ((6, (24, 16, 20)), (3, colour)):
+        for a, b in bones:
+            cv2.line(img, P(a), P(b), col, width, cv2.LINE_AA, SHIFT)
+    face = [i for i in range(5) if ok[i]]
+    if face and ok[5] and ok[6]:
+        cx, cy = xy[face].mean(axis=0)
+        hr = int(round(0.3 * float(np.hypot(*(xy[5] - xy[6]))) * k * ONE))
+        c = (int(round(cx * k * ONE)), int(round(cy * k * ONE)))
+        cv2.circle(img, c, hr, (24, 16, 20), 4, cv2.LINE_AA, SHIFT)
+        cv2.circle(img, c, hr, colour, 2, cv2.LINE_AA, SHIFT)
+
+
 def _draw_measured(img, m, k: float, colour) -> None:
-    """The player as the judge measured them (pose.Measured), scaled by k into the PiP."""
+    """The player as the judge measured them (pose.Measured), scaled by k into the
+    PiP, with the coach's proportions: only when the keypoints aren't at hand."""
     from .pose import FOREARM, HIP_W, SHIN, THIGH, TORSO, UPPER_ARM, limb_dir
 
     sw = float(m.shoulder_px)

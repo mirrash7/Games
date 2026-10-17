@@ -258,6 +258,7 @@ export class DanceRaccoonGame extends Game {
     this.feedback = [];
     this.displayScore = 0.0;
     this.player = null; // the latest Measured (or null)
+    this.playerPose = null;
     this.notice = null;
     this.goldFlash = 0.0;
     this.scoreBump = 0.0; // 1 -> 0 after the score changes (HUD pulse)
@@ -388,6 +389,7 @@ export class DanceRaccoonGame extends Game {
 
     const pose = controls?.pose ?? null;
     this.player = measure(pose, this.mirrored);
+    this.playerPose = pose; // the keypoints themselves, for the picture-in-picture
     const seen = this.player != null && this.player.seesArms;
 
     if (this.phase !== Phase.GAME_OVER && this._started) {

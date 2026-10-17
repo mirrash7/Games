@@ -180,6 +180,7 @@ class DanceGame(Game):
         self.feedback: list[Feedback] = []
         self.display_score = 0.0
         self.player: Measured | None = None
+        self.player_pose = None
         self.notice: str | None = None
         self.gold_flash = 0.0
         self.score_bump = 0.0  # 1 -> 0 after the score changes (HUD pulse)
@@ -309,6 +310,7 @@ class DanceGame(Game):
 
         pose = getattr(controls, "pose", None) if controls is not None else None
         self.player = measure(pose, self.mirrored)
+        self.player_pose = pose  # the keypoints themselves, for the picture-in-picture
         seen = self.player is not None and self.player.sees_arms
 
         if self.phase is not Phase.GAME_OVER:

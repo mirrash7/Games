@@ -1625,7 +1625,8 @@ export class DanceRenderer {
     roundRect(ctx, x0, y0, x1, y1, PIP_RADIUS);
     ctx.clip();
     ctx.drawImage(frame, x0, y0, x1 - x0, y1 - y0);
-    if (game.player) drawMeasured(ctx, game.player, (x1 - x0) / this.width, [x0, y0], col);
+    if (game.playerPose) drawKeypoints(ctx, game.playerPose, (x1 - x0) / this.width, [x0, y0], col);
+    else if (game.player) drawMeasured(ctx, game.player, (x1 - x0) / this.width, [x0, y0], col);
     ctx.restore();
     ctx.save();
     ctx.beginPath();
@@ -1709,6 +1710,46 @@ export class DanceRenderer {
 }
 
 /** The player as the judge measured them (pose.Measured), scaled by k into the PiP at `org`. */
+// COCO bones drawn in the picture-in-picture: shoulders, arms, torso sides, hips, legs.
+const PIP_BONES = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12],
+  [11, 13], [13, 15], [12, 14], [14, 16]];
+
+/**
+ * The player's keypoints where the model found them, scaled by k into the PiP.
+ * Drawing the measured angles with the coach's proportions (drawMeasured) put a
+ * real player's knees and ankles far too high: a person's thigh and shin are
+ * each ~1.1 shoulder widths, the coach's 0.85 and 0.82.
+ */
+function drawKeypoints(ctx, pose, k, org, colour, minConf = 0.5) {
+  const ok = (i) => pose.confidence[i] >= minConf;
+  const P = (i) => [org[0] + pose.xy[2 * i] * k, org[1] + pose.xy[2 * i + 1] * k];
+  const bones = PIP_BONES.filter(([a, b]) => ok(a) && ok(b));
+  ctx.lineCap = "round";
+  for (const [colourNow, width] of [[bgr([24, 16, 20]), 6], [colour, 3]]) {
+    ctx.strokeStyle = css(colourNow);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (const [a, b] of bones) {
+      ctx.moveTo(...P(a));
+      ctx.lineTo(...P(b));
+    }
+    ctx.stroke();
+  }
+  const face = [0, 1, 2, 3, 4].filter(ok);
+  if (!face.length || !ok(5) || !ok(6)) return;
+  const cx = face.reduce((s, i) => s + pose.xy[2 * i], 0) / face.length;
+  const cy = face.reduce((s, i) => s + pose.xy[2 * i + 1], 0) / face.length;
+  const hr = 0.3 * Math.hypot(pose.xy[10] - pose.xy[12], pose.xy[11] - pose.xy[13]) * k;
+  for (const [colourNow, width] of [[bgr([24, 16, 20]), 4], [colour, 2]]) {
+    ctx.strokeStyle = css(colourNow);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.arc(org[0] + cx * k, org[1] + cy * k, hr, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+}
+
+/** The player as the judge measured them, with the coach's proportions: only when the keypoints aren't at hand. */
 function drawMeasured(ctx, m, k, org, colour) {
   const sw = Number(m.shoulderPx);
   const lean = Number(m.lean) * RAD;
