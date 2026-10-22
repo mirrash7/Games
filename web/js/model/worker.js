@@ -4,7 +4,7 @@
 // Messages in:  {type: "init", model: ArrayBuffer, eps: ["webgpu", "wasm"], resolution, width, height}
 //               {type: "infer", pixels: ArrayBuffer (RGBA, resolution^2), t0, seq, threshold?}
 // Messages out: {type: "ready", ep, adapter, warmupMs, threads}
-//               {type: "poses", poses: [{xy, conf, score, box}], t0, seq, inferMs}
+//               {type: "poses", poses: [{xy, conf, score, box}], t0, seq, inferMs, decodeMs}
 //               {type: "error", message}
 
 // Pinned: 1.22 compiled RF-DETR's GridSample to an invalid WebGPU pipeline and
@@ -22,7 +22,7 @@ let input = null;
 let size = 336;
 let frameW = 1280;
 let frameH = 720;
-let maxPeople = 1;
+let maxPeople = 8; // everyone in view; core/player.js picks the main player
 
 self.onmessage = async (e) => {
   const msg = e.data;
@@ -46,7 +46,7 @@ async function webgpuAdapter() {
   }
 }
 
-async function init({ model, eps = ["webgpu", "wasm"], resolution = 336, width = 1280, height = 720, people = 1 }) {
+async function init({ model, eps = ["webgpu", "wasm"], resolution = 336, width = 1280, height = 720, people = 8 }) {
   size = resolution;
   frameW = width;
   frameH = height;
@@ -122,7 +122,9 @@ async function infer({ pixels, t0, seq, threshold = 0.5 }) {
   }
   const t = performance.now();
   const raw = await run();
+  const td = performance.now();
   const poses = decodePoses(raw, frameW, frameH, threshold).slice(0, maxPeople);
+  const decodeMs = performance.now() - td;
   const inferMs = performance.now() - t;
-  self.postMessage({ type: "poses", poses, t0, seq, inferMs }, poses.flatMap((p) => [p.xy.buffer, p.conf.buffer]));
+  self.postMessage({ type: "poses", poses, t0, seq, inferMs, decodeMs }, poses.flatMap((p) => [p.xy.buffer, p.conf.buffer]));
 }

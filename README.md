@@ -196,7 +196,7 @@ uv run kp game --synthetic --headless --duration 12
 ### Useful flags
 
 `--resolution 504` (multiples of 24 only) · `--threshold 0.5` ·
-`--device mps|cpu` · `--no-compile` · `--max-people 3` · `--smoothing 0.3` (extra keypoint smoothing, off by default) ·
+`--device mps|cpu` · `--no-compile` · `--max-people 8` (detections kept; the default, see below) · `--smoothing 0.3` (extra keypoint smoothing, off by default) ·
 `--extrapolation 0` (disable velocity projection) ·
 `--infer-every 3` (cap model rate; only bites below ~22 FPS) · `--camera 1` · `--no-mirror`
 
@@ -578,3 +578,12 @@ and refusal to fling a reappearing keypoint.
 - `--half` is exposed but fp16 support on MPS is uneven; fp32 is the default.
 - Crowded, far-away subjects detect poorly; a single close subject is the
   intended case here.
+- **Busy venues:** everyone in view is detected, and a player lock
+  (`src/kpapp/player.py`, browser `web/js/core/player.js`) gives the games
+  only the main player: the biggest, most central person who isn't walking
+  past. It follows them through passers-by in front and behind, holds through
+  occlusions of up to 1.2 s (the game sees nobody rather than a stranger),
+  lets go when they walk off, and hands over only to someone who stands still
+  in the middle, much nearer, for a second. Press `d` to see it (others faint,
+  the player tagged), `l` to pass the lock to the next person. It costs ~0.05
+  ms per result; the model costs the same however many people it reports.

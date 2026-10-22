@@ -95,7 +95,7 @@ web/
   js/config.js              site settings (the worldwide leaderboard server's URL)
   js/model/                 loader.js (chunks + cache), engine.js (main thread), worker.js (ORT)
   js/core/                  decode (rf-detr PostProcess), pose, hand, controls, extrapolate,
-                            random, theme, gfx
+                            player (PlayerLock), random, theme, gfx
   js/games/                 base.js (the Game interface), index.js (registry), snack/, flappy/,
                             dance/, golf/
   models/                   model chunks + manifests (the unsplit .onnx files are gitignored)
@@ -110,6 +110,15 @@ Worker; the main thread sends the newest frame, 336x336 RGBA, whenever the
 worker is free, and projects poses to the current time with the same
 `PoseExtrapolator` as the desktop app.
 
+The worker keeps up to 8 detections per frame (`?people=N` changes it), and
+`core/player.js` (`PlayerLock`, a port of `src/kpapp/player.py` checked by
+`web/tests/player.test.mjs` against `tools/make_player_parity_fixture.py`)
+picks the main player out of them before the extrapolator, so passers-by at a
+busy venue never get the game. Detecting everyone costs nothing measurable:
+on the crowd photo (WebGPU fp16, Apple M-series) 25.7 poses/s keeping 1 vs 26.1
+keeping 8, decode 0.19 vs 0.16 ms (the decoder scores all 100 queries either
+way), and the lock itself 0.02-0.03 ms per result.
+
 ## Develop
 
 ```bash
@@ -120,7 +129,11 @@ cd web && node --test tests/*.test.mjs     # or: uv run --with pytest pytest tes
 Open `http://localhost:8765/` for the landing page and `http://localhost:8765/arcade/`
 for the arcade. The arcade's URL options:
 
-- `?debug=1` shows the skeleton and the timings (or press D).
+- `?debug=1` shows the skeleton and the timings (or press D): everyone detected,
+  others faint and the locked player in colour with a PLAYER tag (HOLDING while
+  they are hidden). L passes the lock to the next most likely person.
+- `?people=1` keeps only the top-scoring detection (the lock then has no choice),
+  for A/B timing.
 - `?game=snack`, `?game=flappy`, `?game=dance` or `?game=golf` opens that game once the
   player has started the camera.
 - `?source=../dev/people-walking.jpg` uses an image or video in place of the

@@ -27,7 +27,9 @@ export class RateMeter {
 }
 
 export class PoseEngine {
-  constructor({ resolution = 336, width = 1280, height = 720, people = 1 } = {}) {
+  // people: detections kept per frame. Everyone in view is detected so
+  // PlayerLock (core/player.js) can follow the main player through a crowd.
+  constructor({ resolution = 336, width = 1280, height = 720, people = 8 } = {}) {
     this.resolution = resolution;
     this.width = width;
     this.height = height;
@@ -43,6 +45,7 @@ export class PoseEngine {
     this._small.width = this._small.height = resolution;
     this._sctx = this._small.getContext("2d", { willReadFrequently: true });
     this.error = null;
+    this.decodeMs = 0; // decoding + keeping the top `people`, in the worker
     this.onResult = null; // called when the worker becomes free again
   }
 
@@ -88,6 +91,7 @@ export class PoseEngine {
       this.busy = false;
       const now = performance.now() / 1000;
       this.meter.tick(now, m.inferMs);
+      this.decodeMs = m.decodeMs ?? 0;
       this.latest = { poses: m.poses.map((p) => Pose.fromObject(p)), t0: m.t0, seq: m.seq };
       this.error = null;
       this.onResult?.();

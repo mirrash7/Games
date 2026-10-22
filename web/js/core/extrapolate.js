@@ -65,6 +65,16 @@ export class PoseExtrapolator {
     this.held = arrived == null ? poses : this.posesAt(arrived);
   }
 
+  /**
+   * Drop the motion history: the next result belongs to someone else
+   * (PlayerLock handed the game to another person), and a velocity measured
+   * between two different people would fling the skeleton across the frame.
+   */
+  forget() {
+    this._vel.clear();
+    this._prev.clear();
+  }
+
   /** Poses projected to time `now` (s, same clock as the timestamps). */
   posesAt(now) {
     if (this.gain <= 0 || !this._poses.length || this._prevT === null) {

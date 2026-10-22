@@ -39,6 +39,7 @@ camera thread ──newest frame──► inference worker (RF-DETR, 15-30 Hz)
      │                                   │ Result(poses, timestamp)
      │                                   ▼
      └──────────► render loop, own 60 Hz clock (app.py:_run_loop)
+                    PlayerLock        → the main player out of everyone detected
                     PoseExtrapolator  → poses projected to *now*
                     ControlMapper     → ControlState (signals + raw pose)
                     Shell.update/render → your Game.update / Game.render
@@ -48,6 +49,12 @@ camera thread ──newest frame──► inference worker (RF-DETR, 15-30 Hz)
 - The **render loop never waits on the camera or the model**. A stalled camera
   or slow inference must not freeze the game; poses update at 15-30 Hz while
   your game runs at 60 Hz.
+- **Everyone in view is detected** (`Config.max_people = 8`; the model costs the
+  same per frame however many people it reports), and `PlayerLock` (`player.py`,
+  JS `core/player.js`) hands the games **one identity**: the main player, held
+  through passers-by and short occlusions. Games never see anyone else. The
+  debug view (`d` / `?debug=1`) draws others faint and the player with a
+  PLAYER tag; `l` passes the lock to the next most likely person. See §6.
 - `PoseExtrapolator` (velocity projection, gain 0.7) runs before your game
   sees the pose. Motion therefore arrives in **steps**: a few near-identical
   frames, then a jump. See §6.
@@ -69,6 +76,7 @@ src/kpapp/
   app.py         CLI, camera selection, the 60 Hz render loop, recording hooks
   camera.py      threaded capture, health checks, choose-by-name, probe
   inference.py   RF-DETR wrapper -> Pose; PoseSmoother (off by default); PoseExtrapolator
+  player.py      PlayerLock: picks and follows the main player through a crowd
   pipeline.py    inference worker thread
   controls.py    Pose -> ControlState (steer, throttle, gestures, raw pose)
   hand.py        HandTracker: stable palm cursor (use this for any pointing)
@@ -153,6 +161,7 @@ Reusable primitives (prefer these over hand-rolled keypoint logic):
 | arm-flap (wing-beat) events | `game.flappy.gesture.FlapDetector` | one event per downstroke, hysteresis + refractory |
 | match a whole-body shape | `game.holeinwall.matching.evaluate` + `HoleCache` | torso-normalised, joint + silhouette blend |
 | smoothing any 2D signal | `hand.OneEuroFilter` | low jitter when slow, low lag when fast |
+| who is playing (already applied) | `player.PlayerLock` | `controls.pose` is only ever the locked player; `most_likely_player` for one-off frames (dance import) |
 | hover-to-press buttons | `shell.Dwell` | blocks firing until the hand leaves after a screen change |
 | "does the player match this pose?" | `game.dance.pose.measure` + `similarity` | torso-frame limb angles, mirror-aware, reach-only when elbows are missing |
 | music with a clock | `audio.open_player(path)` | `position()` is what was heard; SilentPlayer in tests/headless |
@@ -189,6 +198,24 @@ Use your own clock (sum of clamped `dt`) for timestamps you pass to these.
 - **Teleports happen:** a tracking glitch can jump a keypoint across the
   screen. Treat implausible jumps (> ~35% of the width between samples) as
   "lost, then found", not as motion.
+- **Crowds: the top-scoring detection is often not the player.** Passers-by
+  nearer the camera score higher; in the synthetic booth crowd of
+  `tests/test_player.py` the top score was someone else in >30% of results.
+  `PlayerLock` tracks everyone (torso anchor normalised by each person's size,
+  size ratio 0.8-1.25x between sightings, box IoU, time unseen), so a passer
+  keeps their own identity while crossing in front of or behind the player.
+  Facts it is built on: anyone who can hide the player is nearer, so bigger;
+  a torso can move ~7 SW/s but cannot jump 0.8 SW in 33 ms (gate 0.35 SW +
+  6 SW/s unseen); walkers drift 3-4 SW per second while players, even
+  dancers, stay within a step (net movement over 1 s); DETR sometimes reports
+  one person twice (drop boxes with IoU >= 0.8). It holds an unseen player
+  for 1.2 s (0.3 s at a side edge) with no pose rather than switch, releases
+  a player seen walking off, and only hands over to someone still, central
+  and much bigger (or when the lock is off to the side) after 1 s. Remaining
+  hard case: someone at the *same* distance walking right through the
+  player's spot while the player is hidden can take the lock for up to a
+  second (it lets go once they walk on). Two similar people side by side at
+  the start: the more central one wins; `l` to switch.
 - **Never punish tracking loss.** If you can't see the player, say what to
   fix on screen ("STEP BACK — HIPS MUST BE IN FRAME") and don't take a life.
 - Feeding the model RGB vs BGR made no measurable difference; it's RGB now,
@@ -378,8 +405,8 @@ re-run the model on offline. Analyse these before tuning anything.
 - Ideas the platform already supports: dodge games (`steer` / torso lean),
   rhythm games (`hands_up` / `arms_out` on beat), boxing (swept-segment punches
   via `Blade` on both hands), drawing (palm cursor + trail), two-player
-  (`--max-people 2`; you'd need identity tracking, because pose order is by
-  score and can swap between frames).
+  (everyone is detected and `PlayerLock` already tracks identities; a second
+  lock would pick a second player).
 - **Website:** the browser build in `web/` (GitHub Pages) runs the same model
   with onnxruntime-web and a JavaScript port of the runtime, shell and all four
   games. See §11 and `docs/WEB_HOSTING.md`.
@@ -399,12 +426,14 @@ measurements and deployment are in `docs/WEB_HOSTING.md`. In short:
   `shader-f16`, else fp32 on WebGPU, else fp32 on the CPU (WASM, ~6 updates/s).
   `web/js/core/decode.js` is a tested port of rf-detr's PostProcess.
 - **The Python code is the reference; the JS is a port.** Module for module:
-  `core/hand.js`, `core/controls.js`, `core/extrapolate.js`, `shell.js`,
+  `core/hand.js`, `core/controls.js`, `core/extrapolate.js`, `core/player.js`, `shell.js`,
   `games/snack/*` (fruitninja), `games/flappy/*` (incl. `gesture.js`), `games/dance/*`,
   `games/golf/*` (swing, physics, course, game, render, art, tutorial). A behaviour
   change goes into both, with tests in `tests/` and `web/tests/`.
 - **Parity fixtures** pin the ports that must agree to the number: the Python writes
-  what it computes on fixed inputs, the JS replays it. Dance:
+  what it computes on fixed inputs, the JS replays it. PlayerLock:
+  `tools/make_player_parity_fixture.py` (synthetic crowds from `tests/crowd_poses.py`,
+  every decision per result; `tests/test_player_parity.py` fails when stale). Dance:
   `tools/make_dance_parity_fixture.py`; golf: `tools/make_golf_parity_fixture.py`
   (swing streams frame by frame, ~100 physics shots, lies, aim, whole scripted holes;
   `tests/test_golf_parity.py` fails when it is stale). Python's `random.Random` can't be

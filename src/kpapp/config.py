@@ -40,7 +40,10 @@ class Config:
     # the inference lag without overshooting on direction changes.
     extrapolation: float = 0.7
     max_lead: float = 0.12  # seconds; ceiling on how far poses may be projected
-    max_people: int = 1  # only track the N highest-scoring poses
+    # Detections kept per frame (highest scores first). Everyone in view is
+    # detected so PlayerLock (player.py) can follow the main player through a
+    # crowd; the model's cost is per frame, not per person.
+    max_people: int = 8
 
     verbose: bool = False  # show library logs during model setup
 

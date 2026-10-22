@@ -297,6 +297,14 @@ class PoseExtrapolator:
                 del self._vel[slot]
         self.held = self.poses_at(arrived) if arrived is not None else list(result.poses)
 
+    def forget(self) -> None:
+        """Drop the motion history: the next result belongs to someone else
+        (PlayerLock handed the game to another person), and a velocity measured
+        between two different people would fling the skeleton across the frame."""
+        self._vel.clear()
+        self._prev_xy.clear()
+        self._prev_conf.clear()
+
     def poses_at(self, now: float) -> list[Pose]:
         """Poses projected to wall-clock time `now`."""
         result = self._result

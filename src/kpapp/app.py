@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -20,8 +21,9 @@ from .config import Config
 from .controls import ControlMapper
 from .game import REGISTRY
 from .inference import KeypointDetector, PoseExtrapolator
-from .overlay import draw_banner, draw_box, draw_hud, draw_pose
+from .overlay import draw_banner, draw_hud, draw_lock, draw_pose
 from .pipeline import InferenceWorker, RateMeter
+from .player import PlayerLock, most_likely_player
 from .recorder import Recorder
 from .leaderboard import create_board
 from .shell import Screen, Shell
@@ -269,6 +271,9 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
     worker = InferenceWorker(camera, detector, cfg).start()
     mapper = ControlMapper(size)
     extrapolator = PoseExtrapolator(gain=cfg.extrapolation, max_lead=cfg.max_lead)
+    # Everyone in view is detected; the games see only the main player.
+    lock = PlayerLock(size)
+    select_ms = 0.0
     shell = None
     if use_shell:
         # Headless runs are benchmarks: there is no one to press start.
@@ -301,7 +306,7 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
         if shell is not None:
             print("[kp] arcade open - hover a game or press 1/2 to start; q quits")
         else:
-            print("[kp] running - q quit, s skeleton, d debug")
+            print("[kp] running - q quit, s skeleton, d debug, l lock the next person")
         cv2.namedWindow(cfg.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(cfg.window_name, size[0], size[1])
         if shell is not None:
@@ -325,10 +330,16 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
             now = time.perf_counter()
             dt, last_t = now - last_t, now
 
-            # Feed each result to the extrapolator exactly once, then ask for
-            # poses projected to *now* rather than to the frame the model saw.
+            # Each result once: PlayerLock picks the main player out of everyone
+            # detected, then the extrapolator follows that one identity, and
+            # poses are projected to *now* rather than to the frame the model saw.
             if result.timestamp != last_result_ts:
-                extrapolator.update(result, arrived=now)
+                t_sel = time.perf_counter()
+                player = lock.update(result.poses, result.timestamp)
+                select_ms = (time.perf_counter() - t_sel) * 1000.0
+                if lock.changed:
+                    extrapolator.forget()
+                extrapolator.update(replace(result, poses=[player] if player is not None else []), arrived=now)
                 last_result_ts = result.timestamp
             poses = extrapolator.poses_at(now)
             pose = poses[0] if poses else None
@@ -346,10 +357,8 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
             t_rendered = time.perf_counter()
             game = shell.game if shell is not None else None
 
-            if show_skeleton:
-                for p in poses:
-                    draw_box(canvas, p)
-                    draw_pose(canvas, p)
+            if show_skeleton or show_debug:
+                draw_lock(canvas, lock, pose)
 
             render_meter.tick()
             if show_debug:
@@ -361,7 +370,9 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
                     [
                         f"render {render_meter.fps:5.1f} FPS   infer {worker.meter.fps:5.1f} FPS",
                         f"model  {worker.meter.mean:5.1f} ms   pose age {age:2d} frames",
-                        f"lead   {extrapolator.last_lead_ms:5.1f} ms   people {len(poses)}",
+                        f"lead   {extrapolator.last_lead_ms:5.1f} ms   people {len(result.poses)}",
+                        f"lock   {lock.state} #{lock.player_id or '-'}   switches {lock.switches}"
+                        f"   select {select_ms:4.2f} ms   (L: next person)",
                     ],
                     origin="bottom-left" if shell is not None else "top-left",
                 )
@@ -402,6 +413,7 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
                     render_ms=(t_rendered - t_render) * 1000,
                     frame_ms=(time.perf_counter() - t_start) * 1000,
                     camera_age_ms=(time.monotonic() - camera.last_frame_time) * 1000,
+                    lock=lock, select_ms=select_ms,
                 ), event=event, raw=frame)
 
             if duration and time.perf_counter() - started >= duration:
@@ -432,6 +444,8 @@ def _run_loop(args: argparse.Namespace, game_name: str | None, use_shell: bool =
                 show_skeleton = not show_skeleton
             elif key == ord("d"):
                 show_debug = not show_debug
+            elif key == ord("l"):
+                lock.repick()  # the lock is on the wrong person: pass it on
             elif shell is not None:
                 # Esc steps back a screen; it only quits from the welcome screen.
                 if shell.handle_key(key):
@@ -521,9 +535,14 @@ def _metrics(game, pose, result, worker, render_meter, **timings) -> dict:
     from .config import KP
 
     screen = timings.pop("screen", None)
+    lock = timings.pop("lock", None)
     m = {k: round(v, 3) for k, v in timings.items()}
     if screen:
         m["screen"] = screen
+    if lock is not None:
+        m["locked"] = lock.state  # searching | locked | holding
+        m["player_id"] = lock.player_id
+        m["switches"] = lock.switches
     m["infer_ms"] = round(result.infer_ms, 2)
     m["render_fps"] = round(render_meter.fps, 1)
     m["infer_fps"] = round(worker.meter.fps, 1)
@@ -618,7 +637,7 @@ def _live_dance_samples(args: argparse.Namespace, cfg: Config, detector, song, e
             if t > end_time:
                 break
             result = detector.infer(frame)
-            pose = result.poses[0] if result.poses else None
+            pose = most_likely_player(result.poses, frame.shape[1])
             samples.append((t, pose))
             view = frame.copy()
             if pose is not None:
@@ -664,7 +683,7 @@ def cmd_dance_import(args: argparse.Namespace) -> int:
 
         def detect(frame):
             result = detector.infer(frame)
-            return result.poses[0] if result.poses else None
+            return most_likely_player(result.poses, frame.shape[1])
 
         def progress(i, n):
             print(f"\r[kp] analysing beat {i + 1}/{n}", end="", flush=True)

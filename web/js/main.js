@@ -9,15 +9,17 @@
 //
 // URL options: ?ep=wasm|webgpu (force a backend), ?game=snack|flappy|dance|golf (open that game once started),
 // ?source=<image or video url> (stand-in for the webcam), ?debug=1 (skeleton + stats),
-// ?leaderboard=<url> (a different leaderboard server, e.g. a local `wrangler dev`).
+// ?leaderboard=<url> (a different leaderboard server, e.g. a local `wrangler dev`),
+// ?people=N (detections kept per frame, default 8; PlayerLock picks the main player).
 
 import { Camera, FileSource } from "./camera.js";
 import { loadModel } from "./model/loader.js";
 import { PoseEngine } from "./model/engine.js";
 import { PoseExtrapolator } from "./core/extrapolate.js";
+import { PlayerLock } from "./core/player.js";
 import { ControlMapper } from "./core/controls.js";
 import { SKELETON } from "./core/pose.js";
-import { banner, text, panel, WARN, css } from "./core/theme.js";
+import { banner, text, panel, WARN, CYAN, css } from "./core/theme.js";
 import { Shell } from "./shell.js";
 import { GAMES as ALL_GAMES } from "./games/index.js";
 import { createBoard } from "./leaderboard.js";
@@ -115,7 +117,7 @@ let modelP = null;
 function beginModel() {
   if (!modelP) {
     ui.progress.hidden = false;
-    engine = new PoseEngine({ resolution: RESOLUTION, width: W, height: H });
+    engine = new PoseEngine({ resolution: RESOLUTION, width: W, height: H, people: Number(params.get("people")) || 8 });
     modelP = gpuP.then(startModel);
     modelP.then(
       (info) => setProgress(1, info.ep === "webgpu" ? "Pose model ready on your graphics card" : "Pose model ready on your CPU"),
@@ -219,6 +221,9 @@ const shell = new Shell({ width: W, height: H, games: GAMES, mirrored: true, sel
   board: createBoard(params.get("leaderboard") ? { url: params.get("leaderboard") } : LEADERBOARD) });
 if (SINGLE) shell.onHome = () => { location.href = SITE_HOME; }; // ALL GAMES on the game's title screen
 const extrapolator = new PoseExtrapolator({ gain: 0.7, maxLead: 0.12 });
+// Everyone in view is detected; the games see only the main player.
+const lock = new PlayerLock(W, H);
+let selectMs = 0;
 const mapper = new ControlMapper(W, H);
 let last = performance.now() / 1000;
 let lastSeq = 0;
@@ -241,9 +246,15 @@ function tick() {
   if (source.grab()) unsent = true;
   sendFrame();
 
+  // Each result once: PlayerLock picks the main player out of everyone
+  // detected, then the extrapolator follows that one identity.
   const latest = engine.latest;
   if (latest.seq !== lastSeq) {
-    extrapolator.update(latest.poses, latest.t0, now);
+    const ts = performance.now();
+    const player = lock.update(latest.poses, latest.t0);
+    selectMs = performance.now() - ts;
+    if (lock.changed) extrapolator.forget();
+    extrapolator.update(player ? [player] : [], latest.t0, now);
     lastSeq = latest.seq;
   }
   const poses = extrapolator.posesAt(now);
@@ -269,32 +280,66 @@ function tick() {
   requestAnimationFrame(tick);
 }
 
-function drawDebug(poses) {
+function drawSkeleton(p, faint) {
+  ctx.lineWidth = faint ? 1.5 : 3;
+  for (const [a, b, colour] of SKELETON) {
+    if (p.confidence[a] < 0.5 || p.confidence[b] < 0.5) continue;
+    ctx.strokeStyle = faint ? "rgba(200,200,200,0.55)" : colour;
+    ctx.beginPath();
+    ctx.moveTo(p.x(a), p.y(a));
+    ctx.lineTo(p.x(b), p.y(b));
+    ctx.stroke();
+  }
+  if (faint) return;
+  ctx.fillStyle = "#fff";
+  for (let k = 0; k < 17; k++) {
+    if (p.confidence[k] < 0.5) continue;
+    ctx.beginPath();
+    ctx.arc(p.x(k), p.y(k), 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// The PlayerLock at a glance: everyone else faint, the locked player in full
+// colour with a cyan box and a PLAYER tag, or where they were while the lock holds them.
+function drawLock(poses) {
   ctx.save();
-  ctx.lineWidth = 3;
-  for (const p of poses) {
-    for (const [a, b, colour] of SKELETON) {
-      if (p.confidence[a] < 0.5 || p.confidence[b] < 0.5) continue;
-      ctx.strokeStyle = colour;
-      ctx.beginPath();
-      ctx.moveTo(p.x(a), p.y(a));
-      ctx.lineTo(p.x(b), p.y(b));
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#fff";
-    for (let k = 0; k < 17; k++) {
-      if (p.confidence[k] < 0.5) continue;
-      ctx.beginPath();
-      ctx.arc(p.x(k), p.y(k), 4, 0, Math.PI * 2);
-      ctx.fill();
+  for (const p of lock.others) {
+    drawSkeleton(p, true);
+    if (p.box) {
+      ctx.strokeStyle = "rgba(200,200,200,0.45)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(p.box[0], p.box[1], p.box[2] - p.box[0], p.box[3] - p.box[1]);
     }
   }
+  const box = lock.playerBox;
+  let colour = null, tag = "";
+  if (lock.state === "locked" && poses[0]) {
+    drawSkeleton(poses[0], false);
+    colour = CYAN;
+    tag = `PLAYER #${lock.playerId}`;
+  } else if (lock.state === "holding") {
+    colour = WARN;
+    tag = `HOLDING #${lock.playerId} ${lock.heldFor.toFixed(1)}s`;
+  }
+  if (colour && box) {
+    ctx.strokeStyle = css(colour);
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+    text(ctx, tag, box[0], Math.max(18, box[1] - 8), 0.5, colour, { body: true });
+  }
   ctx.restore();
+}
+
+function drawDebug(poses) {
+  drawLock(poses);
   const render = renderTimes.reduce((a, b) => a + b, 0) / Math.max(1, renderTimes.length);
   const lines = [
     `${engine.info.ep} ${variant}${engine.info.adapter ? ` (${engine.info.adapter})` : ""}  threads ${engine.info.threads}`,
     `model ${engine.meter.meanMs.toFixed(1)} ms   ${engine.meter.fps.toFixed(1)} poses/s`,
-    `lead ${extrapolator.lastLeadMs.toFixed(0)} ms   render ${render.toFixed(2)} ms   people ${poses.length}`,
+    `lead ${extrapolator.lastLeadMs.toFixed(0)} ms   render ${render.toFixed(2)} ms   people ${engine.latest.poses.length}`,
+    `lock ${lock.state} #${lock.playerId ?? "-"}   switches ${lock.switches}   (L: next person)`,
+    `decode ${engine.decodeMs.toFixed(2)} ms   select ${selectMs.toFixed(3)} ms`,
     `camera ${source.fps ? `${Math.round(source.fps)} fps` : "?"}  ${source.label.slice(0, 40)}`,
   ];
   panel(ctx, [W - 430, 12, W - 12, 24 + lines.length * 22], { alpha: 0.7, radius: 10 });
@@ -313,6 +358,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (k === "f") toggleFullscreen();
   else if (k === "d") setDebug(!debug);
+  else if (k === "l") lock.repick(); // the lock is on the wrong person: pass it on
   else if (!shell.handleKey(e.key)) return;
   e.preventDefault();
 });
@@ -360,4 +406,4 @@ async function fillCameraPicker() {
 }
 
 // Exposed for debugging in the console and for automated checks.
-window.__kp = { shell, get engine() { return engine; }, get source() { return source; }, extrapolator, css };
+window.__kp = { shell, get engine() { return engine; }, get source() { return source; }, extrapolator, lock, css };

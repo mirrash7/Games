@@ -8,6 +8,10 @@ import numpy as np
 from .config import SKELETON
 from .inference import Pose
 
+_FAINT = (130, 130, 130)
+_PLAYER = (255, 220, 110)  # theme.CYAN
+_HOLD = (90, 190, 255)  # theme.WARN
+
 _HUD_BG = (24, 24, 24)
 _HUD_FG = (235, 235, 235)
 
@@ -33,6 +37,38 @@ def draw_pose(frame: np.ndarray, pose: Pose, min_conf: float = 0.5) -> None:
         centre = (int(xy[i][0]), int(xy[i][1]))
         cv2.circle(frame, centre, 4, (255, 255, 255), -1, cv2.LINE_AA)
         cv2.circle(frame, centre, 5, (0, 0, 0), 1, cv2.LINE_AA)
+
+
+def draw_faint(frame: np.ndarray, pose: Pose, min_conf: float = 0.5) -> None:
+    """Someone who is not the player: a thin grey skeleton and box."""
+    xy, vis = pose.xy, pose.confidence >= min_conf
+    for a, b, _colour in SKELETON:
+        if vis[a] and vis[b]:
+            cv2.line(frame, (int(xy[a][0]), int(xy[a][1])), (int(xy[b][0]), int(xy[b][1])), _FAINT, 1, cv2.LINE_AA)
+    if pose.box is not None:
+        x1, y1, x2, y2 = (int(v) for v in pose.box)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), _FAINT, 1, cv2.LINE_AA)
+
+
+def draw_lock(frame: np.ndarray, lock, player: Pose | None) -> None:
+    """The PlayerLock at a glance (debug view): everyone else faint, the locked
+    player in full colour with a cyan box and a PLAYER tag, or the box where
+    the player was last seen while the lock holds them."""
+    for p in lock.others:
+        draw_faint(frame, p)
+    box = lock.player_box
+    if lock.state == "locked" and player is not None:
+        draw_pose(frame, player)
+        colour, tag = _PLAYER, f"PLAYER #{lock.player_id}"
+    elif lock.state == "holding":
+        colour, tag = _HOLD, f"HOLDING #{lock.player_id} {lock.held_for:.1f}s"
+    else:
+        return
+    if box is None:
+        return
+    x1, y1, x2, y2 = (int(v) for v in box)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
+    outlined_text(frame, tag, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 1)
 
 
 def draw_box(frame: np.ndarray, pose: Pose) -> None:
