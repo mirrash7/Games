@@ -189,7 +189,7 @@ test("shift and squat mean what the camera reads", () => {
   }
 });
 
-test("legs weigh half of a leg-led move, and legs out of view get half credit", () => {
+test("legs weigh half of a leg-led move, and legs out of view aren't judged", () => {
   assert.equal(LEGS_WEIGHT, 2.0);
   const still = { ...STEP_R, lf: [...REST.lf], rf: [...REST.rf], shift: 0.0, squat: 0.0 };
   const [score, parts] = similarity(STEP_R, measure(keypointsFor(still, FULL_BODY)));
@@ -198,9 +198,8 @@ test("legs weigh half of a leg-led move, and legs out of view get half credit", 
     const m = measure(keypointsFor(STEP_R, { visible, ...FULL_BODY }));
     assert.ok(m.lower === null && !m.seesFeet);
     const [s2, p2] = similarity(STEP_R, m);
-    assert.ok(p2.legs === UNSEEN_LEGS && s2 >= 0.74 && s2 < 0.9, "never an X, never a PERFECT");
-    assert.ok(s2 > score, "hidden legs score above legs seen standing still");
-    assert.ok(similarity(STEP_R, m, null)[0] > 0.99, "null leaves them out: what the arms say");
+    assert.ok(UNSEEN_LEGS === null && !("legs" in p2) && s2 > 0.99, "feet are optional: the arms carry it");
+    assert.ok(similarity(STEP_R, m, 0.5)[0] < 0.9, "a number gives unseen legs that much credit");
   }
   const up = { la: [170, 175], ra: [170, 175] };
   assert.ok(!legTarget(normalizePose(up)).active, "an arms move leaves the legs free");

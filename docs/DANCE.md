@@ -195,17 +195,16 @@ cost a perfect dancer two SUPERs on HARD) and how wide people naturally step.
 A player standing still gets nothing for a step (stance 0.75 off, weight 0.3
 off), so perfect arms with still legs score about 0.55 (OK) on a step.
 
-**Never punish tracking loss.** Without both whole legs in view (a player
-standing close, feet below the frame) the legs of a leg move earn half credit
-(`UNSEEN_LEGS` = 0.5): never an X for legs the camera can't see, but never a
-PERFECT either. Otherwise hiding the feet would beat dancing them: a perfect
-dancer with the feet out of frame scored 10000 while one seen standing still
-scored ~6000. Now it is 8000 (5500 on HARD), between the two.
-One leg alone (a lifted foot in view, the other below the frame) is not judged
-either. The game asks: **STEP BACK - SHOW YOUR FEET** (section 8), during the
-intro and whenever a judged leg move is open or 4 beats away
-(`FEET_AHEAD`), after 0.6 s without feet. The tutorial and the countdown tip
-say to stand 2.5-3 m back with the feet in the picture.
+**Feet are optional.** Without both whole legs in view (a crowd at a booth,
+or a player standing close, feet below the frame) the legs aren't judged
+(`UNSEEN_LEGS` = None) and the arms carry the point: never an X, and the game
+doesn't ask for the feet. One leg alone (a lifted foot in view, the other below
+the frame) is not judged either. Legs count whenever the camera sees them, so a
+player in full view who keeps their legs still scores less than one hiding
+them; that is the accepted cost of not requiring feet. (Before, unseen legs
+earned half credit, 0.5, and the game said STEP BACK - SHOW YOUR FEET: hidden
+feet then scored 8000, between dancing them and standing still.) The tutorial
+and the countdown tip ask for the head and both arms in the picture.
 
 **Known limits** (not yet tested with a live player): a squat with the knees
 pushed *forward* reads as less bend than one with the knees out over the toes
@@ -562,7 +561,7 @@ in view; `tests/test_dance_game.py`):
 | player | EASY | NORMAL | HARD |
 |---|---|---|---|
 | perfect | 10000 | 10000 | 10000 |
-| perfect, legs out of frame | 8000, 0 X | 8000, 0 X | 5500, 0 X |
+| perfect, legs out of frame | 10000, 0 X | 10000, 0 X | 10000, 0 X |
 | perfect, 250 ms behind the coach | 10000 | 10000 | 9972 |
 | precise (10 degrees, 0.06 SW, 200 ms late) | 10000 | 10000 | 9764 |
 | 10-20 degrees off, 200 ms late, 15 Hz / 200 ms | 9703 | 9347 | 8472 (4 stars) |
@@ -635,7 +634,7 @@ every foot, the hips and squat sloppy too, 250 ms late):
 | player | test chart (42, arms only) | Neon Nights (123) | Pumpkin Patch Bounce (99) |
 |---|---|---|---|
 | perfect, 20 Hz, 150 ms lag | 10000 | 10000 | 10000 |
-| perfect, legs out of frame (half credit for the legs) | 10000 | 8000 (5500 hard), 0 X | 8000 (5500 hard), 0 X |
+| perfect, legs out of frame (the arms carry it) | 10000 | 10000, 0 X | 10000, 0 X |
 | perfect, half the elbows missing, no hips | 10000 | 10000 | 10000 |
 | perfect, 250 ms behind the coach | 10000 | 10000 | 10000 |
 | 10-20 degrees off (feet 0.05-0.1), 200 ms late, 15 Hz / 200 ms | 9435 (close framing) | 9559 (5 stars) | 9402 (5 stars) |
@@ -822,9 +821,8 @@ game.score, game.display_score (animated), game.stars (0-5 float for the bar fil
 game.counts           {"perfect": n, "super": n, "good": n, "ok": n, "x": n}
 game.player           latest Measured (or None) for the PiP skeleton tint
 game.last_rating      rating of the last resolved point (for the PiP tint)
-game.notice           None, "STEP INTO THE FRAME" / "STEP BACK - SHOW YOUR ARMS" (after 0.6 s unseen), or
-                      "STEP BACK - SHOW YOUR FEET" (0.6 s without both legs in view, in the intro or
-                      within 4 beats of a judged leg move; the arms are still judged meanwhile)
+game.notice           None, or "STEP INTO THE FRAME" / "STEP BACK - SHOW YOUR ARMS" (after 0.6 s unseen);
+                      never about the feet, which are optional
 game.gold_flash       0..1, decaying, after a gold move rated SUPER or better
 game.combo            consecutive SUPER-or-better count
 game.results_t        seconds since game_over (for the results animation)

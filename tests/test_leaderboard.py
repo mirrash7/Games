@@ -344,7 +344,7 @@ def test_desktop_games_share_the_browser_and_server_leaderboard_ids():
     server_dance = re.compile(re.search(r"DANCE_ID = /(.+)/;", rules).group(1))
     web = set(re.findall(r'static id = "(\w+)"', "".join(
         p.read_text() for p in (root / "web/js/games").glob("*/game.js"))))
-    sh = Shell((W, H), REGISTRY)
+    sh = Shell((W, H), REGISTRY, selected="golf")  # golf is hidden from the menu for now, its board stays
     fixed = {sh._board_name(n) for n in sh.menu_games if not sh.variants(n)}
     per_song = [k for n in sh.menu_games if sh.variants(n) for k in sh.board_keys() if k.startswith(sh._board_name(n))]
     assert fixed == server_fixed, (fixed, server_fixed)

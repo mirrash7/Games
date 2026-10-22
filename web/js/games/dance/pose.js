@@ -475,10 +475,11 @@ export const ARM_WEIGHT = 1.0, LEAN_WEIGHT = 0.3;
 // A target whose lower body is active (legTarget) weighs its legs as much as
 // both arms together: a leg-led move is half the score (docs/DANCE.md section 3a).
 export const LEGS_WEIGHT = 2.0;
-// Legs the camera can't see on a leg move earn half credit: never an X (tracking
-// loss isn't punished), but never a PERFECT either, so standing too close is
-// never better than dancing in full view.
-export const UNSEEN_LEGS = 0.5;
+// Legs the camera can't see aren't judged (null): the arms carry the point.
+// Feet are optional, because a crowd or a close camera often hides them. A
+// number here would give unseen legs that much credit instead (0.5 made hiding
+// the feet never beat dancing in full view, but asked every player for feet).
+export const UNSEEN_LEGS = null;
 export const LEAN_MIN = 8.0; // a target lean smaller than this isn't judged
 // Lower-body tolerances: [free, span]: full credit up to `free`, none from free + span.
 export const STANCE_TOL = Object.freeze([0.20, 0.45]); // SW

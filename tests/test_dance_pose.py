@@ -177,22 +177,18 @@ def test_an_arms_move_doesnt_judge_the_legs():
 
 
 @pytest.mark.parametrize("visible", [{"shoulder", "elbow", "wrist", "hip"}, {"shoulder", "elbow", "wrist", "hip", "knee"}])
-def test_legs_out_of_view_get_half_credit(visible):
-    """Never punish tracking loss, never reward it: without both whole legs in
-    view a leg move's legs earn UNSEEN_LEGS (the game says SHOW YOUR FEET).
-    Perfect arms then make a SUPER on NORMAL, never an X and never a PERFECT;
-    with the legs not judged at all, hiding the feet scored a perfect 10000
-    while being seen standing still scored ~6000."""
+def test_legs_out_of_view_are_not_judged(visible):
+    """Feet are optional (a crowd or a close camera hides them): without both
+    whole legs in view the legs aren't judged and the arms carry the point.
+    (Half credit for unseen legs, tried before, asked every player for feet.)"""
+    assert UNSEEN_LEGS is None
     m = measure(keypoints_for(STEP_R, visible=visible, **FULL_BODY))
     assert m.lower is None and not m.sees_feet
     score, parts = similarity(STEP_R, m)
-    assert parts["legs"] == UNSEEN_LEGS and 0.74 <= score < 0.9
+    assert "legs" not in parts and score > 0.99
     m = measure(keypoints_for(STEP_R))  # close: the ankles are below the frame
-    assert m.lower is None and 0.74 <= similarity(STEP_R, m)[0] < 0.9
-    assert similarity(STEP_R, m, None)[0] > 0.99, "None leaves them out: what the arms say"
-    still = similarity(STEP_R, measure(keypoints_for({**STEP_R, "lf": REST["lf"], "rf": REST["rf"],
-                                                      "shift": 0.0, "squat": 0.0}, **FULL_BODY)))[0]
-    assert still < similarity(STEP_R, m)[0], "seen standing still scores below hidden legs"
+    assert m.lower is None and similarity(STEP_R, m)[0] > 0.99
+    assert 0.74 <= similarity(STEP_R, m, 0.5)[0] < 0.9, "a number gives unseen legs that much credit"
 
 
 def test_one_leg_alone_is_not_judged():

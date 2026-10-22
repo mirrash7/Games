@@ -1,7 +1,7 @@
 """The "how to play" cards shown before a player's first Raccoon Dance song.
 
 Three cards in the house style (figure.py; the shell shows them side by side):
-stand back (feet in the picture too), copy the coach like a mirror, hit the
+stand back (arms in the picture; legs count when seen), copy the coach like a mirror, hit the
 poses on the beat, legs included. The second and third draw the real coach
 and pictogram cards from the game's renderer, so the tutorial teaches what
 the player will actually see: the lane's cards include leg moves (white legs
@@ -228,7 +228,7 @@ def _draw_lane(img, rect, t: float) -> None:
 DANCE_TUTORIAL = [
     stand_back_step(
         "STAND BACK",
-        "About 2.5-3 m from the screen, so all of you is in the picture: head, both arms, and your feet.",
+        "About 2.5-3 m from the screen, so your head and both arms fit in the picture. Your legs count too when the camera sees them.",
         arms_up=True,
     ),
     TutorialStep(

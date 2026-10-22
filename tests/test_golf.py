@@ -255,7 +255,8 @@ def test_contract_basics():
     g = new_game(seed=1)
     assert REGISTRY["golf"] is GolfGame
     assert GolfGame.title and GolfGame.blurb and GolfGame.tip and len(GolfGame.tutorial) == 3
-    assert GolfGame.board_id == "golf" and GolfGame.menu
+    assert GolfGame.board_id == "golf"
+    assert GolfGame.menu is False, "hidden from the welcome screen for now; --game golf still runs it"
     assert g.phase is Phase.INTRO and g.score == 0 and g.hole.number == 1
     g.update(ControlState(), 5.0)  # a stall advances at most 0.1 s
     assert g.clock == pytest.approx(0.1)
@@ -419,7 +420,7 @@ def test_plays_through_the_real_shell():
 
 def test_welcome_screen_fits_four_tiles():
     from kpapp.leaderboard import LocalBoard  # noqa: F401 - the menu works with or without a board
-    shell = Shell((W, H), REGISTRY)
+    shell = Shell((W, H), REGISTRY, selected="golf")  # golf is off the menu for now; selecting it adds it
     assert len(shell.menu_games) == 4 and "golf" in shell.menu_games
     tiles = [b.rect for b in shell._layout()]
     assert tiles[0][0] >= 0 and tiles[-1][2] <= W

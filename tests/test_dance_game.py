@@ -26,7 +26,7 @@ from kpapp.audio import SilentPlayer
 from kpapp.controls import ControlState
 from kpapp.game import REGISTRY
 from kpapp.game.dance import chart, judge
-from kpapp.game.dance.game import NOTICE_ARMS, NOTICE_FEET, NOTICE_NOBODY, DanceGame, Phase
+from kpapp.game.dance.game import NOTICE_ARMS, NOTICE_NOBODY, DanceGame, Phase
 from kpapp.game.dance.judge import Judge, rate, star_fill, stars_for
 from kpapp.game.dance.pose import FULL_BODY, REST, keypoints_for, mirror_pose, normalize_pose
 from kpapp.inference import PoseExtrapolator, Result
@@ -585,9 +585,9 @@ def test_real_song_end_to_end():
     assert game.score == 10000 and game.counts["x"] == 0, report(game)
     game = _play("neon_nights", "normal", perfect, elbow_drop=0.5)
     assert game.score == 10000, report(game)
-    # Hips (and so the legs) out of view: half credit for the legs, never an X.
+    # Hips (and so the legs) out of view: the arms carry it.
     game = _play("neon_nights", "normal", perfect, elbow_drop=0.5, hips=False)
-    assert game.counts["x"] == 0 and 7500 < game.score < 10000, report(game)
+    assert game.score == 10000 and game.counts["x"] == 0, report(game)
     # Not wrong_side: plenty of Neon Nights' poses are symmetric (Grapevine's
     # arms, Star Jump, Wide Squat...), where the mirror image is the move itself.
 
@@ -676,18 +676,16 @@ SLOPPY_STARS = {"easy": (4, 4), "normal": (3, 4), "hard": (2, 3)}
 @pytest.mark.parametrize("sid", SONG_IDS)
 def test_fairness_on_every_song_and_difficulty(sid, level):
     """Every song on every difficulty: a perfect full-body dancer (the model's
-    150 ms of lag on top) is 10000; one whose legs are out of frame gets half
-    credit for them (never an X, never a PERFECT on a leg move), so hiding the
-    feet always scores less than dancing in full view but more than standing
-    still; a precise
+    150 ms of lag on top) is 10000, and so is one whose legs are out of frame
+    (feet are optional: the arms carry it, never an X); a precise
     dancer is a 5-star dancer even on hard; a sloppy one lands in between;
     perfect arms with the legs standing still fall clearly short (at most 3
     stars); frozen, idle and random players stay at a star or less."""
     game = _play(sid, level, perfect)
     assert game.score == 10000 and game.judge.unseen == 0, report(game)
     assert len(game.song.judge_points()) == LEVEL_POINTS[sid][level]
-    hidden = _play(sid, level, perfect, legs=False)
-    assert hidden.counts["x"] == 0 and hidden.score < 10000, report(hidden)
+    hidden = _play(sid, level, perfect, legs=False)  # feet are optional: the arms carry it
+    assert hidden.score == 10000 and hidden.counts["x"] == 0, report(hidden)
     game = _play(sid, level, precise)
     assert game.star_count == 5, report(game)
     lo, hi = SLOPPY_STARS[level]
@@ -695,7 +693,6 @@ def test_fairness_on_every_song_and_difficulty(sid, level):
     assert lo <= sloppy_game.star_count <= hi, report(sloppy_game)
     game = _play(sid, level, arms_only)
     assert game.star_count <= 3 and game.score < sloppy_game.score - 1000, report(game)
-    assert game.score < hidden.score, "hiding the feet never beats being seen standing still"
     for bot in (frozen, idle, random_arms):
         game = _play(sid, level, bot)
         assert game.star_count <= 1, report(game)
@@ -729,20 +726,18 @@ def test_hard_needs_the_longer_hold():
     assert short.score > held.score + 500, (report(held), report(short))
 
 
-def test_feet_out_of_frame_ask_to_step_back_and_never_cost_an_x():
-    """Never punish tracking loss: a perfect dancer whose feet are out of
-    frame (standing too close) never gets an X, only half credit for the
-    unseen legs, and the game says what to fix before the song starts and
-    before each leg move."""
+def test_feet_out_of_frame_cost_nothing_and_are_never_asked_for():
+    """Feet are optional: at a crowded booth, or standing close, they are often
+    out of view. The legs then aren't judged (the arms carry the point) and the
+    game doesn't nag; legs still count whenever the camera sees them."""
     lib = chart.load_library()
     game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib)
     notices = []
-    simulate(game, clock, perfect(game), legs=False, on_frame=lambda g: notices.append((g.phase, g.notice)))
-    assert game.counts["x"] == 0 and game.counts["perfect"] < len(game.song.judge_points())
-    assert any(n == NOTICE_FEET for ph, n in notices if ph is Phase.INTRO), "said before the first move"
-    dancing = [n for ph, n in notices if ph is Phase.DANCING]
-    assert dancing.count(NOTICE_FEET) > 0.8 * len(dancing), "and while the legs are being judged"
+    simulate(game, clock, perfect(game), legs=False, on_frame=lambda g: notices.append(g.notice))
+    assert game.score == 10000 and game.counts["x"] == 0, report(game)
+    assert set(notices) <= {None}, f"never asked for anything: {set(notices)}"
     game, clock = new_game(chart.SONGS, variant="neon_nights", library=lib)
-    notices = []
-    simulate(game, clock, perfect(game), on_frame=lambda g: notices.append(g.notice))
-    assert NOTICE_FEET not in notices, "a player in full view is never nagged"
+    simulate(game, clock, arms_only(game))
+    assert game.star_count <= 3, "legs in view still count: " + report(game)
+
+

@@ -453,10 +453,11 @@ WEIGHT_TOL = (0.10, 0.25)  # SW
 LIFT_TOL = (0.15, 0.30)  # SW
 BEND_TOL = (20.0, 35.0)  # degrees
 BEND_SHARE = 0.5  # each knee's bend counts half as much as stance, weight or lift
-# Legs the camera can't see on a leg move earn half credit: never an X (tracking
-# loss isn't punished), but never a PERFECT either, so standing too close is
-# never better than dancing in full view.
-UNSEEN_LEGS = 0.5
+# Legs the camera can't see aren't judged (None): the arms carry the point.
+# Feet are optional, because a crowd or a close camera often hides them. A
+# number here would give unseen legs that much credit instead (0.5 made hiding
+# the feet never beat dancing in full view, but asked every player for feet).
+UNSEEN_LEGS = None
 
 
 def segment_score(target: float, seen: float) -> float:
@@ -491,9 +492,8 @@ def similarity(target: dict, m: Measured | None,
                unseen_legs: float | None = UNSEEN_LEGS) -> tuple[float | None, dict[str, float]]:
     """0..1 match between a target pose and a measured player, plus the
     per-part scores. None when no arm is visible: "can't see you", not a miss.
-    Legs out of view on a leg move earn `unseen_legs` (UNSEEN_LEGS in play: never a
-    miss, never a PERFECT); None leaves them unjudged, for questions about the
-    arms alone (the freeze rule, the importer)."""
+    Legs out of view on a leg move earn `unseen_legs`: None (UNSEEN_LEGS, in play
+    too) leaves them unjudged, so the arms carry the point; feet are optional."""
     if m is None:
         return None, {}
     t = normalize_pose(target)

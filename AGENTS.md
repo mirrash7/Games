@@ -327,8 +327,8 @@ re-run the model on offline. Analyse these before tuning anything.
   (`dance/pose.py`). The legs are judged on what a webcam 2.5-3 m away sees
   (stance, weight over a foot, a lifted foot, knee bends: `read_lower`, the
   same function for coach and player), weighing as much as both arms on a leg
-  move; legs out of view on a leg move earn half credit (never an X, never a
-  PERFECT; the game says SHOW YOUR FEET). Judged per beat with a late-skewed window and a 0.12 s hold
+  move; feet are optional: legs out of view aren't judged and the arms carry
+  the point (never an X, no prompt). Judged per beat with a late-skewed window and a 0.12 s hold
   (`dance/judge.py`). The drawn coach performs the chart (`dance/motion.py`:
   anticipation, overshoot that settles on the beat, groove, follow-through,
   and steps: the supporting foot stays planted while the coach travels, the
@@ -352,11 +352,15 @@ re-run the model on offline. Analyse these before tuning anything.
   original: viral-dance *style* and generic moves, never a creator's routine;
   music borrows a genre's cadence, never a song's melody, harmony or lyrics. Bots prove fairness (whole body
   in view): a perfect dancer 150 ms late scores 10000 on every song and difficulty, and
-  one whose legs are out of frame gets 8000 (never an X); perfect arms with the legs standing still
+  so does one whose legs are out of frame (feet optional); perfect arms with the legs standing still
   score 2-3 stars; idle, frozen and random players stay at 1 star or below. The leg
   judging (tolerances, a frontal camera's foreshortening of forward knee bends) has
   not yet been tested with a live player.
-- **Raccoon Golf** (`golf`): three original island holes (par 4, 3, 5) with Wii Sports
+- **Raccoon Golf** (`golf`), **hidden for now**: off both welcome screens and the landing
+  page (`menu = False`; its catalog entry removed). `kp game --game golf` and the
+  unlinked page `/games/raccoon-golf/` still run it; set `menu` back to true in
+  `golf/game.py` and `games/golf/game.js` and restore its `catalog.json` entry to bring
+  it back. Three original island holes (par 4, 3, 5) with Wii Sports
   Resort Golf's mechanics: behind-the-ball pinhole view, auto club and aim (adjustable by
   hovering AIM / CLUB or the arrow keys, which the shell now passes to a game's
   `handle_key`), power gauge with an overswing zone, practice swings until the player

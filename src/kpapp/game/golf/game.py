@@ -198,6 +198,7 @@ class GolfGame(Game):
     name = "golf"
     title = "RACCOON GOLF"
     blurb = "Swing your arms like a golf club. Three island holes - can you beat par?"
+    menu = False  # hidden for now: still runs with --game golf
     tip = "Stand back so your hands show at waist height"
     tutorial = GOLF_TUTORIAL
     board_id = "golf"

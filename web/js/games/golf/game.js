@@ -146,7 +146,7 @@ export class RaccoonGolfGame extends Game {
   static blurb = "Swing your arms like a golf club. Three island holes - can you beat par?";
   static tip = "Stand back so your hands show at waist height";
   static tutorial = GOLF_TUTORIAL;
-  static menu = true;
+  static menu = false; // hidden for now: its page, games/raccoon-golf/, still runs it
 
   static async preload() {
     await Promise.all([loadArt(), loadCourse()]);

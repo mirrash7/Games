@@ -2,7 +2,7 @@
 // (port of src/kpapp/game/dance/tutorial.py).
 //
 // Three cards in the house style (core/figure.js; the shell shows them side by
-// side): stand back (feet in the picture too), copy the coach like a mirror,
+// side): stand back (arms in the picture; legs count when seen), copy the coach like a mirror,
 // hit the poses on the beat, legs included. The second and third draw the real
 // coach and pictogram cards from the game's renderer, so the tutorial teaches
 // what the player will actually see: the lane's cards include leg moves (white
@@ -228,7 +228,7 @@ function drawLane(ctx, rect, t) {
 export const DANCE_TUTORIAL = [
   {
     title: "STAND BACK",
-    text: "About 2.5-3 m from the screen, so all of you is in the picture: head, both arms, and your feet.",
+    text: "About 2.5-3 m from the screen, so your head and both arms fit in the picture. Your legs count too when the camera sees them.",
     draw: (ctx, rect, t) => drawStandBack(ctx, rect, t, { armsUp: true }),
   },
   {

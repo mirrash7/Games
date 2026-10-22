@@ -409,9 +409,9 @@ difficulty. **EASY** asks for about one pose a bar (the coach holds each one)
 and judges more forgivingly; **NORMAL** is the full routine; **HARD** is the
 full routine judged strictly (a longer hold, tighter angles). EASY is derived
 from each song's chart automatically, so every song has all three. Stand back
-2.5-3 m, far enough that your feet are in the picture and your arms stay in
-view when raised; with your feet out of view leg moves earn half credit for the
-legs (never an X for legs the camera can't see) and the game says STEP BACK - SHOW YOUR FEET. Music plays through your
+2.5-3 m, far enough that your arms stay in view when raised. Your feet are
+optional: when the camera sees your legs they count, and when it doesn't (a
+crowd, or standing close) the arms carry the score. Music plays through your
 speakers (`sounddevice`); with no audio device it plays silently on the same
 clock.
 
@@ -432,6 +432,9 @@ Then add the id to `songs/index.json`. The format, the judging rules and the
 layout are in [docs/DANCE.md](docs/DANCE.md).
 
 ### Raccoon Golf (Wii Sports Resort Golf rules)
+
+*Hidden for now:* golf is off the welcome screens and the landing page. Run it
+with `uv run kp game --game golf`, or open `/games/raccoon-golf/` on the site.
 
 Three original island holes (par 4, par 3, par 5) played by Lenny the raccoon in a
 visor, with your arms as the club. Stand back so your hands show at waist height.

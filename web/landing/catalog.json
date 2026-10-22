@@ -79,30 +79,6 @@
         "webcam"
       ],
       "model": "RF-DETR keypoints"
-    },
-    {
-      "id": "raccoon-golf",
-      "title": "Raccoon Golf",
-      "category": "body-games",
-      "status": "live",
-      "summary": "Swing your arms like a golf club. Address the ball, swing back for power, swing through to hit, on three island holes.",
-      "tags": [
-        "both arms",
-        "swing",
-        "3 holes"
-      ],
-      "href": "games/raccoon-golf/",
-      "media": {
-        "mp4": "media/golf.mp4",
-        "webm": "media/golf.webm",
-        "poster": "media/golf.jpg",
-        "fallback": "media/golf_lenny.png",
-        "fallbackLabel": "Lenny"
-      },
-      "needs": [
-        "webcam"
-      ],
-      "model": "RF-DETR keypoints"
     }
   ]
 }

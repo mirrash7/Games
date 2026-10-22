@@ -23,7 +23,7 @@ import { Rng } from "../js/core/random.js";
 import { GAMES } from "../js/games/index.js";
 import { DIFFICULTIES, parseLibrary, parseMoves, parseSong } from "../js/games/dance/chart.js";
 import {
-  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_FEET, NOTICE_NOBODY, Phase, boardIdFor,
+  AUDIO_LOAD_TIMEOUT, AUDIO_STALL, DanceRaccoonGame, NOTICE_ARMS, NOTICE_NOBODY, Phase, boardIdFor,
   songVariants,
 } from "../js/games/dance/game.js";
 import {
@@ -608,7 +608,7 @@ test("Neon Nights end to end", () => {
   assert.equal(game.score, 10000, report(game));
   // Hips (and so the legs) out of view: half credit for the legs, never an X.
   ({ game } = play(perfect, { elbowDrop: 0.5, hips: false }));
-  assert.ok(game.counts.x === 0 && game.score > 7500 && game.score < 10000, report(game));
+  assert.ok(game.counts.x === 0 && game.score === 10000, report(game));
   // Not wrongSide: plenty of Neon Nights' poses are symmetric (the mirror image is the move itself).
 });
 
@@ -695,8 +695,8 @@ for (const id of SONG_IDS) {
       let game = play(id, level, perfect);
       assert.ok(game.score === 10000 && game.judge.unseen === 0, report(game));
       assert.equal(game.song.judgePoints().length, LEVEL_POINTS[id][level]);
-      const hidden = play(id, level, perfect, { legs: false });
-      assert.ok(hidden.score < 10000 && hidden.counts.x === 0, `legs out of frame: ${report(hidden)}`);
+      const hidden = play(id, level, perfect, { legs: false }); // feet are optional: the arms carry it
+      assert.ok(hidden.score === 10000 && hidden.counts.x === 0, `legs out of frame: ${report(hidden)}`);
       game = play(id, level, precise);
       assert.equal(game.starCount, 5, report(game));
       const sl = play(id, level, sloppy);
@@ -704,7 +704,6 @@ for (const id of SONG_IDS) {
       assert.ok(sl.starCount >= lo && sl.starCount <= hi, `sloppy: ${report(sl)}`);
       game = play(id, level, armsOnly);
       assert.ok(game.starCount <= 3 && game.score < sl.score - 1000, `arms only: ${report(game)}`);
-      assert.ok(game.score < hidden.score, "hiding the feet never beats being seen standing still");
       for (const bot of [frozen, idle, randomArms]) {
         game = play(id, level, bot);
         assert.ok(game.starCount <= 1, `${bot.name}: ${report(game)}`);
@@ -728,16 +727,14 @@ test("hard needs the longer hold", () => {
   assert.ok(short.score > held.score + 500, `${report(held)} / ${report(short)}`);
 });
 
-test("feet out of frame ask to step back and never cost an X", () => {
+test("feet out of frame cost nothing and are never asked for", () => {
+  // As tests/test_dance_game.py: feet are optional; legs count whenever they are seen.
   const { game, clock } = newGame(REAL.neon_nights, "neon_nights");
   const notices = [];
-  simulate(game, clock, perfect(game), { legs: false, onFrame: (g) => notices.push([g.phase, g.notice]) });
-  assert.ok(game.counts.x === 0 && game.counts.perfect < game.song.judgePoints().length, report(game));
-  assert.ok(notices.some(([ph, n]) => ph === Phase.INTRO && n === NOTICE_FEET), "said before the first move");
-  const dancing = notices.filter(([ph]) => ph === Phase.DANCING).map(([, n]) => n);
-  assert.ok(dancing.filter((n) => n === NOTICE_FEET).length > 0.8 * dancing.length, "and while the legs are judged");
+  simulate(game, clock, perfect(game), { legs: false, onFrame: (g) => notices.push(g.notice) });
+  assert.ok(game.score === 10000 && game.counts.x === 0, report(game));
+  assert.ok(notices.every((n) => n == null), `never asked for anything: ${[...new Set(notices)]}`);
   const { game: g2, clock: c2 } = newGame(REAL.neon_nights, "neon_nights");
-  const seen = [];
-  simulate(g2, c2, perfect(g2), { onFrame: (g) => seen.push(g.notice) });
-  assert.ok(!seen.includes(NOTICE_FEET), "a player in full view is never nagged");
+  simulate(g2, c2, armsOnly(g2));
+  assert.ok(g2.starCount <= 3, `legs in view still count: ${report(g2)}`);
 });
